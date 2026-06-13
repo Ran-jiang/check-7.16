@@ -1,0 +1,19 @@
+# 环境变量（含 API 密钥）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# pytest
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
