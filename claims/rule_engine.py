@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from parser.schema import Anchor, ParsedDocument
+from parser.schema import ParsedDocument
 
 from .case_citation import (
     extract_case_refs,
@@ -73,7 +73,6 @@ def extract_rule_candidates(
     Returns:
         ClaimCandidate 列表
     """
-    anchor_map: dict[str, Anchor] = indexes["anchor_map"]
     candidates: list[ClaimCandidate] = []
 
     # ---- 法源前向继承状态 ----
@@ -83,7 +82,6 @@ def extract_rule_candidates(
 
     for anchor in parsed_doc.anchors:
         text = anchor.text
-        current_section = tuple(anchor_map[anchor.anchor].block_id if anchor.anchor in anchor_map else ())
 
         # ---- section_path 变化 → 重置继承 ----
         # 跨标题不继承：新标题下出现裸"第X条"不回溯旧标题的法源

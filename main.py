@@ -4,6 +4,7 @@ CCitecheck CLI 入口。
 用法:
   python main.py sample.docx --out result.json
   python main.py sample.docx --out result.json --claims-out claims.json
+  python main.py sample.docx --claims-out claims.json --verify-out verify.json --law-db data/laws.sqlite
   python main.py sample.docx --out result.json --render-chunk c_00001
 
 流程：
@@ -11,6 +12,7 @@ CCitecheck CLI 入口。
   2. 构建 chunks
   3. 运行 v0.1 不变量校验 → 写入 JSON
   4. 如指定 --claims-out → 运行 v0.2 主张抽取 → 写入 claims JSON
+  5. 如指定 --verify-out → 运行 v0.3 溯源链路 → 写入前端 JSON
 """
 
 from __future__ import annotations
@@ -21,18 +23,38 @@ from typing import Optional
 
 import typer
 
-from parser.docx_parser import parse_docx
-from parser.chunk_builder import build_chunks
-from parser.validators import validate_parsed_document
 from parser.renderer import render_chunk_for_llm
 from parser.schema import ParsedDocument
-from claims.extractor import extract_claims
 from claims.schema import ClaimDocument
+from document_pipeline import (
+    DocumentPipelineError,
+    extract_document_claims,
+    parse_and_validate_document,
+    verify_document_claims,
+)
+from runtime_checks import check_runtime
 
 app = typer.Typer(
     name="ccitecheck",
     help="CCitecheck - DOCX 法律文档中间表示层 + 可验证主张识别层",
 )
+
+
+@app.command()
+def doctor(
+    law_db: str = typer.Option(
+        "data/laws.sqlite", "--law-db", help="SQLite 本地法规库路径"
+    ),
+):
+    """检查本地运行所需资源。"""
+    results = check_runtime(law_db)
+    failed = False
+    for result in results:
+        status = "OK" if result.ok else "FAIL"
+        typer.echo(f"{status} {result.name}: {result.message}")
+        failed = failed or not result.ok
+    if failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -45,9 +67,22 @@ def parse(
     claims_out: Optional[str] = typer.Option(
         None, "--claims-out", help="v0.2 ClaimDocument JSON 输出文件路径"
     ),
+    verify_out: Optional[str] = typer.Option(
+        None, "--verify-out", help="v0.3 前端核查 JSON 输出文件路径"
+    ),
+    law_db: str = typer.Option(
+        "data/laws.sqlite", "--law-db", help="SQLite 本地法规库路径"
+    ),
+    semantic_check: bool = typer.Option(
+        False, "--semantic-check", help="使用千问进行法律引用语义和结论支持性检查"
+    ),
+    qwen_model: Optional[str] = typer.Option(
+        None, "--qwen-model", help="语义检查使用的千问模型"
+    ),
 ):
     """
-    解析 DOCX 文件，生成 v0.1 ParsedDocument JSON 和/或 v0.2 ClaimDocument JSON。
+    解析 DOCX 文件，生成 v0.1 ParsedDocument JSON、v0.2 ClaimDocument JSON
+    和/或 v0.3 前端核查 JSON。
     """
     input_path = Path(input_file)
     if not input_path.exists():
@@ -58,31 +93,14 @@ def parse(
         typer.echo(f"Error: Not a .docx file: {input_file}", err=True)
         raise typer.Exit(code=1)
 
-    if out is None and claims_out is None:
-        typer.echo("Error: 必须指定 --out 或 --claims-out", err=True)
+    if out is None and claims_out is None and verify_out is None:
+        typer.echo("Error: 必须指定 --out、--claims-out 或 --verify-out", err=True)
         raise typer.Exit(code=1)
 
-    # ---- 解析 DOCX ----
     try:
-        parsed_doc = parse_docx(str(input_path))
-    except Exception as e:
-        typer.echo(f"Error parsing DOCX: {e}", err=True)
-        raise typer.Exit(code=1)
-
-    # ---- 构建 chunks ----
-    try:
-        parsed_doc = build_chunks(parsed_doc)
-    except Exception as e:
-        typer.echo(f"Error building chunks: {e}", err=True)
-        raise typer.Exit(code=1)
-
-    # ---- 校验 v0.1 ----
-    violations = validate_parsed_document(parsed_doc)
-    if violations:
-        typer.echo("v0.1 Validation FAILED:")
-        for i, v in enumerate(violations, 1):
-            typer.echo(f"  {i}. {v}")
-        typer.echo(f"\n{len(violations)} violation(s) found.", err=True)
+        parsed_doc = parse_and_validate_document(input_path)
+    except DocumentPipelineError as exc:
+        typer.echo(str(exc), err=True)
         raise typer.Exit(code=2)
 
     # ---- 输出 v0.1 JSON ----
@@ -108,8 +126,15 @@ def parse(
                 raise typer.Exit(code=1)
 
     # ---- 输出 v0.2 ClaimDocument JSON ----
-    if claims_out is not None:
-        _write_v0_2_claims(parsed_doc, claims_out)
+    claim_doc: ClaimDocument | None = None
+    if claims_out is not None or verify_out is not None:
+        claim_doc = _extract_v0_2_claims(parsed_doc)
+
+    if claims_out is not None and claim_doc is not None:
+        _write_v0_2_claims(claim_doc, claims_out)
+
+    if verify_out is not None and claim_doc is not None:
+        _write_v0_3_verification(claim_doc, verify_out, law_db, semantic_check, qwen_model)
 
 
 # ============================================================
@@ -124,20 +149,15 @@ def _write_v0_1_output(parsed_doc: ParsedDocument, out_path_str: str) -> None:
     out_path.write_text(output, encoding="utf-8")
 
 
-def _write_v0_2_claims(parsed_doc: ParsedDocument, claims_out: str) -> None:
-    """运行 v0.2 主张抽取并写入 JSON"""
+def _extract_v0_2_claims(parsed_doc: ParsedDocument) -> ClaimDocument:
+    """运行 v0.2 主张抽取"""
     from collections import Counter
 
     try:
-        claim_doc = extract_claims(parsed_doc)
-    except ValueError as e:
+        claim_doc = extract_document_claims(parsed_doc)
+    except DocumentPipelineError as e:
         typer.echo(f"Claim validation FAILED:\n{e}", err=True)
         raise typer.Exit(code=2)
-
-    output = _serialize_claim_document(claim_doc)
-    out_path = Path(claims_out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(output, encoding="utf-8")
 
     # 打印摘要
     type_counts = Counter(c.claim_type.value for c in claim_doc.claims)
@@ -148,7 +168,6 @@ def _write_v0_2_claims(parsed_doc: ParsedDocument, claims_out: str) -> None:
         count = type_counts.get(ct, 0)
         if count > 0:
             typer.echo(f"  {ct}: {count}")
-    typer.echo(f"Claims output: {claims_out}")
 
     # 逐条打印
     typer.echo(f"\n{'='*60}")
@@ -160,6 +179,46 @@ def _write_v0_2_claims(parsed_doc: ParsedDocument, claims_out: str) -> None:
         typer.echo(f"  Text: {text}{'...' if len(claim.text) > 150 else ''}")
         typer.echo(f"  Anchors: {', '.join(claim.anchor_ids)}")
         typer.echo(f"  Route: {claim.verification_route.value}")
+
+    return claim_doc
+
+
+def _write_v0_2_claims(claim_doc: ClaimDocument, claims_out: str) -> None:
+    """写入 v0.2 ClaimDocument JSON"""
+    output = _serialize_claim_document(claim_doc)
+    out_path = Path(claims_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(output, encoding="utf-8")
+
+    typer.echo(f"Claims output: {claims_out}")
+
+
+def _write_v0_3_verification(
+    claim_doc: ClaimDocument,
+    verify_out: str,
+    law_db: str,
+    semantic_check: bool,
+    qwen_model: str | None,
+) -> None:
+    """运行 v0.3 溯源链路并写入前端 JSON"""
+    try:
+        frontend_doc = verify_document_claims(
+            claim_doc,
+            law_db,
+            semantic_check=semantic_check,
+            qwen_model=qwen_model,
+        )
+    except DocumentPipelineError as exc:
+        typer.echo(f"Semantic check error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    out_path = Path(verify_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        frontend_doc.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    typer.echo(f"Verification checks: {len(frontend_doc.legal_checks)}")
+    typer.echo(f"Verification output: {verify_out}")
 
 
 # ============================================================

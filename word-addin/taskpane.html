@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://appsforoffice.microsoft.com; script-src 'self' https://appsforoffice.microsoft.com; style-src 'self'; connect-src 'self'; img-src 'self' data:;">
+  <title>CCitecheck</title>
+  <link rel="stylesheet" href="/assets/taskpane.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <button id="brand-button" class="brand" type="button" aria-label="返回首页">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span>CCitecheck</span>
+      </button>
+      <div class="header-actions">
+        <button id="settings-button" class="icon-button" type="button" aria-label="核验设置" title="核验设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg>
+        </button>
+        <button id="help-button" class="icon-button" type="button" aria-label="帮助" title="帮助">?</button>
+      </div>
+    </header>
+
+    <section id="home-screen" class="screen home-screen" aria-labelledby="home-title">
+      <div class="hero" aria-hidden="true">
+        <span class="hero-c">C</span>
+        <span class="hero-stack">
+          <span class="hero-line hero-line-top">ITE</span>
+          <span class="hero-line hero-line-bottom">HECK</span>
+        </span>
+      </div>
+      <h1 id="home-title" class="sr-only">CCitecheck 可验证主张核查</h1>
+      <p class="hero-caption">可验证主张核查</p>
+
+      <section class="current-document" aria-labelledby="current-document-title">
+        <div class="section-label" id="current-document-title">当前文档</div>
+        <div class="document-row">
+          <div class="document-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5"/></svg>
+          </div>
+          <div class="document-copy">
+            <div id="document-name" class="document-name">正在读取 Word 文档…</div>
+            <div id="document-status" class="document-status">正在连接插件</div>
+          </div>
+          <span id="connection-dot" class="connection-dot" aria-label="连接状态"></span>
+        </div>
+      </section>
+
+      <section id="history-section" class="history-section is-hidden" aria-labelledby="history-title">
+        <div class="section-label" id="history-title">最近核查</div>
+        <div id="history-list" class="history-list"></div>
+      </section>
+
+      <div class="bottom-action">
+        <button id="attach-button" class="attach-button" type="button" aria-label="重新读取当前文档" title="重新读取当前文档">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>
+        </button>
+        <button id="start-button" class="primary-button" type="button" disabled>开始核查</button>
+      </div>
+    </section>
+
+    <section id="progress-screen" class="screen progress-screen is-hidden" aria-labelledby="progress-title">
+      <div class="progress-orbit" aria-hidden="true">
+        <span class="orbit-ring"></span>
+        <span class="orbit-track"><span class="orbit-dot"></span></span>
+      </div>
+      <h1 id="progress-title">正在核查法律引用</h1>
+      <p id="progress-subtitle" class="progress-subtitle">请保持当前文档打开</p>
+      <ol class="progress-list">
+        <li id="stage-read" class="progress-stage is-active">
+          <span class="stage-marker"></span>
+          <div><strong>文档结构解析</strong><small>正在获取完整 DOCX</small></div>
+        </li>
+        <li id="stage-submit" class="progress-stage">
+          <span class="stage-marker"></span>
+          <div><strong>提交核验任务</strong><small>等待执行</small></div>
+        </li>
+        <li id="stage-check" class="progress-stage">
+          <span class="stage-marker"></span>
+          <div><strong>规章条款与语义核验</strong><small>等待执行</small></div>
+        </li>
+        <li id="stage-report" class="progress-stage">
+          <span class="stage-marker"></span>
+          <div><strong>生成核查报告</strong><small>等待执行</small></div>
+        </li>
+      </ol>
+    </section>
+
+    <section id="results-screen" class="screen results-screen is-hidden" aria-labelledby="results-title">
+      <div class="results-heading">
+        <p class="eyebrow">核查完成</p>
+        <h1 id="results-title">核查结果</h1>
+        <p id="results-subtitle" class="results-subtitle"></p>
+      </div>
+      <div id="summary-grid" class="summary-grid"></div>
+      <div class="results-toolbar">
+        <span class="section-label">引用明细</span>
+        <button id="rerun-button" class="text-button" type="button">重新核查</button>
+      </div>
+      <div id="results-list" class="results-list"></div>
+    </section>
+
+    <aside id="settings-panel" class="settings-panel is-hidden" aria-labelledby="settings-title">
+      <div class="panel-header">
+        <div><p class="eyebrow">核查范围</p><h2 id="settings-title">设置</h2></div>
+        <button id="settings-close" class="icon-button" type="button" aria-label="关闭设置">×</button>
+      </div>
+      <div class="setting-row">
+        <div><strong>逐字精确比对</strong><small>保留标点、空格和格式差异</small></div>
+        <span class="fixed-setting">已开启</span>
+      </div>
+      <label class="setting-row" for="semantic-toggle">
+        <div><strong>千问语义核验</strong><small>检查法源、时效、原意与结论支持性</small></div>
+        <input id="semantic-toggle" class="toggle" type="checkbox" checked>
+      </label>
+    </aside>
+
+    <div id="message" class="message is-hidden" role="alert"></div>
+  </main>
+  <script type="module" src="/assets/taskpane.js"></script>
+</body>
+</html>

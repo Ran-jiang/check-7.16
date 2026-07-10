@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ============================================================
@@ -302,9 +302,7 @@ class ClaimCandidate(BaseModel):
         description="LLM 返回的文本（仅作交叉比对，不以之作为最终 text）"
     )
 
-    class Config:
-        """允许任意类型字段"""
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ============================================================
@@ -332,8 +330,7 @@ class Claim(BaseModel):
         description="调试信息"
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ClaimMeta(BaseModel):

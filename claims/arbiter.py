@@ -21,23 +21,16 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
 
-from parser.schema import Anchor, Block, BlockType, ParsedDocument
+from parser.schema import Anchor, ParsedDocument
 
 from .filters import is_out_of_scope_text
-from .legal_citation import extract_legal_sources, infer_source_type
 from .schema import (
-    CaseCitationEntities,
-    CaseHoldingParaphraseEntities,
     Claim,
     ClaimCandidate,
     ClaimDebug,
-    ClaimMeta,
     ClaimType,
     ExtractionMethod,
-    LegalSourceClaimEntities,
-    LegalSourceParaphraseEntities,
     VerificationRoute,
 )
 
