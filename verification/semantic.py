@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from runtime_env import load_project_env
 
+from .pkulaw_mcp import default_ssl_context
 from .schema import ArticleEvidence, SemanticComparison
 
 DEFAULT_MODEL = "qwen3.7-max"
@@ -103,7 +104,9 @@ class QwenSemanticChecker:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=self.timeout, context=default_ssl_context()
+            ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

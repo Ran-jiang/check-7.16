@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -16,6 +17,16 @@ from typing import Any, Optional
 
 
 DEFAULT_GATEWAY = "https://apim-gateway.pkulaw.com"
+
+
+def default_ssl_context() -> ssl.SSLContext:
+    """python.org 版 Python 不读系统钥匙串，显式使用 certifi 的 CA 库。"""
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 @dataclass(frozen=True)
@@ -52,6 +63,10 @@ class PkulawCaseNumber:
 
 class PkulawMcpError(RuntimeError):
     pass
+
+
+class PkulawNotFoundError(PkulawMcpError):
+    """法宝检索已完成但未命中任何数据（区别于配置/网络错误）。"""
 
 
 class PkulawMcpClient:
@@ -120,7 +135,9 @@ class PkulawMcpClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=self.timeout, context=default_ssl_context()
+            ) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -166,11 +183,23 @@ def _extract_payload_data(payload: Any) -> Any:
         raise PkulawMcpError(str(payload["error"]))
     result = payload.get("result") if isinstance(payload, dict) else payload
     content = result.get("content") if isinstance(result, dict) else None
+    is_error = bool(isinstance(result, dict) and result.get("isError"))
     if isinstance(content, list) and content:
         first = content[0]
         if isinstance(first, dict) and first.get("type") == "text":
             text = first.get("text", "")
-            return json.loads(text) if text else {}
+            if not text:
+                return {}
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                # 法宝工具在未命中时会返回纯文本错误（如 Data 为 None 的
+                # pydantic 校验错误），归类为"检索完成但未找到"
+                if is_error and ("input_value=None" in text or "未找到" in text):
+                    raise PkulawNotFoundError("未找到数据") from None
+                raise PkulawMcpError(text[:300]) from None
+    if is_error:
+        raise PkulawMcpError("Pkulaw tool returned an error without detail")
     return result
 
 
@@ -243,7 +272,10 @@ def _parse_law_record(record: dict[str, Any]) -> PkulawLawRecord:
 def _response_data(data: Any) -> Any:
     if isinstance(data, dict):
         if data.get("Message") not in (None, "成功", "success"):
-            raise PkulawMcpError(str(data.get("Message")))
+            message = str(data.get("Message"))
+            if "未找到" in message or "无数据" in message:
+                raise PkulawNotFoundError(message)
+            raise PkulawMcpError(message)
         if "Data" in data:
             return data["Data"]
         if "data" in data:

@@ -23,6 +23,7 @@ class LookupStatus(str, Enum):
     LAW_NOT_FOUND = "law_not_found"
     SOURCE_NOT_CONFIGURED = "source_not_configured"
     SOURCE_ERROR = "source_error"
+    NOT_VERIFIABLE = "not_verifiable"
 
 
 class CaseLookupStatus(str, Enum):
@@ -142,6 +143,7 @@ class LegalCheck(BaseModel):
     article_no: Optional[str] = None
     lookup_status: LookupStatus
     evidence: Optional[ArticleEvidence] = None
+    rule_findings: list[SemanticIssue] = Field(default_factory=list)
     semantic_comparison: Optional[SemanticComparison] = None
     semantic_assessment: Optional[SemanticAssessment] = None
     source_attempts: list[SourceTrace] = Field(default_factory=list)

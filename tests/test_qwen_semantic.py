@@ -34,7 +34,7 @@ class FakeResponse:
 def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
     captured = {}
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, context=None):
         captured["url"] = request.full_url
         captured["payload"] = json.loads(request.data)
         return FakeResponse()

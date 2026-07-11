@@ -91,6 +91,9 @@ def _summarize(verification) -> CheckSummary:
     passed = issues = bugs = 0
     for check in verification.legal_checks:
         comparison = check.semantic_comparison
+        if check.rule_findings:
+            issues += 1
+            continue
         if comparison is None:
             continue
         if comparison.verdict == ComparisonVerdict.PASS:

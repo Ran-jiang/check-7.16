@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import difflib
+import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 from claims.schema import ClaimDocument, ClaimType
+from laws.sqlite_store import (
+    connect,
+    list_law_titles,
+    normalize_title,
+    strip_version_annotation,
+)
 
 from .pkulaw_mcp import PkulawMcpError
 from .schema import (
@@ -21,6 +29,8 @@ from .schema import (
     RiskLevel,
     SemanticErrorType,
     SemanticIssue,
+    SourceTier,
+    SourceTrace,
 )
 from .semantic import SemanticCheckError, SemanticChecker
 from .sources import (
@@ -50,6 +60,7 @@ def verify_claim_document_for_frontend(
 ) -> FrontendVerificationDocument:
     source_chain = list(sources) if sources is not None else build_default_sources(db_path)
     recognizer = case_recognizer if case_recognizer is not None else PkulawCaseSource()
+    known_titles = _load_known_titles(db_path)
     checks: list[LegalCheck] = []
     next_id = 1
 
@@ -62,8 +73,21 @@ def verify_claim_document_for_frontend(
         legal_sources = getattr(claim.entities, "legal_sources", [])
         for legal_source in legal_sources:
             articles = legal_source.articles or [None]
+            not_verifiable = _classify_not_verifiable(legal_source.title)
             for article in articles:
                 article_no = article.article if article is not None else None
+                if not_verifiable is not None:
+                    checks.append(
+                        _not_verifiable_check(
+                            f"vc_{next_id:05d}",
+                            claim,
+                            legal_source.title,
+                            article_no,
+                            not_verifiable,
+                        )
+                    )
+                    next_id += 1
+                    continue
                 result, attempts = _lookup_with_chain(
                     source_chain,
                     LookupRequest(
@@ -74,6 +98,13 @@ def verify_claim_document_for_frontend(
                     ),
                 )
                 doc_quote = _document_quote(claim)
+                rule_findings = _build_rule_findings(
+                    legal_source.title,
+                    article_no,
+                    result,
+                    attempts,
+                    known_titles,
+                )
                 semantic_comparison = _compare_semantics(
                     semantic_checker,
                     doc_quote,
@@ -91,6 +122,7 @@ def verify_claim_document_for_frontend(
                         article_no=article_no,
                         lookup_status=result.status,
                         evidence=result.evidence,
+                        rule_findings=rule_findings,
                         semantic_comparison=semantic_comparison,
                         source_attempts=attempts,
                     )
@@ -234,6 +266,176 @@ def _compare_semantics(
             confidence=ComparisonConfidence.LOW,
             notes=str(exc),
         )
+
+
+# ============================================================
+# 确定性规则判定（不依赖 LLM）
+# ============================================================
+
+_GB_STANDARD_PATTERN = re.compile(r"GB\s*/?\s*[TZ]?\s*\d{3,6}")
+_REPEALED_PATTERN = re.compile(r"废止|失效")
+
+
+def _classify_not_verifiable(law_title: str) -> Optional[str]:
+    """识别不属于法条库核验范围的文件，返回原因说明。"""
+    if "征求意见稿" in law_title:
+        return "征求意见稿尚未生效，不属于可核验的现行法源，请人工确认引用意图"
+    if _GB_STANDARD_PATTERN.search(law_title):
+        return "国家/行业标准不在法规库核验范围内，请以标准全文出版物为准"
+    return None
+
+
+def _not_verifiable_check(
+    check_id: str, claim, law_title: str, article_no, reason: str
+) -> LegalCheck:
+    trace = SourceTrace(
+        tier=SourceTier.LOCAL_SQLITE,
+        source_name="CCitecheck 文件类型分类",
+        status=LookupStatus.NOT_VERIFIABLE,
+        message=reason,
+    )
+    return LegalCheck(
+        check_id=check_id,
+        claim_id=claim.claim_id,
+        claim_text=claim.text,
+        anchor_ids=list(claim.anchor_ids),
+        law_title=law_title,
+        article_no=article_no,
+        lookup_status=LookupStatus.NOT_VERIFIABLE,
+        source_attempts=[trace],
+    )
+
+
+def _load_known_titles(db_path: str | Path) -> list[str]:
+    path = Path(db_path)
+    if not path.exists():
+        return []
+    with connect(path) as conn:
+        return list_law_titles(conn)
+
+
+def _build_rule_findings(
+    law_title: str,
+    article_no: Optional[str],
+    result: LookupResult,
+    attempts: list,
+    known_titles: list[str],
+) -> list[SemanticIssue]:
+    findings: list[SemanticIssue] = []
+
+    # A2 旧法旧规：任何证据层面的时效字段显示废止/失效
+    evidence = result.evidence
+    repealed = False
+    if evidence is not None:
+        timeliness_values = [
+            evidence.version_status or "",
+            evidence.version_label or "",
+            str(evidence.source_metadata.get("timeliness", "")),
+        ]
+        repealed = any(_REPEALED_PATTERN.search(value) for value in timeliness_values)
+        if repealed:
+            findings.append(
+                SemanticIssue(
+                    error_type=SemanticErrorType.OUTDATED_SOURCE,
+                    risk_level=RiskLevel.HIGH,
+                    diff_summary=(
+                        f"《{strip_version_annotation(law_title)}》时效状态为"
+                        "『废止或失效』，不应作为现行依据引用"
+                    )[:80],
+                    suggestion="请改引现行有效的替代法规，并核对对应条文内容。",
+                )
+            )
+
+    # A1 条文不存在：本地库有该法完整全文但条号未命中，且后备源也没找到该条
+    if result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING and article_no:
+        local_count = 0
+        for trace in attempts:
+            if trace.tier == SourceTier.LOCAL_SQLITE:
+                local_count = trace.metadata.get("local_article_count", 0)
+        if local_count > 0:
+            findings.append(
+                SemanticIssue(
+                    error_type=SemanticErrorType.LOCATION_ERROR,
+                    risk_level=RiskLevel.HIGH,
+                    diff_summary=(
+                        f"《{strip_version_annotation(law_title)}》现行全文共"
+                        f"{local_count}条，其中不存在{article_no}"
+                    )[:80],
+                    suggestion="请核实条文编号；该条在现行有效版本中不存在。",
+                )
+            )
+        elif result.evidence is not None and not repealed:
+            # 已废止法规查不到条文属预期，不再叠加噪音
+            findings.append(
+                SemanticIssue(
+                    error_type=SemanticErrorType.LOCATION_ERROR,
+                    risk_level=RiskLevel.MEDIUM,
+                    diff_summary=f"北大法宝已收录该法规，但未检索到{article_no}"[:80],
+                    suggestion="请人工核实该条文编号是否存在。",
+                )
+            )
+
+    # A3 法源不存在 / 法名疑似有误
+    if result.status == LookupStatus.LAW_NOT_FOUND:
+        search_completed = any(
+            trace.metadata.get("search_completed") for trace in attempts
+        )
+        candidate_titles = [
+            title
+            for trace in attempts
+            for title in trace.metadata.get("candidate_titles", [])
+        ]
+        suggestion_title = _suggest_similar_title(
+            law_title, known_titles + candidate_titles
+        )
+        suggestion_text = (
+            f"疑似应为《{suggestion_title}》，请核实法规名称。"
+            if suggestion_title
+            else "请核实法规名称、发布机关及发文字号。"
+        )
+        if search_completed:
+            findings.append(
+                SemanticIssue(
+                    error_type=SemanticErrorType.SOURCE_NOT_FOUND,
+                    risk_level=RiskLevel.HIGH,
+                    diff_summary=(
+                        f"本地法规库与北大法宝均未检索到"
+                        f"《{strip_version_annotation(law_title)}》"
+                    )[:80],
+                    suggestion=suggestion_text,
+                )
+            )
+        elif suggestion_title:
+            findings.append(
+                SemanticIssue(
+                    error_type=SemanticErrorType.SOURCE_NOT_FOUND,
+                    risk_level=RiskLevel.MEDIUM,
+                    diff_summary=(
+                        f"未检索到《{strip_version_annotation(law_title)}》，"
+                        f"名称与《{suggestion_title}》高度相似"
+                    )[:80],
+                    suggestion=suggestion_text,
+                )
+            )
+
+    return findings
+
+
+def _suggest_similar_title(law_title: str, known_titles: list[str]) -> Optional[str]:
+    if not known_titles:
+        return None
+    target = strip_version_annotation(normalize_title(law_title))
+    matches = difflib.get_close_matches(target, known_titles, n=1, cutoff=0.8)
+    if matches:
+        return matches[0]
+    # 剥掉"中华人民共和国"前缀再试一次
+    short = target.replace("中华人民共和国", "", 1)
+    shorts = [t.replace("中华人民共和国", "", 1) for t in known_titles]
+    matches = difflib.get_close_matches(short, shorts, n=1, cutoff=0.8)
+    if matches:
+        index = shorts.index(matches[0])
+        return known_titles[index]
+    return None
 
 
 def _document_quote(claim) -> str:

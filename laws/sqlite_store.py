@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -41,6 +42,19 @@ def seed_common_laws(db_path: str | Path, catalog_path: str | Path | None = None
 
 def find_law(conn: sqlite3.Connection, title: str) -> Optional[sqlite3.Row]:
     normalized = normalize_title(title)
+    row = _find_law_by_normalized(conn, normalized)
+    if row:
+        return row
+    # 文书常带版本注记，如《网络安全法（2025修正）》；剥离后重试
+    stripped = strip_version_annotation(normalized)
+    if stripped != normalized:
+        return _find_law_by_normalized(conn, stripped)
+    return None
+
+
+def _find_law_by_normalized(
+    conn: sqlite3.Connection, normalized: str
+) -> Optional[sqlite3.Row]:
     row = conn.execute(
         "SELECT * FROM laws WHERE normalized_title = ? LIMIT 1",
         (normalized,),
@@ -289,6 +303,23 @@ def upsert_article(conn: sqlite3.Connection, law_id: int, record: dict[str, Any]
 
 def normalize_title(title: str) -> str:
     return "".join(title.split()).replace("《", "").replace("》", "").replace("〈", "").replace("〉", "")
+
+
+_VERSION_ANNOTATION = re.compile(
+    r"[（(](?:\d{4}年?)?(?:修正|修订|修改)(?:\d{4}年?)?[）)]$"
+)
+
+
+def strip_version_annotation(title: str) -> str:
+    """剥离标题末尾的版本注记，如"（2025修正）""（2018年修订）"。"""
+    return _VERSION_ANNOTATION.sub("", title)
+
+
+def list_law_titles(conn: sqlite3.Connection) -> list[str]:
+    """返回库内全部法规标题及别名（用于法名模糊纠错）。"""
+    titles = [row[0] for row in conn.execute("SELECT title FROM laws")]
+    titles.extend(row[0] for row in conn.execute("SELECT alias FROM law_aliases"))
+    return titles
 
 
 def normalize_article_key(article_no: str) -> str:

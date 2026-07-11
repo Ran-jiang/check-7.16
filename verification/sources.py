@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol
-from laws.sqlite_store import connect, find_current_article, find_law, list_current_articles
+from laws.sqlite_store import (
+    connect,
+    find_current_article,
+    find_law,
+    list_current_articles,
+    normalize_title,
+    strip_version_annotation,
+)
 
 from .article_retrieval import retrieve_relevant_articles
 from .pkulaw_mcp import (
@@ -14,6 +21,7 @@ from .pkulaw_mcp import (
     PkulawLawRecord,
     PkulawMcpClient,
     PkulawMcpError,
+    PkulawNotFoundError,
 )
 from .schema import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
 
@@ -132,6 +140,10 @@ class LocalSQLiteSource:
                     if request.article_no
                     else LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
                 )
+                local_article_count = len(
+                    list_current_articles(conn, request.law_title)
+                )
+                trace.metadata = {"local_article_count": local_article_count}
                 trace.message = (
                     "本地库已收录该法规，但无可用条文全文"
                     if not request.article_no
@@ -172,10 +184,19 @@ class PkulawFallbackSource:
         )
         try:
             article = self._client().get_law_item_content(request.law_title, request.article_no or "")
+        except PkulawNotFoundError:
+            # 精准查条未命中：再查法规列表，区分"法规存在但无此条"与"法规不存在"
+            return self._lookup_after_article_miss(request, trace)
         except PkulawMcpError as exc:
             trace.status = _pkulaw_error_status(exc)
             trace.message = str(exc)
             return LookupResult(trace.status, None, trace)
+
+        # fatiao 的标题匹配非常宽松（查《合同法》可能返回《民法典》条文），
+        # 返回法规与请求法规不同名时不得作为证据，转入法规列表精确匹配流程
+        if _match_law_record(request.law_title, [article]) is None:
+            trace.message = f"精准查条返回了不同名法规《{article.title}》，已忽略"
+            return self._lookup_after_article_miss(request, trace)
 
         trace.status = LookupStatus.ARTICLE_FOUND
         trace.source_url = article.url
@@ -193,6 +214,49 @@ class PkulawFallbackSource:
         )
         return LookupResult(trace.status, evidence, trace)
 
+    def _lookup_after_article_miss(
+        self, request: LookupRequest, trace: SourceTrace
+    ) -> LookupResult:
+        try:
+            records = self._client().get_law_list(title=request.law_title)
+        except PkulawNotFoundError:
+            records = []
+        except PkulawMcpError as exc:
+            trace.status = _pkulaw_error_status(exc)
+            trace.message = f"精准查条未命中，法规列表查询失败：{exc}"
+            return LookupResult(trace.status, None, trace)
+
+        matched = _match_law_record(request.law_title, records)
+        if matched is None:
+            trace.status = LookupStatus.LAW_NOT_FOUND
+            trace.message = "北大法宝检索完成，未找到该法规"
+            trace.metadata = {
+                "search_completed": True,
+                # 法宝模糊检索返回的相近标题，供法名纠错建议使用
+                "candidate_titles": [record.title for record in records[:5]],
+            }
+            return LookupResult(trace.status, None, trace)
+
+        trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
+        trace.message = f"北大法宝已收录该法规，但未返回{request.article_no}"
+        trace.source_url = matched.url
+        trace.metadata = {
+            "search_completed": True,
+            **_law_record_metadata(matched),
+        }
+        evidence = ArticleEvidence(
+            law_title=matched.title,
+            source_type=request.source_type,
+            article_no=request.article_no,
+            article_text=None,
+            version_label=_first(matched.timeliness),
+            version_status=_first(matched.timeliness),
+            effective_from=matched.implement_date,
+            source_metadata=_law_record_metadata(matched),
+            data_source=trace,
+        )
+        return LookupResult(trace.status, evidence, trace)
+
     def _lookup_law_list(self, request: LookupRequest, fulltext: str) -> LookupResult:
         trace = SourceTrace(
             tier=SourceTier.PKULAW_FALLBACK,
@@ -201,6 +265,10 @@ class PkulawFallbackSource:
         )
         try:
             records = self._client().get_law_list(title=request.law_title, fulltext=fulltext)
+        except PkulawNotFoundError as exc:
+            trace.message = str(exc)
+            trace.metadata = {"search_completed": True}
+            return LookupResult(trace.status, None, trace)
         except PkulawMcpError as exc:
             trace.status = _pkulaw_error_status(exc)
             trace.message = str(exc)
@@ -208,6 +276,7 @@ class PkulawFallbackSource:
 
         if not records:
             trace.message = "No Pkulaw candidate law found"
+            trace.metadata = {"search_completed": True}
             return LookupResult(trace.status, None, trace)
 
         top = records[0]
@@ -244,6 +313,25 @@ def _pkulaw_error_status(exc: PkulawMcpError) -> LookupStatus:
     if "PKULAW_ACCESS_TOKEN" in str(exc):
         return LookupStatus.SOURCE_NOT_CONFIGURED
     return LookupStatus.SOURCE_ERROR
+
+
+def _match_law_record(
+    law_title: str, records: list[PkulawLawRecord]
+) -> Optional[PkulawLawRecord]:
+    """从法宝模糊列表中挑出与文书法名真正同名的法规。
+
+    法宝的标题检索会连带返回相关司法解释等，只有归一化后
+    标题一致（或仅差"中华人民共和国"前缀/版本注记）才算命中。
+    """
+    target = strip_version_annotation(normalize_title(law_title))
+    target_full = (
+        target if target.startswith("中华人民共和国") else f"中华人民共和国{target}"
+    )
+    for record in records:
+        candidate = strip_version_annotation(normalize_title(record.title))
+        if candidate in (target, target_full):
+            return record
+    return None
 
 
 def _article_metadata(article: PkulawArticle) -> dict:

@@ -49,6 +49,11 @@ ARTICLE_PATTERN = re.compile(
     rf"第({_CN_NUM})条(?:之({_CN_NUM_EXTRA}))?"
 )
 
+# 条号范围：第X条至第Y条
+ARTICLE_RANGE_PATTERN = re.compile(
+    rf"第({_CN_NUM})条至第({_CN_NUM})条"
+)
+
 # 款：第X款
 PARAGRAPH_PATTERN = re.compile(
     rf"第({_CN_NUM})款"
@@ -362,7 +367,71 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
             items=items,
         ))
 
+    # "第X条至第Y条"范围展开：补全被跳过的中间条号
+    # （ARTICLE_PATTERN 只命中范围的两端，如"第四十三条至第四十五条"
+    #   会漏掉第四十四条）
+    existing = {a.article for a in articles}
+    for rm in ARTICLE_RANGE_PATTERN.finditer(text):
+        start = _cn_num_to_int(rm.group(1))
+        end = _cn_num_to_int(rm.group(2))
+        if not (0 < start < end and end - start <= 50):
+            continue
+        for number in range(start + 1, end):
+            article_text = f"第{_int_to_cn_num(number)}条"
+            if article_text not in existing:
+                existing.add(article_text)
+                articles.append(ArticleRef(article=article_text))
+
     return articles
+
+
+def _cn_num_to_int(text: str) -> int:
+    """中文数字（或阿拉伯数字）转 int。无法解析时返回 0。"""
+    text = text.strip()
+    if text.isdigit():
+        return int(text)
+    digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
+              "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    units = {"十": 10, "百": 100, "千": 1000}
+    section = 0
+    number = 0
+    for char in text:
+        if char in digits:
+            number = digits[char]
+        elif char in units:
+            section += (number or 1) * units[char]
+            number = 0
+        else:
+            return 0
+    return section + number
+
+
+def _int_to_cn_num(value: int) -> str:
+    """int 转中文数字（支持 1-9999，法条条号足够）。"""
+    if value <= 0 or value > 9999:
+        return str(value)
+    digits = "零一二三四五六七八九"
+    parts = []
+    thousands, rest = divmod(value, 1000)
+    hundreds, rest = divmod(rest, 100)
+    tens, ones = divmod(rest, 10)
+    if thousands:
+        parts.append(digits[thousands] + "千")
+    if hundreds:
+        parts.append(digits[hundreds] + "百")
+    elif thousands and (tens or ones):
+        parts.append("零")
+    if tens:
+        # "一十X" 习惯写作 "十X"（仅当没有更高位时）
+        if tens == 1 and not thousands and not hundreds:
+            parts.append("十")
+        else:
+            parts.append(digits[tens] + "十")
+    elif (thousands or hundreds) and ones:
+        parts.append("零")
+    if ones:
+        parts.append(digits[ones])
+    return "".join(parts)
 
 
 def extract_legal_sources(text: str) -> list[LegalSource]:
