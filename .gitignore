@@ -5,8 +5,10 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.venv/
 dist/
 build/
+node_modules/
 
 # pytest
 .pytest_cache/

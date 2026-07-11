@@ -462,12 +462,8 @@ def _get_style_name(para_element, docx: DocxDocument) -> Optional[str]:
     style_id = pStyle.get(qn("w:val"))
     if style_id is None:
         return None
-    # 从 docx 的样式表中查找样式名称
-    try:
-        style = docx.styles[style_id]
-        return style.name if style else style_id
-    except (KeyError, AttributeError):
-        return style_id
+    style = next((item for item in docx.styles if item.style_id == style_id), None)
+    return style.name if style is not None else style_id
 
 
 def _split_block_to_anchors(

@@ -30,17 +30,6 @@ from .schema import ArticleRef, LegalSource, LegalSourceType
 # 注意：书名号内文本可能包含空格、标点、数字等
 LEGAL_SOURCE_PATTERN = re.compile(r"《([^》]+)》")
 
-# 非法律规范文件关键词（书名号内匹配到这些词的不作为法源）
-# 这些是日常商业/诉讼文件，不可外部检索
-NON_LEGAL_KEYWORDS = [
-    "合同", "协议", "授权", "确认函", "公证书", "通知书",
-    "证据目录", "发票", "订单", "截图", "收据", "催告函",
-    "承诺函", "担保函", "询证函", "报价单", "验收单",
-    "送货单", "结算单", "对账单", "欠条", "借条",
-    "委托书", "声明书", "告知书", "答复书", "申请", "登记表",
-    "营业执照", "章程", "股东名册", "出资证明",
-]
-
 # 国家标准/行业标准模式：GB/T XXXXX-XXXX 等（无书名号）
 # 例：GB/T 35273-2020 / GB/T 45674-2025 / GB 12345-2020
 # 标准编号本身就是唯一标识，不需要《》
@@ -165,7 +154,7 @@ NON_LEGAL_KEYWORDS = [
     "手册", "公约", "服务协议", "合作政策",
     "运营手册", "运营规范", "入驻协议",
     "回复函", "答复函", "函",
-    "运营手册", "账号管理", "用户协议",
+    "账号管理", "用户协议",
 ]
 
 # ============================================================
@@ -282,7 +271,6 @@ def _strip_parenthetical(title: str) -> str:
     Returns:
         剥离后的标题
     """
-    import re
     # 匹配末尾的括号注解：（...）或（...）
     return re.sub(r'[（(][^）)]*[）)]$', '', title).strip()
 
@@ -515,7 +503,6 @@ def _extract_bare_law_citations(
         seen_in_bare.add(normalized)
 
         # 提取条款号（从匹配的文段中）
-        article_text = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(2)
         segment = text[m.start():m.end()]
         articles = _extract_articles_from_text(segment)
 
@@ -569,37 +556,6 @@ def _normalize_law_title(title: str) -> str:
     title = title.strip()
     title = _strip_noise_prefix(title)
     return title
-
-
-def _has_noise_prefix(title: str) -> bool:
-    """
-    检查法名是否以明显的噪声前缀开头。
-
-    噪声前缀包括：谓语动词、法院名、连接词等
-    这些字符不可能出现在法律名称的开头。
-
-    Args:
-        title: 待检查的法名
-
-    Returns:
-        True 如果以噪声开头
-    """
-    noise_starts = [
-        "人民法院可以认定构成", "人民法院应当认定为",
-        "人民法院经审查可以认定为", "人民法院认定",
-        "法院可以认定构成", "法院应当认定为",
-        "以认定构成", "可以认定构成", "应当认定为",
-        "经审查可以认定为", "审查可以认定为",
-        "院应当认定为", "院认定",
-        "法院", "人民", "可以", "应当", "认定", "构成",
-        "属于", "依据", "根据", "适用", "参照", "依照",
-        "违反", "符合", "所称", "的", "为", "被",
-        "经审查", "不予", "依法", "适用",
-    ]
-    for noise in noise_starts:
-        if title.startswith(noise):
-            return True
-    return False
 
 
 def _strip_noise_prefix(title: str) -> str:
