@@ -1,6 +1,5 @@
 import json
 
-from verification.exact_comparison import compare_exact_text
 from verification.schema import (
     ArticleEvidence,
     ComparisonVerdict,
@@ -53,14 +52,11 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
             status=LookupStatus.ARTICLE_FOUND,
         ),
     )
-    diff = compare_exact_text("被告应当承担违约责任。", evidence.article_text)
-
     result = checker.compare(
         "被告应当承担违约责任。",
         "依据《民法典》第五百七十七条，被告应当承担违约责任。",
         "《民法典》第五百七十七条",
         evidence,
-        diff,
     )
 
     assert result.verdict == ComparisonVerdict.PASS

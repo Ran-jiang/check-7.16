@@ -88,10 +88,8 @@ def _decode_document(encoded: str) -> bytes:
 
 
 def _summarize(verification) -> CheckSummary:
-    passed = issues = bugs = exact_matches = 0
+    passed = issues = bugs = 0
     for check in verification.legal_checks:
-        if check.exact_comparison and check.exact_comparison.exact_match:
-            exact_matches += 1
         comparison = check.semantic_comparison
         if comparison is None:
             continue
@@ -114,7 +112,6 @@ def _summarize(verification) -> CheckSummary:
         passed=passed,
         issues=issues,
         bugs=bugs,
-        exact_matches=exact_matches,
         cases_verified=cases_verified,
         cases_not_found=cases_not_found,
     )

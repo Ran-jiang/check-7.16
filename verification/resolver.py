@@ -7,7 +7,6 @@ from typing import Iterable
 
 from claims.schema import ClaimDocument, ClaimType
 
-from .exact_comparison import compare_exact_text
 from .pkulaw_mcp import PkulawMcpError
 from .schema import (
     CaseCheck,
@@ -16,7 +15,6 @@ from .schema import (
     ComparisonConfidence,
     ComparisonVerdict,
     FrontendVerificationDocument,
-    ExactTextComparison,
     LegalCheck,
     LookupStatus,
     SemanticComparison,
@@ -76,23 +74,12 @@ def verify_claim_document_for_frontend(
                     ),
                 )
                 doc_quote = _document_quote(claim)
-                exact_comparison = None
-                if (
-                    article is not None
-                    and result.evidence is not None
-                    and result.evidence.article_text is not None
-                ):
-                    exact_comparison = compare_exact_text(
-                        doc_quote,
-                        result.evidence.article_text,
-                    )
                 semantic_comparison = _compare_semantics(
                     semantic_checker,
                     doc_quote,
                     claim.text,
                     _cited_source(legal_source.title, article),
                     result,
-                    exact_comparison,
                 )
                 checks.append(
                     LegalCheck(
@@ -104,7 +91,6 @@ def verify_claim_document_for_frontend(
                         article_no=article_no,
                         lookup_status=result.status,
                         evidence=result.evidence,
-                        exact_comparison=exact_comparison,
                         semantic_comparison=semantic_comparison,
                         source_attempts=attempts,
                     )
@@ -200,7 +186,6 @@ def _compare_semantics(
     quote_context: str,
     cited_source: str,
     lookup_result: LookupResult,
-    exact_comparison: ExactTextComparison | None,
 ) -> SemanticComparison | None:
     if semantic_checker is None:
         return None
@@ -242,7 +227,6 @@ def _compare_semantics(
             quote_context,
             cited_source,
             lookup_result.evidence,
-            exact_comparison,
         )
     except SemanticCheckError as exc:
         return SemanticComparison(

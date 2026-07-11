@@ -100,7 +100,7 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
 
 
 class FakeSemanticChecker:
-    def compare(self, doc_quote, quote_context, cited_source, evidence, diff_result):
+    def compare(self, doc_quote, quote_context, cited_source, evidence):
         return SemanticComparison(
             verdict=ComparisonVerdict.ISSUE,
             issues=[
@@ -161,8 +161,6 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
     )
 
     check = frontend_doc.legal_checks[0]
-    assert check.exact_comparison is not None
-    assert not check.exact_comparison.exact_match
     comparison = check.semantic_comparison
     assert comparison.verdict == ComparisonVerdict.ISSUE
     assert comparison.issues[0].error_type == SemanticErrorType.CONCLUSION_NOT_NECESSARILY_SUPPORTED
@@ -222,7 +220,6 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
     check = frontend_doc.legal_checks[0]
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
     assert check.article_no is None
-    assert check.exact_comparison is None
     assert check.evidence.related_articles[0].article_no == "第一条"
     assert check.semantic_comparison is not None
 

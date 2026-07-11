@@ -46,4 +46,3 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
     payload = response.json()
     assert payload["semantic_check"] is False
     assert payload["summary"]["total"] == 1
-    assert payload["verification"]["legal_checks"][0]["exact_comparison"] is not None

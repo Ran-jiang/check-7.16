@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from runtime_env import load_project_env
 
-from .schema import ArticleEvidence, ExactTextComparison, SemanticComparison
+from .schema import ArticleEvidence, SemanticComparison
 
 DEFAULT_MODEL = "qwen3.7-max"
 DEFAULT_BASE_URL = (
@@ -28,7 +28,6 @@ class SemanticChecker(Protocol):
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
-        diff_result: ExactTextComparison | None,
     ) -> SemanticComparison:
         ...
 
@@ -62,7 +61,6 @@ class QwenSemanticChecker:
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
-        diff_result: ExactTextComparison | None,
     ) -> SemanticComparison:
         if not evidence.article_text:
             raise SemanticCheckError("未取得法条原文，无法进行语义对比")
@@ -80,14 +78,6 @@ class QwenSemanticChecker:
                             "cited_source": cited_source,
                             "statute_text": evidence.article_text,
                             "source_metadata": _source_metadata(evidence),
-                            "diff_result": (
-                                diff_result.model_dump(mode="json")
-                                if diff_result is not None
-                                else {
-                                    "applicable": False,
-                                    "reason": "文书未注明具体条款，无唯一的逐字比对基准",
-                                }
-                            ),
                         },
                         ensure_ascii=False,
                     ),

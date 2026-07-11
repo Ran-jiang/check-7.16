@@ -18,7 +18,6 @@ class CheckSummary(BaseModel):
     passed: int
     issues: int
     bugs: int
-    exact_matches: int
     cases_verified: int
     cases_not_found: int
 

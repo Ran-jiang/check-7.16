@@ -66,19 +66,6 @@ class SemanticErrorType(str, Enum):
     CONCLUSION_NOT_NECESSARILY_SUPPORTED = "法条不足以必然支持文书结论"
 
 
-class DiffOperation(BaseModel):
-    operation: str
-    document_text: str = ""
-    statute_text: str = ""
-
-
-class ExactTextComparison(BaseModel):
-    exact_match: bool
-    document_text: str
-    statute_text: str
-    operations: list[DiffOperation] = Field(default_factory=list)
-
-
 class SemanticIssue(BaseModel):
     error_type: SemanticErrorType
     risk_level: RiskLevel
@@ -155,7 +142,6 @@ class LegalCheck(BaseModel):
     article_no: Optional[str] = None
     lookup_status: LookupStatus
     evidence: Optional[ArticleEvidence] = None
-    exact_comparison: Optional[ExactTextComparison] = None
     semantic_comparison: Optional[SemanticComparison] = None
     semantic_assessment: Optional[SemanticAssessment] = None
     source_attempts: list[SourceTrace] = Field(default_factory=list)

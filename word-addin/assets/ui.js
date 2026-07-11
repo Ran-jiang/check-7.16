@@ -54,7 +54,7 @@ export class CheckUi {
   renderResults(result) {
     const { summary, verification } = result
     document.getElementById("results-title").textContent = !result.semantic_check
-      ? "逐字比对完成"
+      ? "法规溯源完成"
       : summary.issues
       ? `发现 ${summary.issues} 项需核实`
       : "未发现语义问题"
@@ -70,7 +70,7 @@ export class CheckUi {
     const values = [
       [summary.total, "引用总数"],
       [summary.issues, "需核实"],
-      [summary.exact_matches, "逐字一致"],
+      [summary.passed, "语义通过"],
     ]
     for (const [value, label] of values) {
       const card = element("div", "summary-card")
@@ -96,17 +96,14 @@ export class CheckUi {
     const top = element("div", "result-topline")
     top.append(
       element("div", "result-source", `《${check.law_title}》${check.article_no || ""}`),
-      element("span", `status-pill is-${state}`, state === "issue" ? "需核实" : state === "bug" ? "无法判断" : state === "pass" ? "语义通过" : "仅逐字比对")
+      element("span", `status-pill is-${state}`, state === "issue" ? "需核实" : state === "bug" ? "无法判断" : state === "pass" ? "语义通过" : "未做语义核查")
     )
     card.append(top, element("blockquote", "claim-quote", check.claim_text))
 
-    const exact = check.exact_comparison
-    const literalText = !check.article_no
-      ? "逐字比对：文书未注明具体条款，不适用"
-      : exact
-      ? exact.exact_match ? "逐字比对：完全一致" : `逐字比对：${exact.operations.length} 处差异段`
-      : "逐字比对：未取得法条原文"
-    card.append(element("div", "literal-status", literalText))
+    const lookupText = check.evidence?.article_text
+      ? "法规溯源：已取得法条原文"
+      : `法规溯源：${check.lookup_status || "未取得法条原文"}`
+    card.append(element("div", "literal-status", lookupText))
 
     const relatedArticles = check.evidence?.related_articles || []
     if (relatedArticles.length) {
@@ -131,7 +128,7 @@ export class CheckUi {
       block.append(element("div", "issue-title", "需要人工处理"), element("p", "issue-summary", check.semantic_comparison.notes))
       card.append(block)
     }
-    if (check.evidence?.article_text || exact?.operations?.length) {
+    if (check.evidence?.article_text) {
       card.append(this.createDetails(check))
     }
     return card
@@ -142,21 +139,10 @@ export class CheckUi {
     details.append(element(
       "summary",
       "",
-      check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文与字面差异"
+      check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文"
     ))
     if (check.evidence?.article_text) {
       details.append(element("p", "statute-text", check.evidence.article_text))
-    }
-    const operations = check.exact_comparison?.operations || []
-    if (operations.length) {
-      const list = element("ol", "diff-list")
-      for (const operation of operations.slice(0, 8)) {
-        const source = operation.document_text || "∅"
-        const statute = operation.statute_text || "∅"
-        list.append(element("li", "", `文书「${source}」 → 法条「${statute}」`))
-      }
-      if (operations.length > 8) list.append(element("li", "", `其余 ${operations.length - 8} 处差异已省略展示`))
-      details.append(list)
     }
     return details
   }
