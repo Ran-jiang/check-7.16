@@ -43,7 +43,7 @@ python3 main.py doctor --law-db data/laws.sqlite
 ### 首次运行
 
 ```bash
-cd /Users/zangzixun/Desktop/星瀚杯/citecheck
+cd citecheck  # 仓库根目录
 python3 -m pip install -r requirements.txt
 npm install
 npm run certs

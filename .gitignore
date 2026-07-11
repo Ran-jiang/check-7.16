@@ -13,9 +13,6 @@ node_modules/
 # pytest
 .pytest_cache/
 
-# v0.3 本地法条库（由 lawctl import 生成）
-data/laws.db
-
 # macOS
 .DS_Store
 
