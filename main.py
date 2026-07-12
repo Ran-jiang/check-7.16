@@ -74,7 +74,9 @@ def parse(
         "data/laws.sqlite", "--law-db", help="SQLite 本地法规库路径"
     ),
     semantic_check: bool = typer.Option(
-        False, "--semantic-check", help="使用千问进行法律引用语义和结论支持性检查"
+        True,
+        "--semantic-check/--no-semantic-check",
+        help="千问语义核查（默认开启；仅存在性核查时用 --no-semantic-check 关闭）",
     ),
     qwen_model: Optional[str] = typer.Option(
         None, "--qwen-model", help="语义检查使用的千问模型"

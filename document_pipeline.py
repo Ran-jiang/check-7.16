@@ -50,7 +50,10 @@ def verify_document_claims(
         try:
             semantic_checker = QwenSemanticChecker.from_env(qwen_model)
         except SemanticCheckError as exc:
-            raise DocumentPipelineError(str(exc)) from exc
+            raise DocumentPipelineError(
+                "语义核查默认开启，需要在 .env 中配置 DASHSCOPE_API_KEY"
+                "（参考 .env.example）；如仅做存在性核查可显式关闭语义核查。"
+            ) from exc
 
     return verify_claim_document_for_frontend(
         claim_document,

@@ -16,9 +16,12 @@ def test_check_runtime_reports_ready_law_db(tmp_path: Path, monkeypatch):
 
     results = check_runtime(db_path)
 
-    assert all(result.ok for result in results)
+    assert results[0].ok
     assert "1 laws" in results[0].message
-    assert results[1].message == "optional semantic checks not configured"
+    # 语义核查已改为默认必配：缺少 DASHSCOPE_API_KEY 时 doctor 报 FAIL
+    assert not results[1].ok
+    assert "DASHSCOPE_API_KEY" in results[1].message
+    assert results[2].ok
     assert results[2].message == "optional fallback not configured"
 
 

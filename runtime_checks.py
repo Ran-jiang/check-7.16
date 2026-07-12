@@ -67,7 +67,11 @@ def _check_qwen_key() -> CheckResult:
     if os.getenv("DASHSCOPE_API_KEY"):
         model = os.getenv("QWEN_MODEL", "qwen3.7-max")
         return CheckResult("qwen", True, f"semantic checks configured with {model}")
-    return CheckResult("qwen", True, "optional semantic checks not configured")
+    return CheckResult(
+        "qwen",
+        False,
+        "语义核查默认开启但未配置 DASHSCOPE_API_KEY（见 .env.example）",
+    )
 
 
 def _count(conn: sqlite3.Connection, table_name: str) -> int:
