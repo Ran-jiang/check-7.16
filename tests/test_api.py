@@ -46,3 +46,92 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
     payload = response.json()
     assert payload["semantic_check"] is False
     assert payload["summary"]["total"] == 1
+
+
+def _seed_law_db(db_path):
+    init_db(db_path)
+    with connect(db_path) as connection:
+        law_id = upsert_law(
+            connection,
+            {"title": "中华人民共和国民法典", "source_type": "law"},
+        )
+        upsert_article(
+            connection,
+            law_id,
+            {
+                "article_no": "第五百七十七条",
+                "text": "当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担违约责任。",
+            },
+        )
+
+
+def test_selection_check_api(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+
+    api_module = importlib.import_module("api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks/selection",
+        json={
+            "file_name": "test.docx",
+            "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
+            "semantic_check": False,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["file_name"] == "test.docx（选中片段）"
+    assert payload["summary"]["total"] == 1
+    assert payload["verification"]["legal_checks"][0]["lookup_status"] == "article_found"
+
+
+def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
+    api_module = importlib.import_module("api.app")
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks/selection",
+        json={"file_name": "test.docx", "text": "   \n  ", "semantic_check": False},
+    )
+    assert response.status_code == 400
+
+
+def test_report_generation_and_retrieval(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+
+    api_module = importlib.import_module("api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module, "REPORTS_DIR", tmp_path / "reports")
+    client = TestClient(api_module.app)
+
+    check = client.post(
+        "/api/checks/selection",
+        json={
+            "file_name": "范本.docx",
+            "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
+            "semantic_check": False,
+        },
+    ).json()
+
+    check_id = check["verification"]["legal_checks"][0]["check_id"]
+    report = client.post(
+        "/api/reports",
+        json={
+            "file_name": check["file_name"],
+            "semantic_check": check["semantic_check"],
+            "summary": check["summary"],
+            "verification": check["verification"],
+            "decisions": {check_id: "escalated"},
+        },
+    )
+    assert report.status_code == 200
+    url = report.json()["url"]
+
+    page = client.get(url)
+    assert page.status_code == 200
+    assert "CCitecheck 法律引用核查报告" in page.text
+    assert "转人工复核" in page.text
+    assert "民法典" in page.text

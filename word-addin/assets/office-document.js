@@ -38,6 +38,38 @@ export async function getDocumentBase64() {
   }
 }
 
+export function getSelectedText() {
+  return new Promise((resolve, reject) => {
+    Office.context.document.getSelectedDataAsync(
+      Office.CoercionType.Text,
+      result => result.status === Office.AsyncResultStatus.Succeeded
+        ? resolve((result.value || "").trim())
+        : reject(new Error(result.error.message))
+    )
+  })
+}
+
+// Word 的 search 对超长字符串会失败，截取片段前缀定位。
+const JUMP_SNIPPET_LIMIT = 90
+
+export async function jumpToText(snippet) {
+  if (!window.Word?.run) {
+    throw new Error("当前 Word 版本不支持文档内定位")
+  }
+  const needle = (snippet || "").trim().slice(0, JUMP_SNIPPET_LIMIT)
+  if (!needle) throw new Error("没有可定位的文本")
+  await Word.run(async context => {
+    const results = context.document.body.search(needle, { matchCase: false })
+    results.load("items")
+    await context.sync()
+    if (!results.items.length) {
+      throw new Error("未在文档中找到该片段（可能已被修改）")
+    }
+    results.items[0].select()
+    await context.sync()
+  })
+}
+
 function getCompressedFile() {
   return new Promise((resolve, reject) => {
     Office.context.document.getFileAsync(

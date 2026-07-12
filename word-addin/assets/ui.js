@@ -1,8 +1,20 @@
 const screens = ["home-screen", "progress-screen", "results-screen"]
 
+const DECISION_OPTIONS = [
+  ["accepted", "接受"],
+  ["ignored", "忽略"],
+  ["escalated", "转人工"],
+]
+
 export class CheckUi {
   constructor() {
     this.messageTimer = null
+    this.handlers = { onJump: null, onDecide: null }
+    this.decisions = {}
+  }
+
+  setHandlers(handlers) {
+    this.handlers = { ...this.handlers, ...handlers }
   }
 
   showScreen(id) {
@@ -51,8 +63,9 @@ export class CheckUi {
     }
   }
 
-  renderResults(result) {
+  renderResults(result, decisions = {}) {
     const { summary, verification } = result
+    this.decisions = decisions
     document.getElementById("results-title").textContent = !result.semantic_check
       ? "法规溯源完成"
       : summary.issues
@@ -91,7 +104,9 @@ export class CheckUi {
 
   createResultCard(check) {
     const verdict = check.semantic_comparison?.verdict
-    const state = verdict === "issue" ? "issue" : verdict === "bug" ? "bug" : verdict === "pass" ? "pass" : "not-run"
+    const hasRuleFindings = (check.rule_findings || []).length > 0
+    const state = hasRuleFindings || verdict === "issue"
+      ? "issue" : verdict === "bug" ? "bug" : verdict === "pass" ? "pass" : "not-run"
     const card = element("article", `result-card is-${state}`)
     const top = element("div", "result-topline")
     top.append(
@@ -114,7 +129,8 @@ export class CheckUi {
       ))
     }
 
-    for (const issue of check.semantic_comparison?.issues || []) {
+    const findings = [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
+    for (const issue of findings) {
       const block = element("div", "issue-block")
       block.append(
         element("div", "issue-title", `${issue.risk_level} · ${issue.error_type}`),
@@ -131,7 +147,39 @@ export class CheckUi {
     if (check.evidence?.article_text) {
       card.append(this.createDetails(check))
     }
+    card.append(this.createActionRow(check))
     return card
+  }
+
+  createActionRow(check) {
+    const row = element("div", "action-row")
+    const jump = element("button", "action-button jump-button", "定位原文")
+    jump.type = "button"
+    jump.addEventListener("click", () => this.handlers.onJump?.(check))
+    row.append(jump)
+
+    const group = element("div", "decision-group")
+    for (const [value, label] of DECISION_OPTIONS) {
+      const button = element("button", "action-button decision-button", label)
+      button.type = "button"
+      button.dataset.decision = value
+      button.dataset.checkId = check.check_id
+      if (this.decisions[check.check_id] === value) button.classList.add("is-active")
+      button.addEventListener("click", () => {
+        const current = this.decisions[check.check_id]
+        const next = current === value ? null : value
+        this.decisions = this.handlers.onDecide?.(check.check_id, next) || this.decisions
+        for (const sibling of group.querySelectorAll(".decision-button")) {
+          sibling.classList.toggle(
+            "is-active",
+            this.decisions[check.check_id] === sibling.dataset.decision
+          )
+        }
+      })
+      group.append(button)
+    }
+    row.append(group)
+    return row
   }
 
   createDetails(check) {

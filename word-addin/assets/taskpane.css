@@ -160,3 +160,14 @@ button { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- 选中片段核查 / 三态标记 / 报告导出 ---- */
+.secondary-button { width: 100%; margin-top: 10px; min-height: 44px; border: 1px solid #171717; border-radius: 12px; background: #fff; color: #171717; font-weight: 600; cursor: pointer; }
+.secondary-button:disabled { border-color: #b9b9b9; color: #b9b9b9; cursor: not-allowed; }
+.toolbar-buttons { display: flex; gap: 10px; }
+.action-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; border-top: 1px dashed #e2ded5; padding-top: 8px; }
+.action-button { border: 1px solid #cfcabd; border-radius: 8px; background: #fff; color: #444; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.action-button:hover { border-color: #171717; color: #171717; }
+.jump-button { font-weight: 600; }
+.decision-group { display: flex; gap: 6px; }
+.decision-button.is-active { background: #171717; border-color: #171717; color: #fff; }

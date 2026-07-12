@@ -5,10 +5,11 @@ from __future__ import annotations
 import base64
 import binascii
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from document_pipeline import (
@@ -19,11 +20,20 @@ from document_pipeline import (
 )
 from verification.schema import CaseLookupStatus, ComparisonVerdict
 
-from .schema import CheckSummary, DocumentCheckRequest, DocumentCheckResponse
+from .report import render_report_html
+from .schema import (
+    CheckSummary,
+    DocumentCheckRequest,
+    DocumentCheckResponse,
+    ReportRequest,
+    ReportResponse,
+    SelectionCheckRequest,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ADDIN_ROOT = PROJECT_ROOT / "word-addin"
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
+REPORTS_DIR = PROJECT_ROOT / "reports"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
 app = FastAPI(title="CCitecheck API", version="1.0.0")
@@ -78,6 +88,59 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
         summary=_summarize(verification),
         verification=verification,
     )
+
+
+@app.post("/api/checks/selection", response_model=DocumentCheckResponse)
+def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
+    """核查用户在 Word 中选中的文本片段：构造临时 DOCX 复用完整核查管线。"""
+    lines = [line.strip() for line in request.text.splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=400, detail="选中内容为空，无法核查")
+
+    from docx import Document as DocxDocument
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".docx") as temporary_file:
+            selection_doc = DocxDocument()
+            for line in lines:
+                selection_doc.add_paragraph(line)
+            selection_doc.save(temporary_file.name)
+            parsed_document = parse_and_validate_document(temporary_file.name)
+            claim_document = extract_document_claims(parsed_document)
+            verification = verify_document_claims(
+                claim_document,
+                LAW_DB,
+                semantic_check=request.semantic_check,
+            )
+    except DocumentPipelineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return DocumentCheckResponse(
+        file_name=f"{Path(request.file_name).name}（选中片段）",
+        semantic_check=request.semantic_check,
+        summary=_summarize(verification),
+        verification=verification,
+    )
+
+
+@app.post("/api/reports", response_model=ReportResponse)
+def create_report(request: ReportRequest) -> ReportResponse:
+    """由前端回传核查结果与人工标记，生成可交付、可审计的 HTML 核查报告。"""
+    report_id = uuid.uuid4().hex
+    REPORTS_DIR.mkdir(exist_ok=True)
+    report_path = REPORTS_DIR / f"{report_id}.html"
+    report_path.write_text(render_report_html(request), encoding="utf-8")
+    return ReportResponse(report_id=report_id, url=f"/reports/{report_id}")
+
+
+@app.get("/reports/{report_id}", include_in_schema=False)
+def get_report(report_id: str) -> HTMLResponse:
+    if not report_id.isalnum():
+        raise HTTPException(status_code=404, detail="报告不存在")
+    report_path = REPORTS_DIR / f"{report_id}.html"
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return HTMLResponse(report_path.read_text(encoding="utf-8"))
 
 
 def _decode_document(encoded: str) -> bytes:

@@ -57,8 +57,9 @@
         <button id="attach-button" class="attach-button" type="button" aria-label="重新读取当前文档" title="重新读取当前文档">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>
         </button>
-        <button id="start-button" class="primary-button" type="button" disabled>开始核查</button>
+        <button id="start-button" class="primary-button" type="button" disabled>核查全文</button>
       </div>
+      <button id="selection-button" class="secondary-button" type="button" disabled>核查选中内容</button>
     </section>
 
     <section id="progress-screen" class="screen progress-screen is-hidden" aria-labelledby="progress-title">
@@ -97,7 +98,10 @@
       <div id="summary-grid" class="summary-grid"></div>
       <div class="results-toolbar">
         <span class="section-label">引用明细</span>
-        <button id="rerun-button" class="text-button" type="button">重新核查</button>
+        <span class="toolbar-buttons">
+          <button id="export-button" class="text-button" type="button">导出报告</button>
+          <button id="rerun-button" class="text-button" type="button">重新核查</button>
+        </span>
       </div>
       <div id="results-list" class="results-list"></div>
     </section>
