@@ -331,6 +331,12 @@ def _match_law_record(
         candidate = strip_version_annotation(normalize_title(record.title))
         if candidate in (target, target_full):
             return record
+    # 部门规范性文件常以《关于印发〈XXX〉的通知》为载体发布，本身没有独立同名条目；
+    # 标题内嵌目标法名且为印发/发布类通知的，视为该文件存在的证据。
+    for record in records:
+        title = record.title or ""
+        if f"《{target}》" in title and ("印发" in title or "发布" in title):
+            return record
     return None
 
 

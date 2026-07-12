@@ -378,3 +378,18 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
     assert verified.evidence.url.endswith(".html")
     assert flagged.lookup_status == CaseLookupStatus.NOT_FOUND
     assert flagged.evidence is None
+
+
+def test_match_law_record_accepts_promulgation_notice_title():
+    from verification.pkulaw_mcp import PkulawLawRecord
+    from verification.sources import _match_law_record
+
+    records = [
+        PkulawLawRecord(title="中国互联网金融协会关于举办“《常见类型移动互联网应用程序必要个人信息范围规定》政策解读”培训班的通知"),
+        PkulawLawRecord(title="国家互联网信息办公室秘书局等关于印发《常见类型移动互联网应用程序必要个人信息范围规定》的通知"),
+    ]
+    matched = _match_law_record("常见类型移动互联网应用程序必要个人信息范围规定", records)
+    assert matched is records[1]
+
+    # 只有培训班通知（无印发/发布字样）时不得视为命中
+    assert _match_law_record("常见类型移动互联网应用程序必要个人信息范围规定", records[:1]) is None
