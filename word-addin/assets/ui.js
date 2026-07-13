@@ -80,10 +80,16 @@ export class CheckUi {
     const { summary, verification } = result
     this.decisions = decisions
     this.checks = verification.legal_checks
-    document.getElementById("results-title").textContent = `共发现法律引用 ${summary.total} 处`
-    document.getElementById("results-subtitle").textContent =
-      `${summary.passed} 处已通过 · ${summary.issues} 处待核实` +
-      (summary.bugs ? ` · ${summary.bugs} 处无法判断` : "")
+    const title = document.getElementById("results-title")
+    title.replaceChildren(
+      element("span", "title-main", "共发现法律引用"),
+      element("em", "title-count", String(summary.total)),
+      element("span", "title-main", "处"),
+      element("span", "title-sub",
+        `${summary.passed} 处已通过 · ${summary.issues} 处待核实` +
+        (summary.bugs ? ` · ${summary.bugs} 处无法判断` : ""))
+    )
+    document.getElementById("results-subtitle").textContent = result.file_name
     this.renderTypeFilter()
     this.renderChecks()
     this.showScreen("results-screen")
@@ -144,9 +150,18 @@ export class CheckUi {
     // 第二行：法律引用原文
     card.append(element("blockquote", "claim-quote", check.claim_text))
 
-    // 第三行：置信度 + 修改建议
-    const advice = this.buildAdviceLine(check, findings, state)
-    if (advice) card.append(element("div", "card-advice", advice))
+    // 第三行：置信度与修改建议分行；建议直接给出修改内容，不带前缀
+    if (findings.length) {
+      const first = findings[0]
+      const isRule = (check.rule_findings || []).includes(first)
+      const confidence = isRule
+        ? "确定"
+        : CONFIDENCE_LABELS[check.semantic_comparison?.confidence] || "—"
+      card.append(element("div", "card-conf", `置信度：${confidence}`))
+      card.append(element("p", "card-suggestion", first.suggestion))
+    } else if (state === "bug" && check.semantic_comparison?.notes) {
+      card.append(element("p", "card-suggestion", check.semantic_comparison.notes))
+    }
 
     // 折叠：查看法条原文 + 原文链接
     if (check.evidence?.article_text || sourceUrlOf(check)) {
@@ -157,21 +172,6 @@ export class CheckUi {
     return card
   }
 
-  buildAdviceLine(check, findings, state) {
-    if (findings.length) {
-      const first = findings[0]
-      const isRule = (check.rule_findings || []).includes(first)
-      const confidence = isRule
-        ? "确定"
-        : CONFIDENCE_LABELS[check.semantic_comparison?.confidence] || "—"
-      return `置信度：${confidence} · 建议：${first.suggestion}`
-    }
-    if (state === "bug" && check.semantic_comparison?.notes) {
-      return `建议：${check.semantic_comparison.notes}`
-    }
-    return ""
-  }
-
   createDetails(check) {
     const details = element("details", "result-details")
     details.append(element(
@@ -179,16 +179,24 @@ export class CheckUi {
       "",
       check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文"
     ))
-    if (check.evidence?.article_text) {
-      details.append(element("p", "statute-text", check.evidence.article_text))
-    }
     const url = sourceUrlOf(check)
+    const linkLine = element("div", "statute-line")
+    linkLine.append("原文链接：")
     if (url) {
-      const link = element("a", "statute-link", "原文链接 ↗")
+      const link = element("a", "statute-link", url)
       link.href = url
       link.target = "_blank"
       link.rel = "noopener noreferrer"
-      details.append(link)
+      linkLine.append(link)
+    } else {
+      linkLine.append("本地法规库（无外部链接）")
+    }
+    details.append(linkLine)
+    if (check.evidence?.article_text) {
+      const textLine = element("div", "statute-line")
+      textLine.append("原文内容：")
+      textLine.append(element("span", "statute-text-inline", check.evidence.article_text))
+      details.append(textLine)
     }
     return details
   }

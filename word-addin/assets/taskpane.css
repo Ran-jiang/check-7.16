@@ -233,3 +233,38 @@ label.scope-row { cursor: pointer; }
 .scope-copy small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
 .scope-fixed { color: #4e7657; font-size: 12px; white-space: nowrap; }
 .toggle:checked { background: var(--blue); }
+
+/* ---- v4 终版微调：字体渲染 / 一行混排标题 / 建议分行 / 原文两行 ---- */
+:root {
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Segoe UI", "Microsoft YaHei UI", "Hiragino Sans GB",
+               "Noto Sans CJK SC", sans-serif;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: 0.01em;
+}
+
+/* 标题一行混排：主句加粗 + 大号数字 + 小字统计 */
+.results-heading h1 {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px;
+  font-size: 16px; font-weight: 600; color: #1f2329;
+}
+.title-count {
+  font-style: normal; font-weight: 700; font-size: 26px; line-height: 1;
+  color: var(--blue); padding: 0 3px;
+  font-variant-numeric: tabular-nums;
+}
+.title-sub { font-size: 12px; font-weight: 400; color: #86909c; margin-left: 8px; }
+.results-subtitle { font-size: 12px; color: #a1a7b0; margin-top: 6px; }
+
+/* 置信度与建议分行 */
+.card-conf { margin-top: 12px; font-size: 12px; color: #86909c; }
+.card-suggestion { margin: 4px 0 0; font-size: 13.5px; color: #374151; line-height: 1.7; }
+
+/* 法条原文折叠：原文链接 / 原文内容 两行 */
+.statute-line { margin-top: 10px; font-size: 12.5px; color: #4e5969; line-height: 1.7; word-break: break-all; }
+.statute-line .statute-link { margin: 0; font-size: 12.5px; color: var(--blue); }
+.statute-text-inline { color: #6b7280; white-space: pre-wrap; word-break: break-word; }

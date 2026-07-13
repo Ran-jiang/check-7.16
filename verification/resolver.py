@@ -57,6 +57,7 @@ def verify_claim_document_for_frontend(
     sources: Iterable[StatuteSource] | None = None,
     semantic_checker: SemanticChecker | None = None,
     case_recognizer: CaseNumberRecognizer | None = None,
+    include_statutes: bool = True,
     include_cases: bool = True,
 ) -> FrontendVerificationDocument:
     source_chain = list(sources) if sources is not None else build_default_sources(db_path)
@@ -66,6 +67,8 @@ def verify_claim_document_for_frontend(
     next_id = 1
 
     for claim in claim_doc.claims:
+        if not include_statutes:
+            break
         if claim.claim_type not in (
             ClaimType.LEGAL_SOURCE_CLAIM,
             ClaimType.LEGAL_SOURCE_PARAPHRASE,

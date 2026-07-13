@@ -11,6 +11,7 @@ class DocumentCheckRequest(BaseModel):
     file_name: str = Field(min_length=1, max_length=255)
     docx_base64: str = Field(min_length=1)
     semantic_check: bool = True
+    include_statutes: bool = True
     include_cases: bool = True
 
 
@@ -20,6 +21,7 @@ class SelectionCheckRequest(BaseModel):
     file_name: str = Field(min_length=1, max_length=255)
     text: str = Field(min_length=1, max_length=200_000)
     semantic_check: bool = True
+    include_statutes: bool = True
     include_cases: bool = True
 
 

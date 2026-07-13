@@ -135,3 +135,40 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
     assert "CCitecheck 法律引用核查报告" in page.text
     assert "转人工复核" in page.text
     assert "民法典" in page.text
+
+
+def test_scope_validation_requires_at_least_one(tmp_path, monkeypatch):
+    api_module = importlib.import_module("api.app")
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks/selection",
+        json={
+            "file_name": "t.docx",
+            "text": "依据《中华人民共和国民法典》第五百七十七条。",
+            "semantic_check": False,
+            "include_statutes": False,
+            "include_cases": False,
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_statutes_can_be_excluded(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+    api_module = importlib.import_module("api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks/selection",
+        json={
+            "file_name": "t.docx",
+            "text": "依据《中华人民共和国民法典》第五百七十七条，应当承担违约责任。",
+            "semantic_check": False,
+            "include_statutes": False,
+            "include_cases": False or True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["verification"]["legal_checks"] == []

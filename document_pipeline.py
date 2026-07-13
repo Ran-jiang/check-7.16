@@ -44,6 +44,7 @@ def verify_document_claims(
     law_db: str | Path,
     semantic_check: bool,
     qwen_model: str | None = None,
+    include_statutes: bool = True,
     include_cases: bool = True,
 ) -> FrontendVerificationDocument:
     semantic_checker = None
@@ -60,5 +61,6 @@ def verify_document_claims(
         claim_document,
         law_db,
         semantic_checker=semantic_checker,
+        include_statutes=include_statutes,
         include_cases=include_cases,
     )

@@ -60,8 +60,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _validate_scope(request) -> None:
+    if not (request.include_statutes or request.include_cases):
+        raise HTTPException(status_code=400, detail="请至少选择一种核查范围（法规引用或司法案例）")
+
+
 @app.post("/api/checks", response_model=DocumentCheckResponse)
 def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
+    _validate_scope(request)
     document_bytes = _decode_document(request.docx_base64)
     if len(document_bytes) > MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="文档超过 25 MB 限制")
@@ -78,6 +84,7 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
     except DocumentPipelineError as exc:
@@ -94,6 +101,7 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
 @app.post("/api/checks/selection", response_model=DocumentCheckResponse)
 def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
     """核查用户在 Word 中选中的文本片段：构造临时 DOCX 复用完整核查管线。"""
+    _validate_scope(request)
     lines = [line.strip() for line in request.text.splitlines() if line.strip()]
     if not lines:
         raise HTTPException(status_code=400, detail="选中内容为空，无法核查")
@@ -112,6 +120,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
     except DocumentPipelineError as exc:

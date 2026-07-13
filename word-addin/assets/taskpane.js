@@ -51,7 +51,21 @@ async function connect() {
   }
 }
 
+function checkScope() {
+  const scope = {
+    include_statutes: document.getElementById("statute-toggle").checked,
+    include_cases: document.getElementById("case-toggle").checked,
+  }
+  if (!scope.include_statutes && !scope.include_cases) {
+    ui.showMessage("请至少选择一种核查范围（法规引用或司法案例）")
+    return null
+  }
+  return scope
+}
+
 async function runCheck() {
+  const scope = checkScope()
+  if (!scope) return
   ui.resetProgress()
   ui.showScreen("progress-screen")
   try {
@@ -64,7 +78,7 @@ async function runCheck() {
       file_name: documentName,
       docx_base64: docxBase64,
       semantic_check: true,
-      include_cases: document.getElementById("case-toggle").checked,
+      ...scope,
     })
     finishCheck(result)
   } catch (error) {
@@ -74,6 +88,8 @@ async function runCheck() {
 }
 
 async function runSelectionCheck() {
+  const scope = checkScope()
+  if (!scope) return
   try {
     const selectedText = await getSelectedText()
     if (!selectedText) {
@@ -90,7 +106,7 @@ async function runSelectionCheck() {
       file_name: documentName,
       text: selectedText,
       semantic_check: true,
-      include_cases: document.getElementById("case-toggle").checked,
+      ...scope,
     })
     finishCheck(result)
   } catch (error) {
