@@ -16,10 +16,7 @@
         <span>CCitecheck</span>
       </button>
       <div class="header-actions">
-        <button id="settings-button" class="icon-button" type="button" aria-label="核验设置" title="核验设置">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg>
-        </button>
-        <button id="help-button" class="icon-button" type="button" aria-label="帮助" title="帮助">?</button>
+        <button id="help-button" class="icon-button" type="button" aria-label="项目简介与功能介绍" title="项目简介与功能介绍">?</button>
       </div>
     </header>
 
@@ -46,6 +43,14 @@
           </div>
           <span id="connection-dot" class="connection-dot" aria-label="连接状态"></span>
         </div>
+      </section>
+
+      <section class="scope-section" aria-labelledby="scope-title">
+        <div class="section-label" id="scope-title">核查范围</div>
+        <ul class="scope-list">
+          <li>法规引用：法源是否存在、条号定位、时效状态、语义一致性与结论支持性</li>
+          <li>司法案例：案号真实性验证与权威案例溯源</li>
+        </ul>
       </section>
 
       <section id="history-section" class="history-section is-hidden" aria-labelledby="history-title">
@@ -97,7 +102,9 @@
       </div>
       <div id="summary-grid" class="summary-grid"></div>
       <div class="results-toolbar">
-        <span class="section-label">引用明细</span>
+        <select id="type-filter" class="type-filter" aria-label="按错误类型筛选">
+          <option value="">全部类型</option>
+        </select>
         <span class="toolbar-buttons">
           <button id="export-button" class="text-button" type="button">导出报告</button>
           <button id="rerun-button" class="text-button" type="button">重新核查</button>
@@ -105,17 +112,6 @@
       </div>
       <div id="results-list" class="results-list"></div>
     </section>
-
-    <aside id="settings-panel" class="settings-panel is-hidden" aria-labelledby="settings-title">
-      <div class="panel-header">
-        <div><p class="eyebrow">核查范围</p><h2 id="settings-title">设置</h2></div>
-        <button id="settings-close" class="icon-button" type="button" aria-label="关闭设置">×</button>
-      </div>
-      <label class="setting-row" for="semantic-toggle">
-        <div><strong>千问语义核验</strong><small>检查法源、时效、原意与结论支持性</small></div>
-        <input id="semantic-toggle" class="toggle" type="checkbox" checked>
-      </label>
-    </aside>
 
     <div id="message" class="message is-hidden" role="alert"></div>
   </main>

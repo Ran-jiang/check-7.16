@@ -19,8 +19,6 @@ document.getElementById("rerun-button").addEventListener("click", runCheck)
 document.getElementById("export-button").addEventListener("click", exportCurrentReport)
 document.getElementById("attach-button").addEventListener("click", connect)
 document.getElementById("brand-button").addEventListener("click", showHome)
-document.getElementById("settings-button").addEventListener("click", () => toggleSettings(true))
-document.getElementById("settings-close").addEventListener("click", () => toggleSettings(false))
 document.getElementById("help-button").addEventListener("click", openHelp)
 
 ui.setHandlers({
@@ -54,7 +52,6 @@ async function connect() {
 }
 
 async function runCheck() {
-  toggleSettings(false)
   ui.resetProgress()
   ui.showScreen("progress-screen")
   try {
@@ -66,7 +63,7 @@ async function runCheck() {
     const result = await checkDocument({
       file_name: documentName,
       docx_base64: docxBase64,
-      semantic_check: document.getElementById("semantic-toggle").checked,
+      semantic_check: true,
     })
     finishCheck(result)
   } catch (error) {
@@ -76,7 +73,6 @@ async function runCheck() {
 }
 
 async function runSelectionCheck() {
-  toggleSettings(false)
   try {
     const selectedText = await getSelectedText()
     if (!selectedText) {
@@ -92,7 +88,7 @@ async function runSelectionCheck() {
     const result = await checkSelection({
       file_name: documentName,
       text: selectedText,
-      semantic_check: document.getElementById("semantic-toggle").checked,
+      semantic_check: true,
     })
     finishCheck(result)
   } catch (error) {
@@ -131,12 +127,7 @@ async function exportCurrentReport() {
 }
 
 function showHome() {
-  toggleSettings(false)
   ui.showScreen("home-screen")
-}
-
-function toggleSettings(open) {
-  document.getElementById("settings-panel").classList.toggle("is-hidden", !open)
 }
 
 function openHelp() {

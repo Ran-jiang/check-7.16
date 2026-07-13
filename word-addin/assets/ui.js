@@ -3,14 +3,27 @@ const screens = ["home-screen", "progress-screen", "results-screen"]
 const DECISION_OPTIONS = [
   ["accepted", "接受"],
   ["ignored", "忽略"],
-  ["escalated", "转人工"],
 ]
+
+const CONFIDENCE_LABELS = { high: "高", medium: "中", low: "低" }
+
+const LOOKUP_STATUS_LABELS = {
+  article_found: "已取得法条原文",
+  relevant_articles_found: "已召回相关条款",
+  law_found_article_missing: "法规存在，未找到该条",
+  law_found_text_unavailable: "法规存在，条文全文不可用",
+  law_not_found: "未检索到该法规",
+  source_not_configured: "数据源未配置",
+  source_error: "数据源调用失败",
+  not_verifiable: "非法条类文件，不做条文核验",
+}
 
 export class CheckUi {
   constructor() {
     this.messageTimer = null
     this.handlers = { onJump: null, onDecide: null }
     this.decisions = {}
+    this.checks = []
   }
 
   setHandlers(handlers) {
@@ -56,7 +69,7 @@ export class CheckUi {
       const copy = element("div", "history-copy")
       copy.append(element("div", "history-name", item.fileName))
       const date = new Date(item.checkedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
-      const outcome = item.issues ? `${item.issues} 项需核实` : `${item.total} 条已核查`
+      const outcome = item.issues ? `${item.issues} 项待核实` : `${item.total} 条已核查`
       copy.append(element("div", "history-meta", `${date} · ${outcome}`))
       row.append(icon, copy, element("span", "row-chevron"))
       list.append(row)
@@ -66,89 +79,118 @@ export class CheckUi {
   renderResults(result, decisions = {}) {
     const { summary, verification } = result
     this.decisions = decisions
-    document.getElementById("results-title").textContent = !result.semantic_check
-      ? "法规溯源完成"
-      : summary.issues
-      ? `发现 ${summary.issues} 项需核实`
-      : "未发现语义问题"
-    document.getElementById("results-subtitle").textContent = `${result.file_name} · 共识别 ${summary.total} 处法律引用`
-    this.renderSummary(summary)
-    this.renderChecks(verification.legal_checks)
+    this.checks = verification.legal_checks
+    document.getElementById("results-title").textContent = "核查结果"
+    document.getElementById("results-subtitle").textContent =
+      `共发现法律引用 ${summary.total} 处，${summary.passed} 处已通过，${summary.issues} 处待核实` +
+      (summary.bugs ? `，${summary.bugs} 处无法判断` : "")
+    this.renderTypeFilter()
+    this.renderChecks()
     this.showScreen("results-screen")
   }
 
-  renderSummary(summary) {
-    const grid = document.getElementById("summary-grid")
-    grid.replaceChildren()
-    const values = [
-      [summary.total, "引用总数"],
-      [summary.issues, "需核实"],
-      [summary.passed, "语义通过"],
-    ]
-    for (const [value, label] of values) {
-      const card = element("div", "summary-card")
-      card.append(element("span", "summary-value", String(value)), element("span", "summary-label", label))
-      grid.append(card)
+  renderTypeFilter() {
+    const select = document.getElementById("type-filter")
+    const types = new Set()
+    for (const check of this.checks) {
+      for (const finding of findingsOf(check)) types.add(finding.error_type)
     }
+    const allOption = element("option", "", "全部类型")
+    allOption.value = ""
+    select.replaceChildren(allOption)
+    for (const type of types) {
+      const option = element("option", "", type)
+      option.value = type
+      select.append(option)
+    }
+    select.value = ""
+    select.onchange = () => this.renderChecks(select.value)
   }
 
-  renderChecks(checks) {
+  renderChecks(typeFilter = "") {
     const list = document.getElementById("results-list")
     list.replaceChildren()
-    if (!checks.length) {
-      list.append(element("div", "empty-results", "未识别到明确的法规或条文引用。"))
+    const visible = typeFilter
+      ? this.checks.filter(check => findingsOf(check).some(f => f.error_type === typeFilter))
+      : this.checks
+    if (!visible.length) {
+      list.append(element("div", "empty-results", typeFilter ? "该类型下没有核查结果。" : "未识别到明确的法规或条文引用。"))
       return
     }
-    for (const check of checks) list.append(this.createResultCard(check))
+    for (const check of visible) list.append(this.createResultCard(check))
   }
 
   createResultCard(check) {
+    const findings = findingsOf(check)
     const verdict = check.semantic_comparison?.verdict
-    const hasRuleFindings = (check.rule_findings || []).length > 0
-    const state = hasRuleFindings || verdict === "issue"
-      ? "issue" : verdict === "bug" ? "bug" : verdict === "pass" ? "pass" : "not-run"
+    const state = findings.length ? "issue" : verdict === "pass" ? "pass" : verdict === "bug" ? "bug" : "not-run"
+    const pillText = state === "issue" ? "待核实" : state === "pass" ? "通过" : state === "bug" ? "无法判断" : "未核查"
+
     const card = element("article", `result-card is-${state}`)
+
+    // 第一行：小字问题类型 + 右侧状态签
+    const typeText = findings.length
+      ? findings.map(f => f.error_type).join("；")
+      : state === "pass" ? "法律引用无问题"
+      : state === "bug" ? "数据源不足，需人工处理"
+      : LOOKUP_STATUS_LABELS[check.lookup_status] || check.lookup_status
     const top = element("div", "result-topline")
     top.append(
-      element("div", "result-source", `《${check.law_title}》${check.article_no || ""}`),
-      element("span", `status-pill is-${state}`, state === "issue" ? "需核实" : state === "bug" ? "无法判断" : state === "pass" ? "语义通过" : "未做语义核查")
+      element("div", "card-type", typeText),
+      element("span", `status-pill is-${state}`, pillText)
     )
-    card.append(top, element("blockquote", "claim-quote", check.claim_text))
+    card.append(top)
 
-    const lookupText = check.evidence?.article_text
-      ? "法规溯源：已取得法条原文"
-      : `法规溯源：${check.lookup_status || "未取得法条原文"}`
-    card.append(element("div", "literal-status", lookupText))
+    // 第二行：法律引用原文
+    card.append(element("blockquote", "claim-quote", check.claim_text))
 
-    const relatedArticles = check.evidence?.related_articles || []
-    if (relatedArticles.length) {
-      card.append(element(
-        "div",
-        "retrieval-status",
-        `已召回相关条款：${relatedArticles.map(item => item.article_no).join("、")}`
-      ))
-    }
+    // 第三行：置信度 + 修改建议
+    const advice = this.buildAdviceLine(check, findings, state)
+    if (advice) card.append(element("div", "card-advice", advice))
 
-    const findings = [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
-    for (const issue of findings) {
-      const block = element("div", "issue-block")
-      block.append(
-        element("div", "issue-title", `${issue.risk_level} · ${issue.error_type}`),
-        element("p", "issue-summary", issue.diff_summary),
-        element("p", "issue-suggestion", issue.suggestion)
-      )
-      card.append(block)
-    }
-    if (verdict === "bug" && check.semantic_comparison.notes) {
-      const block = element("div", "issue-block")
-      block.append(element("div", "issue-title", "需要人工处理"), element("p", "issue-summary", check.semantic_comparison.notes))
-      card.append(block)
-    }
-    if (check.evidence?.article_text) {
+    // 折叠：查看法条原文 + 原文链接
+    if (check.evidence?.article_text || sourceUrlOf(check)) {
       card.append(this.createDetails(check))
     }
+
     card.append(this.createActionRow(check))
     return card
+  }
+
+  buildAdviceLine(check, findings, state) {
+    if (findings.length) {
+      const first = findings[0]
+      const isRule = (check.rule_findings || []).includes(first)
+      const confidence = isRule
+        ? "确定"
+        : CONFIDENCE_LABELS[check.semantic_comparison?.confidence] || "—"
+      return `置信度：${confidence} · 建议：${first.suggestion}`
+    }
+    if (state === "bug" && check.semantic_comparison?.notes) {
+      return `建议：${check.semantic_comparison.notes}`
+    }
+    return ""
+  }
+
+  createDetails(check) {
+    const details = element("details", "result-details")
+    details.append(element(
+      "summary",
+      "",
+      check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文"
+    ))
+    if (check.evidence?.article_text) {
+      details.append(element("p", "statute-text", check.evidence.article_text))
+    }
+    const url = sourceUrlOf(check)
+    if (url) {
+      const link = element("a", "statute-link", "原文链接 ↗")
+      link.href = url
+      link.target = "_blank"
+      link.rel = "noopener noreferrer"
+      details.append(link)
+    }
+    return details
   }
 
   createActionRow(check) {
@@ -182,19 +224,6 @@ export class CheckUi {
     return row
   }
 
-  createDetails(check) {
-    const details = element("details", "result-details")
-    details.append(element(
-      "summary",
-      "",
-      check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文"
-    ))
-    if (check.evidence?.article_text) {
-      details.append(element("p", "statute-text", check.evidence.article_text))
-    }
-    return details
-  }
-
   showMessage(message) {
     const node = document.getElementById("message")
     node.textContent = message
@@ -202,6 +231,18 @@ export class CheckUi {
     clearTimeout(this.messageTimer)
     this.messageTimer = setTimeout(() => node.classList.add("is-hidden"), 5000)
   }
+}
+
+function findingsOf(check) {
+  return [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
+}
+
+// 法宝部分接口返回 Markdown 形式链接（[文本](URL)），归一化为纯 URL
+function sourceUrlOf(check) {
+  const raw = check.evidence?.data_source?.source_url || ""
+  const match = String(raw).match(/\((https?:\/\/[^)]+)\)/)
+  if (match) return match[1]
+  return String(raw).startsWith("http") ? raw : ""
 }
 
 function element(tag, className = "", text = "") {
