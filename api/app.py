@@ -78,6 +78,7 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                include_cases=request.include_cases,
             )
     except DocumentPipelineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -111,6 +112,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                include_cases=request.include_cases,
             )
     except DocumentPipelineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

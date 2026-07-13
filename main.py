@@ -81,6 +81,11 @@ def parse(
     qwen_model: Optional[str] = typer.Option(
         None, "--qwen-model", help="语义检查使用的千问模型"
     ),
+    include_cases: bool = typer.Option(
+        True,
+        "--include-cases/--no-include-cases",
+        help="是否同时核查司法案例案号（默认开启）",
+    ),
 ):
     """
     解析 DOCX 文件，生成 v0.1 ParsedDocument JSON、v0.2 ClaimDocument JSON
@@ -209,6 +214,7 @@ def _write_v0_3_verification(
             law_db,
             semantic_check=semantic_check,
             qwen_model=qwen_model,
+            include_cases=include_cases,
         )
     except DocumentPipelineError as exc:
         typer.echo(f"Semantic check error: {exc}", err=True)

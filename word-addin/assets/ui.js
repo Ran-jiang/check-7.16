@@ -1,8 +1,8 @@
 const screens = ["home-screen", "progress-screen", "results-screen"]
 
 const DECISION_OPTIONS = [
-  ["accepted", "接受"],
   ["ignored", "忽略"],
+  ["accepted", "接受"],
 ]
 
 const CONFIDENCE_LABELS = { high: "高", medium: "中", low: "低" }
@@ -80,10 +80,10 @@ export class CheckUi {
     const { summary, verification } = result
     this.decisions = decisions
     this.checks = verification.legal_checks
-    document.getElementById("results-title").textContent = "核查结果"
+    document.getElementById("results-title").textContent = `共发现法律引用 ${summary.total} 处`
     document.getElementById("results-subtitle").textContent =
-      `共发现法律引用 ${summary.total} 处，${summary.passed} 处已通过，${summary.issues} 处待核实` +
-      (summary.bugs ? `，${summary.bugs} 处无法判断` : "")
+      `${summary.passed} 处已通过 · ${summary.issues} 处待核实` +
+      (summary.bugs ? ` · ${summary.bugs} 处无法判断` : "")
     this.renderTypeFilter()
     this.renderChecks()
     this.showScreen("results-screen")

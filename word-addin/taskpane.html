@@ -47,10 +47,20 @@
 
       <section class="scope-section" aria-labelledby="scope-title">
         <div class="section-label" id="scope-title">核查范围</div>
-        <ul class="scope-list">
-          <li>法规引用：法源是否存在、条号定位、时效状态、语义一致性与结论支持性</li>
-          <li>司法案例：案号真实性验证与权威案例溯源</li>
-        </ul>
+        <div class="scope-row">
+          <div class="scope-copy">
+            <strong>法规引用</strong>
+            <small>法源存在 · 条号定位 · 时效 · 语义一致</small>
+          </div>
+          <span class="scope-fixed">必查</span>
+        </div>
+        <label class="scope-row" for="case-toggle">
+          <div class="scope-copy">
+            <strong>司法案例</strong>
+            <small>案号真实性验证与权威案例溯源</small>
+          </div>
+          <input id="case-toggle" class="toggle" type="checkbox" checked>
+        </label>
       </section>
 
       <section id="history-section" class="history-section is-hidden" aria-labelledby="history-title">
@@ -106,11 +116,13 @@
           <option value="">全部类型</option>
         </select>
         <span class="toolbar-buttons">
-          <button id="export-button" class="text-button" type="button">导出报告</button>
           <button id="rerun-button" class="text-button" type="button">重新核查</button>
         </span>
       </div>
       <div id="results-list" class="results-list"></div>
+      <div class="results-action">
+        <button id="export-button" class="primary-button" type="button">导出核查报告</button>
+      </div>
     </section>
 
     <div id="message" class="message is-hidden" role="alert"></div>

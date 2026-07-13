@@ -182,3 +182,54 @@ button { color: inherit; }
 .scope-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #555; line-height: 1.7; }
 .statute-link { display: inline-block; margin-top: 6px; font-size: 12.5px; color: #1a56a8; text-decoration: none; }
 .statute-link:hover { text-decoration: underline; }
+
+/* ---- v3 视觉刷新（参考通用校对面板：白卡片 / 大标题计数 / 蓝色主操作 / 宽松间距） ---- */
+:root { --blue: #2563eb; --blue-dark: #1d4ed8; --text-2: #6b7280; --line-2: #ebedf0; }
+
+/* 结果页标题：系统字体 + 大号计数 */
+.results-screen { padding: 26px 18px 8px; background: #f3f4f6; }
+.results-heading h1 { font-family: inherit; font-size: 21px; font-weight: 700; letter-spacing: 0; }
+.results-subtitle { font-size: 13px; color: var(--text-2); margin-top: 8px; }
+
+/* 类型筛选：去边框，纯文字 + 原生箭头 */
+.results-toolbar { margin: 22px 0 12px; }
+.type-filter { border: 0; background: transparent; padding: 4px 0; font-size: 14px; font-weight: 600; color: #1f2329; max-width: 60%; cursor: pointer; }
+.type-filter:focus { outline: none; }
+
+/* 卡片：纯白、圆角、无左色条，间距放宽 */
+.results-list { gap: 12px; }
+.result-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 16px 14px; }
+.result-card.is-issue, .result-card.is-bug { border-left: 1px solid var(--line-2); }
+.card-type { font-size: 13px; font-weight: 500; color: #86909c; letter-spacing: 0; }
+.result-card.is-pass .card-type, .result-card.is-bug .card-type, .result-card.is-not-run .card-type { color: #86909c; }
+.claim-quote { margin: 12px 0 0; padding: 0; border-left: 0; color: #1f2329; font-size: 14px; line-height: 1.75; }
+.card-advice { margin-top: 10px; padding: 0; background: none; border-radius: 0; font-size: 13px; color: var(--text-2); line-height: 1.65; }
+.status-pill { font-size: 11px; padding: 4px 10px; }
+
+/* 法条原文折叠 */
+.result-details { margin-top: 14px; border-top: 1px solid #f2f3f5; padding-top: 12px; }
+.result-details summary { font-size: 13px; color: #4e5969; }
+.statute-text { font-size: 12.5px; margin: 10px 0 0; }
+
+/* 操作行：实线分隔，忽略描边 + 接受蓝色主按钮 */
+.action-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid #f2f3f5; }
+.action-button { border: 1px solid #dfe1e6; border-radius: 8px; padding: 6px 14px; font-size: 13px; color: #4e5969; background: #fff; }
+.action-button:hover { border-color: #b9bec7; color: #1f2329; }
+.jump-button { font-weight: 500; }
+.decision-button.is-active { background: #4e5969; border-color: #4e5969; color: #fff; }
+.decision-button[data-decision="accepted"] { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+.decision-button[data-decision="accepted"]:hover { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; }
+.decision-button[data-decision="accepted"].is-active { background: var(--blue-dark); border-color: var(--blue-dark); box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
+
+/* 底部通栏主操作：导出核查报告 */
+.results-action { position: sticky; bottom: 0; margin-top: 16px; padding: 14px 0 18px; background: linear-gradient(180deg, rgba(243,244,246,0), #f3f4f6 38%); }
+.results-action .primary-button { width: 100%; min-height: 48px; background: var(--blue); border-radius: 10px; font-size: 15px; }
+.results-action .primary-button:hover { background: var(--blue-dark); }
+
+/* 主页核查范围选项行 */
+.scope-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); cursor: default; }
+label.scope-row { cursor: pointer; }
+.scope-copy strong { display: block; font-size: 14px; font-weight: 600; }
+.scope-copy small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.scope-fixed { color: #4e7657; font-size: 12px; white-space: nowrap; }
+.toggle:checked { background: var(--blue); }

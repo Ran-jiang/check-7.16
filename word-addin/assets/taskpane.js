@@ -64,6 +64,7 @@ async function runCheck() {
       file_name: documentName,
       docx_base64: docxBase64,
       semantic_check: true,
+      include_cases: document.getElementById("case-toggle").checked,
     })
     finishCheck(result)
   } catch (error) {
@@ -89,6 +90,7 @@ async function runSelectionCheck() {
       file_name: documentName,
       text: selectedText,
       semantic_check: true,
+      include_cases: document.getElementById("case-toggle").checked,
     })
     finishCheck(result)
   } catch (error) {

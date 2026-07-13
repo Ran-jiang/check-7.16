@@ -57,6 +57,7 @@ def verify_claim_document_for_frontend(
     sources: Iterable[StatuteSource] | None = None,
     semantic_checker: SemanticChecker | None = None,
     case_recognizer: CaseNumberRecognizer | None = None,
+    include_cases: bool = True,
 ) -> FrontendVerificationDocument:
     source_chain = list(sources) if sources is not None else build_default_sources(db_path)
     recognizer = case_recognizer if case_recognizer is not None else PkulawCaseSource()
@@ -132,7 +133,7 @@ def verify_claim_document_for_frontend(
     return FrontendVerificationDocument(
         source_claim_doc_id=claim_doc.claim_meta.claim_doc_id,
         legal_checks=checks,
-        case_checks=verify_case_claims(claim_doc, recognizer),
+        case_checks=verify_case_claims(claim_doc, recognizer) if include_cases else [],
     )
 
 
