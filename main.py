@@ -5,7 +5,7 @@ CCitecheck CLI 入口。
   python main.py sample.docx --out result.json
   python main.py sample.docx --out result.json --claims-out claims.json
   python main.py sample.docx --claims-out claims.json --verify-out verify.json --law-db data/laws.sqlite
-  python main.py sample.docx --out result.json --render-chunk c_00001
+
 
 流程：
   1. 解析 DOCX → ParsedDocument
@@ -23,7 +23,6 @@ from typing import Optional
 
 import typer
 
-from parser.renderer import render_chunk_for_llm
 from parser.schema import ParsedDocument
 from claims.schema import ClaimDocument
 from document_pipeline import (
@@ -93,9 +92,6 @@ def doctor(
 def parse(
     input_file: str = typer.Argument(..., help="DOCX 文件路径"),
     out: Optional[str] = typer.Option(None, "--out", help="v0.1 JSON 输出文件路径"),
-    render_chunk: Optional[str] = typer.Option(
-        None, "--render-chunk", help="渲染指定 chunk 的 LLM 文本"
-    ),
     claims_out: Optional[str] = typer.Option(
         None, "--claims-out", help="v0.2 ClaimDocument JSON 输出文件路径"
     ),
@@ -117,6 +113,9 @@ def parse(
         True,
         "--include-cases/--no-include-cases",
         help="是否同时核查司法案例案号（默认开启）",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", help="逐条打印识别出的主张明细"
     ),
 ):
     """
@@ -153,21 +152,10 @@ def parse(
         typer.echo(f"Numbering unresolved: {numbering_unresolved}")
         typer.echo(f"Output: {out}")
 
-        if render_chunk:
-            try:
-                rendered = render_chunk_for_llm(parsed_doc, render_chunk)
-                typer.echo(f"\n{'='*60}")
-                typer.echo(f"Rendered chunk: {render_chunk}")
-                typer.echo(f"{'='*60}")
-                typer.echo(rendered)
-            except ValueError as e:
-                typer.echo(f"Error rendering chunk: {e}", err=True)
-                raise typer.Exit(code=1)
-
     # ---- 输出 v0.2 ClaimDocument JSON ----
     claim_doc: ClaimDocument | None = None
     if claims_out is not None or verify_out is not None:
-        claim_doc = _extract_v0_2_claims(parsed_doc)
+        claim_doc = _extract_v0_2_claims(parsed_doc, verbose)
 
     if claims_out is not None and claim_doc is not None:
         _write_v0_2_claims(claim_doc, claims_out)
@@ -190,7 +178,7 @@ def _write_v0_1_output(parsed_doc: ParsedDocument, out_path_str: str) -> None:
     out_path.write_text(output, encoding="utf-8")
 
 
-def _extract_v0_2_claims(parsed_doc: ParsedDocument) -> ClaimDocument:
+def _extract_v0_2_claims(parsed_doc: ParsedDocument, verbose: bool = False) -> ClaimDocument:
     """运行 v0.2 主张抽取"""
     from collections import Counter
 
@@ -210,16 +198,14 @@ def _extract_v0_2_claims(parsed_doc: ParsedDocument) -> ClaimDocument:
         if count > 0:
             typer.echo(f"  {ct}: {count}")
 
-    # 逐条打印
-    typer.echo(f"\n{'='*60}")
-    typer.echo("Claims Detail")
-    typer.echo(f"{'='*60}")
-    for claim in claim_doc.claims:
-        typer.echo(f"\n[{claim.claim_id}] {claim.claim_type.value}")
-        text = claim.text[:150].replace('\n', ' ')
-        typer.echo(f"  Text: {text}{'...' if len(claim.text) > 150 else ''}")
-        typer.echo(f"  Anchors: {', '.join(claim.anchor_ids)}")
-        typer.echo(f"  Route: {claim.verification_route.value}")
+    # 逐条明细默认不刷屏，需要时用 --verbose 打开
+    if verbose:
+        for claim in claim_doc.claims:
+            typer.echo(f"\n[{claim.claim_id}] {claim.claim_type.value}")
+            text = claim.text[:150].replace('\n', ' ')
+            typer.echo(f"  Text: {text}{'...' if len(claim.text) > 150 else ''}")
+            typer.echo(f"  Anchors: {', '.join(claim.anchor_ids)}")
+            typer.echo(f"  Route: {claim.verification_route.value}")
 
     return claim_doc
 
