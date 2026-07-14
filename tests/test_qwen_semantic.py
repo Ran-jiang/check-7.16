@@ -39,7 +39,10 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
         captured["payload"] = json.loads(request.data)
         return FakeResponse()
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    def fake_open(self, request, timeout=None):
+        return fake_urlopen(request, timeout=timeout)
+
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", fake_open)
     checker = QwenSemanticChecker(api_key="test-key")
     evidence = ArticleEvidence(
         law_title="中华人民共和国民法典",
@@ -61,5 +64,5 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
 
     assert result.verdict == ComparisonVerdict.PASS
     assert captured["url"] == f"{DEFAULT_BASE_URL}/responses"
-    assert captured["payload"]["model"] == "qwen3.7-max"
+    assert captured["payload"]["model"] == "qwen3.7-plus"
     assert captured["payload"]["enable_thinking"] is False

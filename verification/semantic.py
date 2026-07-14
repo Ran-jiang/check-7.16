@@ -15,10 +15,8 @@ from runtime_env import load_project_env
 from .pkulaw_mcp import default_ssl_context
 from .schema import ArticleEvidence, SemanticComparison
 
-DEFAULT_MODEL = "qwen3.7-max"
-DEFAULT_BASE_URL = (
-    "https://llm-qs6teo3293en0sk8.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-)
+DEFAULT_MODEL = "qwen3.7-plus"
+DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "legal_semantic_comparison.md"
 
 # 改引建议：从本地全文召回的候选条款中，判断哪一条（如有）真正支持文书表述。
@@ -143,10 +141,13 @@ class QwenSemanticChecker:
             },
             method="POST",
         )
+        # DashScope 是国内端点：本机代理会掐断其 TLS，必须绕过代理直连
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=default_ssl_context()),
+        )
         try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout, context=default_ssl_context()
-            ) as response:
+            with opener.open(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

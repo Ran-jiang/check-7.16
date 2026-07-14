@@ -65,7 +65,7 @@ def _check_pkulaw_token() -> CheckResult:
 
 def _check_qwen_key() -> CheckResult:
     if os.getenv("DASHSCOPE_API_KEY"):
-        model = os.getenv("QWEN_MODEL", "qwen3.7-max")
+        model = os.getenv("QWEN_MODEL", "qwen3.7-plus")
         return CheckResult("qwen", True, f"semantic checks configured with {model}")
     return CheckResult(
         "qwen",

@@ -22,7 +22,7 @@
 
 ```env
 DASHSCOPE_API_KEY=你的百炼APIKey
-QWEN_MODEL=qwen3.7-max
+QWEN_MODEL=qwen3.7-plus
 QWEN_BASE_URL=https://llm-qs6teo3293en0sk8.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 ```
 
