@@ -5,8 +5,6 @@ const DECISION_OPTIONS = [
   ["accepted", "接受"],
 ]
 
-const CONFIDENCE_LABELS = { high: "高", medium: "中", low: "低" }
-
 const LOOKUP_STATUS_LABELS = {
   article_found: "已取得法条原文",
   relevant_articles_found: "已召回相关条款",
@@ -150,14 +148,11 @@ export class CheckUi {
     // 第二行：法律引用原文
     card.append(element("blockquote", "claim-quote", check.claim_text))
 
-    // 第三行：置信度与修改建议分行；建议直接给出修改内容，不带前缀
+    // 第三行：风险分级与修改建议分行；建议直接给出修改内容，不带前缀
     if (findings.length) {
       const first = findings[0]
-      const isRule = (check.rule_findings || []).includes(first)
-      const confidence = isRule
-        ? "确定"
-        : CONFIDENCE_LABELS[check.semantic_comparison?.confidence] || "—"
-      card.append(element("div", "card-conf", `置信度：${confidence}`))
+      const risk = first.risk_level === "HIGH" ? "高" : first.risk_level === "MEDIUM" ? "中" : first.risk_level
+      card.append(element("div", "card-conf", `风险分级：${risk}`))
       card.append(element("p", "card-suggestion", first.suggestion))
     } else if (state === "bug" && check.semantic_comparison?.notes) {
       card.append(element("p", "card-suggestion", check.semantic_comparison.notes))

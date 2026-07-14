@@ -21,6 +21,16 @@ DEFAULT_BASE_URL = (
 )
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "legal_semantic_comparison.md"
 
+# 改引建议：从本地全文召回的候选条款中，判断哪一条（如有）真正支持文书表述。
+# 仅在语义核查判"无实质对应/定位错误"且该法本地有全文时调用。
+SUGGEST_PROMPT = (
+    "你是法律引用核查系统的改引建议模块。输入包含文书表述 doc_quote 与若干候选条款"
+    " candidates（来自同一部法规的全文召回，含 article_no 与 article_text）。"
+    "任务：判断哪一条候选的内容与 doc_quote 的表述实质对应。只依据候选条款文本判断，"
+    "禁止使用模型记忆补全。若有对应，输出 {\"article_no\": \"第X条\"}；"
+    "若都不对应或拿不准，输出 {\"article_no\": null}。仅输出该 JSON 对象。"
+)
+
 
 class SemanticChecker(Protocol):
     def compare(
@@ -92,6 +102,36 @@ class QwenSemanticChecker:
             return SemanticComparison.model_validate_json(output_text)
         except ValueError as exc:
             raise SemanticCheckError(f"Qwen returned invalid semantic JSON: {exc}") from exc
+
+    def suggest_article(
+        self,
+        doc_quote: str,
+        candidates: list[dict[str, str]],
+    ) -> str | None:
+        """从候选条款中挑出真正支持文书表述的条号；没有则返回 None。"""
+        payload = {
+            "model": self.model,
+            "input": [
+                {"role": "system", "content": SUGGEST_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"doc_quote": doc_quote, "candidates": candidates},
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            "enable_thinking": False,
+        }
+        try:
+            data = self._post_response(payload)
+            output_text = _extract_output_text(data)
+            result = json.loads(output_text)
+            article_no = result.get("article_no")
+            return article_no if isinstance(article_no, str) and article_no else None
+        except (SemanticCheckError, ValueError):
+            # 改引建议是增强信息，失败时静默降级，不影响主结论
+            return None
 
     def _post_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(

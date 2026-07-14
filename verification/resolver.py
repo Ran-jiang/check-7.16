@@ -16,17 +16,19 @@ _SEMANTIC_WORKERS = 4
 from claims.schema import ClaimDocument, ClaimType
 from laws.sqlite_store import (
     connect,
+    list_current_articles,
     list_law_titles,
     normalize_title,
     strip_version_annotation,
 )
+
+from .article_retrieval import retrieve_relevant_articles
 
 from .pkulaw_mcp import PkulawMcpError
 from .schema import (
     CaseCheck,
     CaseEvidence,
     CaseLookupStatus,
-    ComparisonConfidence,
     ComparisonVerdict,
     FrontendVerificationDocument,
     LegalCheck,
@@ -77,7 +79,7 @@ def verify_claim_document_for_frontend(
 
     # ---- 阶段二：确定性规则判定 + 语义核查。已有确定结论的检查跳过千问 ----
     semantic_results = _run_semantics(
-        semantic_checker, items, lookup_results, known_titles
+        semantic_checker, items, lookup_results, known_titles, db_path
     )
 
     checks: list[LegalCheck] = []
@@ -188,6 +190,7 @@ def _run_semantics(
     items: list[_CheckItem],
     lookup_results: dict[tuple, tuple[LookupResult, list]],
     known_titles: list[str],
+    db_path: str | Path,
 ) -> dict[int, tuple[list[SemanticIssue], SemanticComparison | None]]:
     """先算确定性规则；规则已有结论的跳过千问，其余需要 LLM 的并发执行。"""
     results: dict[int, tuple[list[SemanticIssue], SemanticComparison | None]] = {}
@@ -220,11 +223,63 @@ def _run_semantics(
                     llm_jobs,
                 )
             )
-        for (index, _, _), comparison in zip(llm_jobs, outcomes):
+        for (index, item, _), comparison in zip(llm_jobs, outcomes):
             rule_findings, _ = results[index]
+            # 引用不支持时，尝试给出"疑似应改引第X条"的建议
+            _append_article_suggestion(db_path, semantic_checker, item, comparison)
             results[index] = (rule_findings, comparison)
 
     return results
+
+
+# 引错了地方（而非说错了内容）时才有"改引哪条"可言
+_SUGGEST_TRIGGER_TYPES = {
+    SemanticErrorType.NO_SUBSTANTIVE_MATCH,
+    SemanticErrorType.LOCATION_ERROR,
+}
+
+
+def _append_article_suggestion(
+    db_path: str | Path,
+    semantic_checker: SemanticChecker | None,
+    item: _CheckItem,
+    comparison: SemanticComparison | None,
+) -> None:
+    """语义核查判"无实质对应/定位错误"且本法在本地有全文时，
+    召回候选条款请 LLM 判断哪一条真正支持文书表述，追加改引建议。
+    改引建议是增强信息：任何一步不满足条件都静默跳过，不影响主结论。"""
+    if comparison is None or comparison.verdict != ComparisonVerdict.ISSUE:
+        return
+    suggest = getattr(semantic_checker, "suggest_article", None)
+    if suggest is None:
+        return
+    target_issues = [
+        issue for issue in comparison.issues if issue.error_type in _SUGGEST_TRIGGER_TYPES
+    ]
+    if not target_issues:
+        return
+    path = Path(db_path)
+    if not path.exists():
+        return
+    with connect(path) as conn:
+        articles = list_current_articles(conn, item.law_title)
+    if not articles:
+        return
+    excerpts = retrieve_relevant_articles(item.claim.text, articles)
+    if not excerpts:
+        return
+    candidates = [
+        {"article_no": excerpt.article_no, "article_text": excerpt.article_text}
+        for excerpt in excerpts
+    ]
+    article_no = suggest(_document_quote(item.claim), candidates)
+    if not article_no or article_no == item.article_no:
+        return
+    for issue in target_issues:
+        issue.suggestion = (
+            issue.suggestion.rstrip("。")
+            + f"。经本法全文召回比对，疑似应改引{article_no}。"
+        )
 
 
 _NEEDS_LLM = object()
@@ -250,7 +305,6 @@ def _semantic_without_llm(
                     suggestion="请核实法规名称、发布机关、发文字号及条款号。",
                 )
             ],
-            confidence=ComparisonConfidence.HIGH,
             notes="",
         )
     if lookup_result.status not in (
@@ -259,7 +313,6 @@ def _semantic_without_llm(
     ):
         return SemanticComparison(
             verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
             notes=(
                 "未取得可供语义核查的法条原文："
                 f"{lookup_result.trace.message or lookup_result.status.value}"
@@ -268,7 +321,6 @@ def _semantic_without_llm(
     if lookup_result.evidence is None:
         return SemanticComparison(
             verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
             notes="检索状态为已命中，但缺少法条证据。",
         )
     return _NEEDS_LLM
@@ -289,7 +341,6 @@ def _compare_with_llm(
     except SemanticCheckError as exc:
         return SemanticComparison(
             verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
             notes=str(exc),
         )
 

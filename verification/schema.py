@@ -47,12 +47,6 @@ class ComparisonVerdict(str, Enum):
     BUG = "bug"
 
 
-class ComparisonConfidence(str, Enum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
 class RiskLevel(str, Enum):
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
@@ -64,7 +58,6 @@ class SemanticErrorType(str, Enum):
     OUTDATED_SOURCE = "旧法旧规误用"
     MEANING_DISTORTED = "曲解权威文本原意"
     NO_SUBSTANTIVE_MATCH = "引用内容与权威文本无实质对应"
-    CONCLUSION_NOT_NECESSARILY_SUPPORTED = "法条不足以必然支持文书结论"
 
 
 class SemanticIssue(BaseModel):
@@ -78,19 +71,18 @@ class SemanticIssue(BaseModel):
 class SemanticComparison(BaseModel):
     verdict: ComparisonVerdict
     issues: list[SemanticIssue] = Field(default_factory=list)
-    confidence: Optional[ComparisonConfidence] = None
     notes: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_verdict_shape(self) -> "SemanticComparison":
         if self.verdict == ComparisonVerdict.PASS:
-            if self.issues or self.confidence is not None or self.notes is not None:
+            if self.issues or self.notes is not None:
                 raise ValueError("pass must contain only verdict")
         elif self.verdict == ComparisonVerdict.ISSUE:
-            if not self.issues or self.confidence is None:
-                raise ValueError("issue requires issues and confidence")
-        elif self.issues or self.confidence != ComparisonConfidence.LOW or not self.notes:
-            raise ValueError("bug requires empty issues, low confidence, and notes")
+            if not self.issues:
+                raise ValueError("issue requires issues")
+        elif self.issues or not self.notes:
+            raise ValueError("bug requires empty issues and notes")
         return self
 
 

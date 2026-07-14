@@ -32,9 +32,14 @@ def parse_and_validate_document(input_path: str | Path) -> ParsedDocument:
     return parsed_document
 
 
-def extract_document_claims(parsed_document: ParsedDocument) -> ClaimDocument:
+def extract_document_claims(
+    parsed_document: ParsedDocument,
+    include_statutes: bool = True,
+    include_cases: bool = True,
+) -> ClaimDocument:
     try:
-        return extract_claims(parsed_document)
+        # 提取阶段即按用户选择的核查范围执行，未勾选的类型不做识别
+        return extract_claims(parsed_document, include_statutes, include_cases)
     except ValueError as exc:
         raise DocumentPipelineError(str(exc)) from exc
 

@@ -20,7 +20,6 @@ from verification.resolver import verify_claim_document_for_frontend
 from verification.schema import (
     ArticleEvidence,
     CaseLookupStatus,
-    ComparisonConfidence,
     ComparisonVerdict,
     LookupStatus,
     RiskLevel,
@@ -105,13 +104,12 @@ class FakeSemanticChecker:
             verdict=ComparisonVerdict.ISSUE,
             issues=[
                 SemanticIssue(
-                    error_type=SemanticErrorType.CONCLUSION_NOT_NECESSARILY_SUPPORTED,
+                    error_type=SemanticErrorType.MEANING_DISTORTED,
                     risk_level=RiskLevel.MEDIUM,
                     diff_summary="文书未明示被告不履行或履行不符合约定",
                     suggestion="核实并补充违约事实。",
                 )
             ],
-            confidence=ComparisonConfidence.HIGH,
             notes="",
         )
 
@@ -163,7 +161,7 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
     check = frontend_doc.legal_checks[0]
     comparison = check.semantic_comparison
     assert comparison.verdict == ComparisonVerdict.ISSUE
-    assert comparison.issues[0].error_type == SemanticErrorType.CONCLUSION_NOT_NECESSARILY_SUPPORTED
+    assert comparison.issues[0].error_type == SemanticErrorType.MEANING_DISTORTED
 
 
 def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
@@ -571,3 +569,78 @@ def test_rule_findings_skip_semantic_llm(tmp_path: Path):
     assert check.rule_findings
     assert check.rule_findings[0].error_type == SemanticErrorType.OUTDATED_SOURCE
     assert check.semantic_comparison is None
+
+
+def test_extraction_respects_scope_selection():
+    """未勾选的核查范围在提取阶段即跳过。"""
+    from claims.extractor import extract_claims
+    from tests.test_rule_engine import _make_parsed_doc
+
+    doc = _make_parsed_doc([
+        "依据《民法典》第五百七十七条，应当承担违约责任。",
+        "参见（2020）京01民终1号判决。",
+    ])
+    only_statutes = extract_claims(doc, include_statutes=True, include_cases=False)
+    assert all(c.claim_type == ClaimType.LEGAL_SOURCE_CLAIM for c in only_statutes.claims)
+    assert len(only_statutes.claims) == 1
+
+    only_cases = extract_claims(doc, include_statutes=False, include_cases=True)
+    assert all(c.claim_type != ClaimType.LEGAL_SOURCE_CLAIM for c in only_cases.claims)
+    assert len(only_cases.claims) == 1
+
+
+def test_llm_issue_appends_alternative_article_suggestion(tmp_path: Path):
+    """判"无实质对应"后，从本地全文召回并给出"疑似应改引第X条"。"""
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    with connect(db_path) as conn:
+        law_id = upsert_law(
+            conn, {"title": "中华人民共和国民法典", "source_type": "law", "status": "has_articles"}
+        )
+        upsert_article(conn, law_id, {
+            "article_no": "第五百七十七条",
+            "text": "当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
+        })
+        upsert_article(conn, law_id, {
+            "article_no": "第六百五十七条",
+            "text": "赠与合同是赠与人将自己的财产无偿给予受赠人，受赠人表示接受赠与的合同。",
+        })
+
+    class MismatchChecker:
+        def compare(self, doc_quote, quote_context, cited_source, evidence):
+            return SemanticComparison(
+                verdict=ComparisonVerdict.ISSUE,
+                issues=[
+                    SemanticIssue(
+                        error_type=SemanticErrorType.NO_SUBSTANTIVE_MATCH,
+                        risk_level=RiskLevel.HIGH,
+                        diff_summary="所引条文调整违约责任，与赠与撤销无关",
+                        suggestion="请核实引用条文。",
+                    )
+                ],
+                notes="",
+            )
+
+        def suggest_article(self, doc_quote, candidates):
+            assert any(c["article_no"] == "第六百五十七条" for c in candidates)
+            return "第六百五十七条"
+
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(
+            source_doc_id="doc-test", source_doc_hash="sha256:test", source_file="t.docx"
+        ),
+        claims=[
+            _simple_claim(
+                "cl_00001",
+                "根据《民法典》第五百七十七条，赠与合同是赠与人将自己的财产无偿给予受赠人的合同。",
+                "民法典",
+                "第五百七十七条",
+            )
+        ],
+    )
+    frontend_doc = verify_claim_document_for_frontend(
+        claim_doc, db_path, semantic_checker=MismatchChecker()
+    )
+    check = frontend_doc.legal_checks[0]
+    suggestion = check.semantic_comparison.issues[0].suggestion
+    assert "疑似应改引第六百五十七条" in suggestion

@@ -64,7 +64,11 @@ def build_indexes(parsed_doc: ParsedDocument) -> dict:
     }
 
 
-def extract_claims(parsed_doc: ParsedDocument) -> ClaimDocument:
+def extract_claims(
+    parsed_doc: ParsedDocument,
+    include_statutes: bool = True,
+    include_cases: bool = True,
+) -> ClaimDocument:
     """
     CCitecheck v0.2 主入口 — 从 ParsedDocument 抽取可验证主张。
 
@@ -89,7 +93,9 @@ def extract_claims(parsed_doc: ParsedDocument) -> ClaimDocument:
 
     # ---- 2. 规则抽取 ----
     logger.info("开始规则抽取……")
-    rule_candidates = extract_rule_candidates(parsed_doc, indexes)
+    rule_candidates = extract_rule_candidates(
+        parsed_doc, indexes, include_statutes, include_cases
+    )
     logger.info("规则抽取完成，候选数: %d", len(rule_candidates))
 
     # ---- 3. Claim Arbiter ----

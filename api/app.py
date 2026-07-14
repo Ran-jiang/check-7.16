@@ -79,7 +79,11 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
             temporary_file.write(document_bytes)
             temporary_file.flush()
             parsed_document = parse_and_validate_document(temporary_file.name)
-            claim_document = extract_document_claims(parsed_document)
+            claim_document = extract_document_claims(
+                parsed_document,
+                include_statutes=request.include_statutes,
+                include_cases=request.include_cases,
+            )
             verification = verify_document_claims(
                 claim_document,
                 LAW_DB,
@@ -115,7 +119,11 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 selection_doc.add_paragraph(line)
             selection_doc.save(temporary_file.name)
             parsed_document = parse_and_validate_document(temporary_file.name)
-            claim_document = extract_document_claims(parsed_document)
+            claim_document = extract_document_claims(
+                parsed_document,
+                include_statutes=request.include_statutes,
+                include_cases=request.include_cases,
+            )
             verification = verify_document_claims(
                 claim_document,
                 LAW_DB,

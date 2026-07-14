@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 def extract_rule_candidates(
     parsed_doc: ParsedDocument,
     indexes: dict,
+    include_statutes: bool = True,
+    include_cases: bool = True,
 ) -> list[ClaimCandidate]:
     """
     基于 anchors 逐句扫描，生成规则候选列表。
@@ -89,8 +91,8 @@ def extract_rule_candidates(
             last_source_anchor_id = None
         last_section_path = section_path
 
-        # 1. 检测法源引用（含《》书名号）
-        legal_sources = extract_legal_sources(text)
+        # 1. 检测法源引用（含《》书名号）；用户未勾选法规核查时整段跳过
+        legal_sources = extract_legal_sources(text) if include_statutes else []
 
         if legal_sources:
             # 更新继承状态（供后续 anchor 使用）
@@ -123,8 +125,8 @@ def extract_rule_candidates(
                     candidates.append(candidate)
                     continue
 
-        # 2. 检测案例引用
-        case_refs = extract_case_refs(text)
+        # 2. 检测案例引用；用户未勾选案例核查时跳过
+        case_refs = extract_case_refs(text) if include_cases else []
 
         if case_refs:
             # 检测是否有观点触发词 → case_holding_paraphrase
