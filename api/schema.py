@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from verification.schema import FrontendVerificationDocument
 
@@ -36,6 +36,7 @@ class CheckSummary(BaseModel):
 
 class DocumentCheckResponse(BaseModel):
     file_name: str
+    document_key: str
     semantic_check: bool
     summary: CheckSummary
     verification: FrontendVerificationDocument
@@ -48,8 +49,16 @@ class ReportRequest(BaseModel):
     semantic_check: bool = True
     summary: CheckSummary
     verification: FrontendVerificationDocument
-    # check_id → accepted / ignored / escalated
+    # check_id → accepted / ignored
     decisions: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("decisions")
+    @classmethod
+    def validate_decisions(cls, decisions: dict[str, str]) -> dict[str, str]:
+        invalid = sorted(set(decisions.values()) - {"accepted", "ignored"})
+        if invalid:
+            raise ValueError(f"不支持的人工处理状态：{', '.join(invalid)}")
+        return decisions
 
 
 class ReportResponse(BaseModel):

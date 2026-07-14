@@ -2,11 +2,13 @@
   "name": "ccitecheck-word-addin",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "certs": "office-addin-dev-certs install",
     "start": "python3 server.py --cert ~/.office-addin-dev-certs/localhost.crt --key ~/.office-addin-dev-certs/localhost.key",
     "start:http": "python3 server.py",
-    "validate:manifest": "office-addin-manifest validate word-addin/manifest.xml"
+    "validate:manifest": "office-addin-manifest validate word-addin/manifest.xml",
+    "test:js": "node --test word-addin/tests/*.test.mjs"
   },
   "devDependencies": {
     "office-addin-dev-certs": "^2.0.10",

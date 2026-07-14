@@ -11,7 +11,6 @@ Test 7：不变量全量校验。
 import os
 import tempfile
 
-import pytest
 from docx import Document as DocxDocument
 
 from parser.docx_parser import parse_docx
@@ -22,7 +21,6 @@ from parser.schema import (
     DocMeta,
     Block,
     Anchor,
-    Chunk,
     BlockType,
 )
 

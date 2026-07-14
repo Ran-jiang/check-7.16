@@ -13,14 +13,14 @@ CCitecheck v0.2 规则抽取器。
   1. 遍历每个 anchor
   2. 检测法源引用 → legal_source_claim
   3. 检测案例引用 → case_citation 或 case_holding_paraphrase
-  4. 同一句只产出一个候选（多法源合并为一个候选）
+  4. 同一句可以同时产出法规候选和案例候选
 """
 
 from __future__ import annotations
 
 import logging
 
-from parser.schema import ParsedDocument
+from parser.schema import BlockType, ParsedDocument
 
 from .case_citation import (
     extract_case_refs,
@@ -54,7 +54,7 @@ def extract_rule_candidates(
     基于 anchors 逐句扫描，生成规则候选列表。
 
     规则引擎只做单句（跨句是 LLM 的职责）。
-    每个 anchor 独立分析，同一句只产出一个候选。
+    每个 anchor 独立分析；混合引用分别产出法规与案例候选。
 
     法源前向继承（承前省略法源名的指代消解）：
       判决书写作规范中，"第X条"承前省略法源名是标准文体。
@@ -63,7 +63,7 @@ def extract_rule_candidates(
 
       关键约束：
         - 只继承实体（法源名），不连接 anchor_ids
-        - claim.anchor_ids 永远只是当前句，不包含法源来源句
+        - 正文继承只保留当前句；表格中相邻“法名格 + 条文格”合并两个锚点
         - section_path 变化时重置继承状态（跨标题不继承）
 
     Args:
@@ -79,9 +79,30 @@ def extract_rule_candidates(
     last_legal_sources: list | None = None
     last_source_anchor_id: str | None = None
     last_section_path: tuple | None = None  # 用于检测标题切换
+    pending_table_candidate: ClaimCandidate | None = None
+    block_map = indexes.get("block_map", {})
+    anchor_map = indexes.get("anchor_map", {})
 
     for anchor in parsed_doc.anchors:
         text = anchor.text
+        current_block = block_map.get(anchor.block_id)
+
+        # 先提取法源，供表格候选的延迟合并判断使用。
+        legal_sources = extract_legal_sources(text) if include_statutes else []
+        can_merge_pending = bool(
+            pending_table_candidate
+            and not legal_sources
+            and has_article_reference(text)
+            and _adjacent_table_cells(
+                block_map.get(
+                    anchor_map[pending_table_candidate.anchor_ids[0]].block_id
+                ),
+                current_block,
+            )
+        )
+        if pending_table_candidate and not can_merge_pending:
+            candidates.append(pending_table_candidate)
+            pending_table_candidate = None
 
         # ---- section_path 变化 → 重置继承 ----
         # 跨标题不继承：新标题下出现裸"第X条"不回溯旧标题的法源
@@ -92,8 +113,6 @@ def extract_rule_candidates(
         last_section_path = section_path
 
         # 1. 检测法源引用（含《》书名号）；用户未勾选法规核查时整段跳过
-        legal_sources = extract_legal_sources(text) if include_statutes else []
-
         if legal_sources:
             # 更新继承状态（供后续 anchor 使用）
             last_legal_sources = legal_sources
@@ -103,8 +122,14 @@ def extract_rule_candidates(
                 anchor.anchor, text, legal_sources
             )
             if candidate:
-                candidates.append(candidate)
-                continue
+                if (
+                    current_block
+                    and current_block.type == BlockType.TABLE_CELL
+                    and all(not source.articles for source in legal_sources)
+                ):
+                    pending_table_candidate = candidate
+                else:
+                    candidates.append(candidate)
 
         # 1b. 法源前向继承：当前句有条款号但无《》法源名
         if not legal_sources and last_legal_sources and has_article_reference(text):
@@ -120,10 +145,18 @@ def extract_rule_candidates(
                     anchor.anchor, text, inherited_sources
                 )
                 if candidate:
-                    # anchor_ids 永远只是当前句，不包含法源来源句
-                    candidate.anchor_ids = [anchor.anchor]
+                    if can_merge_pending and pending_table_candidate:
+                        candidate.anchor_ids = [
+                            *pending_table_candidate.anchor_ids,
+                            anchor.anchor,
+                        ]
+                        for source in candidate.entities.legal_sources:
+                            source.resolution = "explicit"
+                            source.inherited_from_anchor = None
+                        pending_table_candidate = None
+                    else:
+                        candidate.anchor_ids = [anchor.anchor]
                     candidates.append(candidate)
-                    continue
 
         # 2. 检测案例引用；用户未勾选案例核查时跳过
         case_refs = extract_case_refs(text) if include_cases else []
@@ -156,7 +189,22 @@ def extract_rule_candidates(
                 )
                 candidates.append(candidate)
 
+    if pending_table_candidate:
+        candidates.append(pending_table_candidate)
     return candidates
+
+
+def _adjacent_table_cells(previous, current) -> bool:
+    return bool(
+        previous
+        and current
+        and previous.type == BlockType.TABLE_CELL
+        and current.type == BlockType.TABLE_CELL
+        and previous.table_index == current.table_index
+        and previous.row_index == current.row_index
+        and previous.cell_index is not None
+        and current.cell_index == previous.cell_index + 1
+    )
 
 
 def _get_section_path(anchor, parsed_doc: ParsedDocument) -> tuple:

@@ -55,13 +55,18 @@ class QwenSemanticChecker:
     @classmethod
     def from_env(cls, model: str | None = None) -> "QwenSemanticChecker":
         load_project_env()
-        api_key = os.getenv("DASHSCOPE_API_KEY")
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
         if not api_key:
-            raise SemanticCheckError("DASHSCOPE_API_KEY is required for semantic checks")
+            raise SemanticCheckError(
+                "DASHSCOPE_API_KEY is required for semantic checks"
+            )
         return cls(
             api_key=api_key,
-            model=model or os.getenv("QWEN_MODEL", DEFAULT_MODEL),
-            base_url=os.getenv("QWEN_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
+            model=model or os.getenv("QWEN_MODEL") or os.getenv("LLM_MODEL", DEFAULT_MODEL),
+            base_url=(
+                os.getenv("QWEN_BASE_URL")
+                or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+            ).rstrip("/"),
         )
 
     def compare(

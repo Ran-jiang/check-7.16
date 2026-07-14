@@ -15,8 +15,9 @@
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; margin: 0; background: var(--surface); color: var(--ink); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
+button:disabled { cursor: not-allowed; opacity: .62; }
 
 .app-shell { min-height: 100vh; background: var(--surface); position: relative; overflow-x: hidden; }
 .app-header {
@@ -63,11 +64,6 @@ button { color: inherit; }
 .history-copy { min-width: 0; flex: 1; }
 .history-name { font-size: 14px; font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-meta { font-size: 12px; color: var(--soft); margin-top: 4px; }
-.row-chevron {
-  flex: 0 0 auto; width: 8px; height: 8px; margin-left: 4px;
-  border-right: 1.6px solid #c4c4c4; border-bottom: 1.6px solid #c4c4c4;
-  transform: rotate(-45deg);
-}
 .bottom-action {
   position: fixed; z-index: 8; left: 0; right: 0; bottom: 0; padding: 14px 20px 18px;
   display: flex; align-items: stretch; gap: 10px;
@@ -104,7 +100,7 @@ button { color: inherit; }
 
 .results-screen { padding: 30px 18px 44px; background: #f7f7f7; }
 .eyebrow { margin: 0 0 7px; color: #989898; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; }
-.results-heading h1, .panel-header h2, .help-page h1 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 29px; font-weight: 500; }
+.results-heading h1, .help-page h1 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 29px; font-weight: 500; }
 .results-subtitle { color: var(--muted); font-size: 13px; margin: 9px 0 0; }
 .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 24px 0 28px; }
 .summary-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 13px 11px; }
@@ -117,35 +113,19 @@ button { color: inherit; }
 .result-card.is-issue { border-left: 3px solid #bb675d; }
 .result-card.is-bug { border-left: 3px solid #bd9657; }
 .result-topline { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-.result-source { font-size: 14px; font-weight: 700; line-height: 1.4; }
 .status-pill { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; background: #edf4ed; color: #397044; font-size: 10px; font-weight: 700; }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger); }
 .status-pill.is-bug { background: var(--warning-bg); color: #946520; }
 .status-pill.is-not-run { background: #f0f0f0; color: #666; }
-.claim-quote { margin: 13px 0; padding-left: 10px; border-left: 1px solid #cfd2d4; color: #555; font-size: 12px; line-height: 1.65; }
-.issue-block { margin-top: 12px; padding: 12px; background: #faf7f5; border-radius: 10px; }
-.issue-title { font-size: 12px; font-weight: 700; }
-.issue-summary, .issue-suggestion { margin: 6px 0 0; color: #5c5c5c; font-size: 12px; line-height: 1.55; }
-.literal-status { color: var(--muted); font-size: 11px; }
-.retrieval-status { color: #48677d; font-size: 11px; margin-top: 7px; }
+.claim-quote { margin: 13px 0; padding-left: 10px; border-left: 1px solid #cfd2d4; color: #555; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
 .result-details { margin-top: 12px; border-top: 1px solid #ededed; padding-top: 10px; }
 .result-details summary { cursor: pointer; font-size: 12px; color: #555; }
-.statute-text, .diff-list { color: #666; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.diff-list { padding-left: 18px; }
 .empty-results { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 28px 18px; text-align: center; color: var(--muted); font-size: 13px; }
-
-.settings-panel { position: fixed; z-index: 30; inset: 64px 0 0; padding: 26px 20px; background: #fff; animation: panelIn .18s ease-out; }
-@keyframes panelIn { from { transform: translateX(16px); opacity: 0; } }
-.panel-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 0; border-bottom: 1px solid var(--line); }
-.setting-row strong { display: block; font-size: 14px; }
-.setting-row small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 5px; }
-.fixed-setting { color: #4e7657; font-size: 11px; white-space: nowrap; }
 .toggle { appearance: none; width: 40px; height: 24px; flex: 0 0 40px; border-radius: 999px; background: #d1d1d1; position: relative; cursor: pointer; }
 .toggle::after { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .16s; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
 .toggle:checked { background: #171717; }
 .toggle:checked::after { transform: translateX(16px); }
-.message { position: fixed; z-index: 50; left: 16px; right: 16px; bottom: 18px; padding: 13px 14px; border-radius: 11px; background: #272727; color: #fff; font-size: 12px; line-height: 1.5; box-shadow: 0 8px 30px rgba(0,0,0,.18); }
+.message { position: fixed; z-index: 50; left: 16px; right: 16px; bottom: 18px; padding: 13px 14px; border-radius: 11px; background: #272727; color: #fff; font-size: 12px; line-height: 1.5; box-shadow: 0 8px 30px rgba(0,0,0,.18); overflow-wrap: anywhere; }
 
 .help-page { background: #fff; }
 .help-page main { max-width: 650px; margin: 0 auto; padding: 48px 28px; }
@@ -161,7 +141,7 @@ button { color: inherit; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* ---- 选中片段核查 / 三态标记 / 报告导出 ---- */
+/* ---- 选中片段核查 / 人工标记 / 报告导出 ---- */
 .secondary-button { width: 100%; margin-top: 10px; min-height: 44px; border: 1px solid #171717; border-radius: 12px; background: #fff; color: #171717; font-weight: 600; cursor: pointer; }
 .secondary-button:disabled { border-color: #b9b9b9; color: #b9b9b9; cursor: not-allowed; }
 .toolbar-buttons { display: flex; gap: 10px; }
@@ -176,10 +156,8 @@ button { color: inherit; }
 .card-type { font-size: 12px; color: #8a5a00; font-weight: 600; letter-spacing: 0.02em; flex: 1; }
 .result-card.is-pass .card-type { color: #1b6e3c; }
 .result-card.is-bug .card-type, .result-card.is-not-run .card-type { color: #777; }
-.card-advice { font-size: 12.5px; color: #444; background: #fbfaf7; border-radius: 8px; padding: 8px 10px; margin-top: 8px; line-height: 1.5; }
 .type-filter { border: 1px solid #d9d5cc; border-radius: 8px; background: #fff; color: #333; font-size: 12.5px; padding: 5px 8px; max-width: 55%; }
 .scope-section { margin-top: 14px; }
-.scope-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #555; line-height: 1.7; }
 .statute-link { display: inline-block; margin-top: 6px; font-size: 12.5px; color: #1a56a8; text-decoration: none; }
 .statute-link:hover { text-decoration: underline; }
 
@@ -203,13 +181,11 @@ button { color: inherit; }
 .card-type { font-size: 13px; font-weight: 500; color: #86909c; letter-spacing: 0; }
 .result-card.is-pass .card-type, .result-card.is-bug .card-type, .result-card.is-not-run .card-type { color: #86909c; }
 .claim-quote { margin: 12px 0 0; padding: 0; border-left: 0; color: #1f2329; font-size: 14px; line-height: 1.75; }
-.card-advice { margin-top: 10px; padding: 0; background: none; border-radius: 0; font-size: 13px; color: var(--text-2); line-height: 1.65; }
 .status-pill { font-size: 11px; padding: 4px 10px; }
 
 /* 法条原文折叠 */
 .result-details { margin-top: 14px; border-top: 1px solid #f2f3f5; padding-top: 12px; }
 .result-details summary { font-size: 13px; color: #4e5969; }
-.statute-text { font-size: 12.5px; margin: 10px 0 0; }
 
 /* 操作行：实线分隔，忽略描边 + 接受蓝色主按钮 */
 .action-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid #f2f3f5; }
@@ -217,9 +193,9 @@ button { color: inherit; }
 .action-button:hover { border-color: #b9bec7; color: #1f2329; }
 .jump-button { font-weight: 500; }
 .decision-button.is-active { background: #4e5969; border-color: #4e5969; color: #fff; }
-.decision-button[data-decision="accepted"] { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
-.decision-button[data-decision="accepted"]:hover { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; }
-.decision-button[data-decision="accepted"].is-active { background: var(--blue-dark); border-color: var(--blue-dark); box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
+.decision-button[data-decision="accepted"] { border-color: #93b4f8; color: var(--blue); font-weight: 600; }
+.decision-button[data-decision="accepted"]:hover { border-color: var(--blue); color: var(--blue-dark); }
+.decision-button[data-decision="accepted"].is-active { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
 
 /* 底部通栏主操作：导出核查报告 */
 .results-action { position: sticky; bottom: 0; margin-top: 16px; padding: 14px 0 18px; background: linear-gradient(180deg, rgba(243,244,246,0), #f3f4f6 38%); }
@@ -231,7 +207,6 @@ button { color: inherit; }
 label.scope-row { cursor: pointer; }
 .scope-copy strong { display: block; font-size: 14px; font-weight: 600; }
 .scope-copy small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-.scope-fixed { color: #4e7657; font-size: 12px; white-space: nowrap; }
 .toggle:checked { background: var(--blue); }
 
 /* ---- v4 终版微调：字体渲染 / 一行混排标题 / 建议分行 / 原文两行 ---- */

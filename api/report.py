@@ -24,6 +24,7 @@ LOOKUP_STATUS_LABELS = {
 CASE_STATUS_LABELS = {
     "verified": "案号已验证",
     "not_found": "案号未命中，疑似有误或不存在",
+    "manual_review": "无案号，需人工检索",
     "source_not_configured": "数据源未配置",
     "source_error": "数据源调用失败",
 }
@@ -31,7 +32,6 @@ CASE_STATUS_LABELS = {
 DECISION_LABELS = {
     "accepted": "已接受",
     "ignored": "已忽略",
-    "escalated": "转人工复核",
 }
 
 VERDICT_LABELS = {
@@ -44,7 +44,7 @@ VERDICT_LABELS = {
 def render_report_html(request: ReportRequest) -> str:
     generated_at = datetime.now(CST).strftime("%Y-%m-%d %H:%M（北京时间）")
     summary = request.summary
-    decision_counts = {"accepted": 0, "ignored": 0, "escalated": 0}
+    decision_counts = {"accepted": 0, "ignored": 0}
     for value in request.decisions.values():
         if value in decision_counts:
             decision_counts[value] += 1
@@ -52,7 +52,10 @@ def render_report_html(request: ReportRequest) -> str:
     rows = []
     for check in request.verification.legal_checks:
         rows.append(_legal_check_section(check, request.decisions.get(check.check_id)))
-    case_rows = [_case_check_section(check) for check in request.verification.case_checks]
+    case_rows = [
+        _case_check_section(check, request.decisions.get(check.check_id))
+        for check in request.verification.case_checks
+    ]
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -83,6 +86,8 @@ def render_report_html(request: ReportRequest) -> str:
   .statute {{ font-size: 13px; white-space: pre-wrap; background: #f4f7f4; padding: 8px 12px;
               border-radius: 4px; max-height: 260px; overflow: auto; }}
   .decision {{ font-size: 13px; margin-top: 8px; font-weight: bold; }}
+  .trace {{ font-size: 12px; margin: 5px 0; padding: 6px 9px; background: #f5f5f5;
+            border-radius: 4px; overflow-wrap: anywhere; }}
   footer {{ margin-top: 40px; font-size: 12px; color: #777; border-top: 1px solid #ccc;
             padding-top: 10px; }}
   @media print {{ .statute {{ max-height: none; }} }}
@@ -98,19 +103,18 @@ def render_report_html(request: ReportRequest) -> str:
 
 <h2>一、核查摘要</h2>
 <div class="summary">
-  共识别法律引用 <b>{summary.total}</b> 处：语义通过 <b>{summary.passed}</b>，
+  共识别法规或案例引用 <b>{summary.total}</b> 处：通过 <b>{summary.passed}</b>，
   需核实 <b>{summary.issues}</b>，无法判断 <b>{summary.bugs}</b>；
   案号验证通过 <b>{summary.cases_verified}</b>，案号未命中 <b>{summary.cases_not_found}</b>。<br>
   人工处理记录：接受 <b>{decision_counts["accepted"]}</b>，
-  忽略 <b>{decision_counts["ignored"]}</b>，
-  转人工复核 <b>{decision_counts["escalated"]}</b>。
+  忽略 <b>{decision_counts["ignored"]}</b>。
 </div>
 
 <h2>二、法律引用明细（{len(rows)} 项）</h2>
 {"".join(rows) if rows else "<p>未识别到法律引用。</p>"}
 
-<h2>三、案号核验（{len(case_rows)} 项）</h2>
-{"".join(case_rows) if case_rows else "<p>未识别到案号引用。</p>"}
+<h2>三、案例核验（{len(case_rows)} 项）</h2>
+{"".join(case_rows) if case_rows else "<p>未识别到案例引用。</p>"}
 
 <footer>
   本报告由 CCitecheck 自动生成，核查过程与数据来源已结构化记录，可供审计追溯。
@@ -170,18 +174,19 @@ def _legal_check_section(check, decision: str | None) -> str:
         )
     if evidence is not None and evidence.article_text:
         parts.append(f'<div class="statute">{_esc(evidence.article_text)}</div>')
+    parts.extend(_source_attempt_sections(check.source_attempts))
     if decision in DECISION_LABELS:
         parts.append(f'<div class="decision">人工处理：{DECISION_LABELS[decision]}</div>')
     parts.append("</div>")
     return "".join(parts)
 
 
-def _case_check_section(check) -> str:
+def _case_check_section(check, decision: str | None) -> str:
     status = CASE_STATUS_LABELS.get(check.lookup_status.value, check.lookup_status.value)
     parts = [
         '<div class="check">',
         '<div class="check-head">',
-        f'<span class="source">{_esc(check.cited_case_number)}</span>',
+        f'<span class="source">{_esc(check.cited_case_number or check.cited_case_name or "案例线索")}</span>',
         f'<span class="pill {"pass" if check.lookup_status.value == "verified" else "issue"}">'
         f"{status}</span>",
         "</div>",
@@ -200,8 +205,30 @@ def _case_check_section(check) -> str:
             )
     if check.message:
         parts.append(f'<div class="field"><b>说明：</b>{_esc(check.message)}</div>')
+    parts.extend(_source_attempt_sections(check.source_attempts))
+    if decision in DECISION_LABELS:
+        parts.append(f'<div class="decision">人工处理：{DECISION_LABELS[decision]}</div>')
     parts.append("</div>")
     return "".join(parts)
+
+
+def _source_attempt_sections(attempts) -> list[str]:
+    if not attempts:
+        return []
+    parts = ['<div class="field"><b>全链路溯源记录：</b></div>']
+    for attempt in attempts:
+        url = _plain_url(getattr(attempt, "source_url", None))
+        source = _esc(attempt.source_name)
+        if url:
+            source += f' · <a href="{_esc(url)}">{_esc(url)}</a>'
+        fetched_at = getattr(attempt, "fetched_at", None)
+        time_text = f" · 获取时间 {_esc(fetched_at)}" if fetched_at else " · 获取时间未提供"
+        status = getattr(attempt.status, "value", attempt.status)
+        message = f" · {_esc(attempt.message)}" if attempt.message else ""
+        parts.append(
+            f'<div class="trace">{source} · 状态 {_esc(status)}{time_text}{message}</div>'
+        )
+    return parts
 
 
 def _plain_url(value: object) -> str:

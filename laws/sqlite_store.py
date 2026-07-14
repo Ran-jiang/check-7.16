@@ -83,7 +83,8 @@ def find_current_article(
     if not law:
         return None
     as_of_text = _date_text(as_of) or date.today().isoformat()
-    return conn.execute(
+    normalized_key = normalize_article_key(article_no)
+    row = conn.execute(
         """
         SELECT
           l.title,
@@ -116,8 +117,42 @@ def find_current_article(
           a.id DESC
         LIMIT 1
         """,
-        (law["id"], normalize_article_key(article_no), as_of_text, as_of_text),
+        (law["id"], normalized_key, as_of_text, as_of_text),
     ).fetchone()
+    if row is not None:
+        return row
+
+    # 兼容 1.1 以前数据库中以中文条号保存的 article_key。数据库升级后
+    # 新写入统一使用阿拉伯数字键，旧数据无需破坏性迁移也能正确命中。
+    candidates = conn.execute(
+        """
+        SELECT
+          l.title, l.source_type, l.status AS law_status,
+          a.article_no, a.article_key, a.text, a.version_key,
+          a.version_label, a.version_status, a.source_name, a.source_url,
+          a.source_fetched_at, a.timeliness, a.effectiveness, a.issued_at,
+          a.effective_from, a.effective_to, a.effective_at
+        FROM articles a
+        JOIN laws l ON l.id = a.law_id
+        WHERE a.law_id = ?
+          AND (a.effective_from IS NULL OR a.effective_from <= ?)
+          AND (a.effective_to IS NULL OR a.effective_to > ?)
+        ORDER BY
+          CASE WHEN a.effective_from IS NULL THEN 0 ELSE 1 END DESC,
+          a.effective_from DESC,
+          a.id DESC
+        """,
+        (law["id"], as_of_text, as_of_text),
+    ).fetchall()
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if normalize_article_key(candidate["article_no"]) == normalized_key
+            or normalize_article_key(candidate["article_key"]) == normalized_key
+        ),
+        None,
+    )
 
 
 def list_current_articles(
@@ -166,7 +201,8 @@ def list_current_articles(
     ).fetchall()
     latest_by_article: dict[str, sqlite3.Row] = {}
     for row in rows:
-        latest_by_article.setdefault(row["article_key"], row)
+        canonical_key = normalize_article_key(row["article_no"] or row["article_key"])
+        latest_by_article.setdefault(canonical_key, row)
     return list(latest_by_article.values())
 
 
@@ -323,7 +359,39 @@ def list_law_titles(conn: sqlite3.Connection) -> list[str]:
 
 
 def normalize_article_key(article_no: str) -> str:
-    return "".join(article_no.split()).replace("第", "").replace("条", "")
+    """把中文/阿拉伯条号归一为同一键，如第一百二十七条与第127条均为127。"""
+    compact = "".join(str(article_no).split())
+    compact = compact.removeprefix("第").replace("条", "")
+    base, separator, suffix = compact.partition("之")
+    base_number = _chinese_number_to_int(base)
+    if base_number is None:
+        return compact
+    if not separator:
+        return str(base_number)
+    suffix_number = _chinese_number_to_int(suffix)
+    return f"{base_number}-{suffix_number}" if suffix_number is not None else compact
+
+
+def _chinese_number_to_int(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+    digits = {
+        "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
+        "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+        "壹": 1, "贰": 2, "叁": 3, "肆": 4, "伍": 5,
+        "陆": 6, "柒": 7, "捌": 8, "玖": 9,
+    }
+    units = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000}
+    if not value or any(char not in digits and char not in units for char in value):
+        return None
+    total = current = 0
+    for char in value:
+        if char in digits:
+            current = digits[char]
+        else:
+            total += (current or 1) * units[char]
+            current = 0
+    return total + current
 
 
 def normalize_version_key(version_key: str) -> str:

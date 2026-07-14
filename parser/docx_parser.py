@@ -14,24 +14,22 @@ CCitecheck v0.1 DOCX 解析器。
 from __future__ import annotations
 
 import hashlib
-import re
+import zipfile
 from typing import Optional
 
 from docx import Document as DocxDocument
+from docx.oxml import parse_xml
 from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 
 from .heading_detector import (
     detect_heading,
-    detect_heading_level_from_style,
-    is_pseudo_heading,
     scan_chapter_types,
 )
 from .schema import (
     Anchor,
     Block,
     BlockType,
-    Chunk,
     DocMeta,
     HeadingSource,
     ParsedDocument,
@@ -115,34 +113,147 @@ def extract_cell_text(cell) -> str:
     return " ".join(para_texts)
 
 
-# ---- 表格元素计数 ----
-# 辅助函数，用于统计特定 w:tbl 中有多少非空单元格
-
-
-def count_nonempty_cells(table: DocxTable) -> int:
-    """
-    计算表格中非空单元格的数量。
-
-    Args:
-        table: python-docx Table 对象
-
-    Returns:
-        非空单元格数
-    """
-    count = 0
-    for row in table.rows:
-        for cell in row.cells:
-            text = extract_cell_text(cell)
-            if not is_empty_text(text):
-                count += 1
-    return count
-
-
 # ---- 自动编号处理 ----
 # 检测段落是否携带编号属性 w:numPr
 
 
-def check_paragraph_numbering(para_element) -> tuple[bool, Optional[str], bool]:
+class NumberingResolver:
+    """按 numbering.xml 的定义还原常见 Word 自动编号。"""
+
+    def __init__(self, docx: DocxDocument):
+        self.levels: dict[tuple[str, int], dict[str, object]] = {}
+        self.counters: dict[str, dict[int, int]] = {}
+        try:
+            root = docx.part.numbering_part.element
+        except (AttributeError, NotImplementedError):
+            return
+        abstract_by_id = {
+            node.get(qn("w:abstractNumId")): node
+            for node in root.findall(qn("w:abstractNum"))
+        }
+        for num in root.findall(qn("w:num")):
+            num_id = num.get(qn("w:numId"))
+            abstract_ref = num.find(qn("w:abstractNumId"))
+            if num_id is None or abstract_ref is None:
+                continue
+            abstract = abstract_by_id.get(abstract_ref.get(qn("w:val")))
+            if abstract is None:
+                continue
+            for level in abstract.findall(qn("w:lvl")):
+                ilvl = int(level.get(qn("w:ilvl"), "0"))
+                start = level.find(qn("w:start"))
+                num_fmt = level.find(qn("w:numFmt"))
+                lvl_text = level.find(qn("w:lvlText"))
+                self.levels[(num_id, ilvl)] = {
+                    "start": int(start.get(qn("w:val"), "1")) if start is not None else 1,
+                    "format": num_fmt.get(qn("w:val"), "decimal") if num_fmt is not None else "decimal",
+                    "text": lvl_text.get(qn("w:val"), f"%{ilvl + 1}.") if lvl_text is not None else f"%{ilvl + 1}.",
+                }
+
+    def resolve(self, num_pr) -> tuple[bool, Optional[str], bool]:
+        if num_pr is None:
+            return False, None, False
+        num_id_element = num_pr.find(qn("w:numId"))
+        level_element = num_pr.find(qn("w:ilvl"))
+        if num_id_element is None:
+            return True, None, True
+        num_id = num_id_element.get(qn("w:val"))
+        if not num_id or num_id == "0":
+            return False, None, False
+        ilvl = int(level_element.get(qn("w:val"), "0")) if level_element is not None else 0
+        definition = self.levels.get((num_id, ilvl))
+        if definition is None:
+            return True, None, True
+
+        counters = self.counters.setdefault(num_id, {})
+        for deeper in [level for level in counters if level > ilvl]:
+            del counters[deeper]
+        current = counters.get(ilvl, int(definition["start"]) - 1) + 1
+        counters[ilvl] = current
+        rendered = str(definition["text"])
+        for level in range(9):
+            placeholder = f"%{level + 1}"
+            if placeholder not in rendered:
+                continue
+            level_definition = self.levels.get((num_id, level))
+            value = counters.get(level)
+            if level_definition is None or value is None:
+                return True, None, True
+            formatted = _format_number(value, str(level_definition["format"]))
+            if formatted is None:
+                return True, None, True
+            rendered = rendered.replace(placeholder, formatted)
+        return True, rendered, False
+
+
+def _format_number(value: int, number_format: str) -> Optional[str]:
+    if number_format in {"decimal", "decimalZero"}:
+        return str(value)
+    if number_format in {"lowerLetter", "upperLetter"} and 1 <= value <= 26:
+        letter = chr(ord("a") + value - 1)
+        return letter.upper() if number_format == "upperLetter" else letter
+    if number_format in {"lowerRoman", "upperRoman"} and 1 <= value <= 3999:
+        pairs = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
+                 (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"),
+                 (5, "V"), (4, "IV"), (1, "I"))
+        rest, result = value, ""
+        for amount, glyph in pairs:
+            while rest >= amount:
+                result += glyph
+                rest -= amount
+        return result if number_format == "upperRoman" else result.lower()
+    if number_format in {"chineseCounting", "chineseCountingThousand", "ideographTraditional"}:
+        return _int_to_chinese(value)
+    if number_format == "bullet":
+        return "•"
+    return None
+
+
+def _int_to_chinese(value: int) -> str:
+    if not 0 < value < 10000:
+        return str(value)
+    digits = "零一二三四五六七八九"
+    units = ((1000, "千"), (100, "百"), (10, "十"))
+    result, rest, zero_pending = "", value, False
+    for amount, label in units:
+        digit, rest = divmod(rest, amount)
+        if digit:
+            if zero_pending and result:
+                result += "零"
+            if not (amount == 10 and digit == 1 and not result):
+                result += digits[digit]
+            result += label
+            zero_pending = False
+        elif result and rest:
+            zero_pending = True
+    if rest:
+        if zero_pending:
+            result += "零"
+        result += digits[rest]
+    return result
+
+
+def _paragraph_num_pr(para_element, docx: DocxDocument):
+    p_pr = para_element.find(qn("w:pPr"))
+    direct = p_pr.find(qn("w:numPr")) if p_pr is not None else None
+    if direct is not None:
+        return direct
+    style_name = _get_style_name(para_element, docx)
+    if not style_name:
+        return None
+    try:
+        style = docx.styles[style_name]
+        style_p_pr = style._element.find(qn("w:pPr"))
+        return style_p_pr.find(qn("w:numPr")) if style_p_pr is not None else None
+    except KeyError:
+        return None
+
+
+def check_paragraph_numbering(
+    para_element,
+    docx: DocxDocument | None = None,
+    resolver: NumberingResolver | None = None,
+) -> tuple[bool, Optional[str], bool]:
     """
     检测段落是否携带自动编号。
 
@@ -152,31 +263,11 @@ def check_paragraph_numbering(para_element) -> tuple[bool, Optional[str], bool]:
     Returns:
         (has_numbering, numbering_text, numbering_unresolved)
     """
-    # 查找 w:pPr/w:numPr
-    pPr = para_element.find(qn("w:pPr"))
-    if pPr is None:
-        return (False, None, False)
-
-    numPr = pPr.find(qn("w:numPr"))
-    if numPr is None:
-        return (False, None, False)
-
-    # 携带编号属性
-    # 尝试获取 numId 和 ilvl
-    numId_elem = numPr.find(qn("w:numId"))
-    ilvl_elem = numPr.find(qn("w:ilvl"))
-
-    if numId_elem is None:
-        return (True, None, True)  # 有 numPr 但没有 numId → 无法还原
-
-    num_id = numId_elem.get(qn("w:val"))
-    ilvl = ilvl_elem.get(qn("w:val")) if ilvl_elem is not None else "0"
-
-    # v0.1 对自动编号是 best-effort
-    # 尝试从 numbering.xml 还原编号文本
-    # 由于 numbering.xml 的解析较复杂，v0.1 标记为未解析
-    # 调用方可以通过 numbering_text 判空来决定是否使用
-    return (True, None, True)
+    if docx is None or resolver is None:
+        p_pr = para_element.find(qn("w:pPr"))
+        num_pr = p_pr.find(qn("w:numPr")) if p_pr is not None else None
+        return (num_pr is not None, None, num_pr is not None)
+    return resolver.resolve(_paragraph_num_pr(para_element, docx))
 
 
 # ---- 主解析函数 ----
@@ -205,11 +296,11 @@ def parse_docx(file_path: str) -> ParsedDocument:
 
     # ---- 使用 python-docx 打开 ----
     docx = DocxDocument(file_path)
+    numbering_resolver = NumberingResolver(docx)
 
     # ---- ID 计数器 ----
     next_anchor_id = make_id_counter("line", 5)
     next_block_id = make_id_counter("b_", 5)
-    next_chunk_id = make_id_counter("c_", 5)
     next_list_group_id = make_id_counter("lg_", 5)
 
     # ---- 第一遍扫描：收集所有段落文本用于章节类型扫描 ----
@@ -225,8 +316,12 @@ def parse_docx(file_path: str) -> ParsedDocument:
         elif child.tag == TAG_TBL:
             # 表格内的段落文本也收集
             table = DocxTable(child, docx)
+            seen_cells = set()
             for row in table.rows:
                 for cell in row.cells:
+                    if cell._tc in seen_cells:
+                        continue
+                    seen_cells.add(cell._tc)
                     cell_text = extract_cell_text(cell)
                     if not is_empty_text(cell_text):
                         all_para_texts.append(cell_text)
@@ -269,7 +364,9 @@ def parse_docx(file_path: str) -> ParsedDocument:
             style_name = _get_style_name(child, docx)
 
             # 检测编号
-            has_numbering, numbering_text, numbering_unresolved = check_paragraph_numbering(child)
+            has_numbering, numbering_text, numbering_unresolved = check_paragraph_numbering(
+                child, docx, numbering_resolver
+            )
 
             # 检测标题
             heading_result = detect_heading(text, style_name, chapter_types)
@@ -382,9 +479,14 @@ def parse_docx(file_path: str) -> ParsedDocument:
             # ---- 处理表格 ----
             table = DocxTable(child, docx)
             tbl_body_order = body_order  # 表格作为一个顶层元素
+            seen_cells = set()
 
             for row_idx, row in enumerate(table.rows):
                 for cell_idx, cell in enumerate(row.cells):
+                    # 合并单元格会由 python-docx 在 row.cells 中重复返回同一 w:tc。
+                    if cell._tc in seen_cells:
+                        continue
+                    seen_cells.add(cell._tc)
                     cell_text = extract_cell_text(cell)
                     if is_empty_text(cell_text):
                         continue
@@ -425,6 +527,30 @@ def parse_docx(file_path: str) -> ParsedDocument:
             # 其他 body 元素（如 w:sectPr）按一个顶层元素计数
             body_order += 1
 
+    # 脚注、尾注是法律文书中高密度的法源区域。按 Word note ID 和段落顺序
+    # 追加到正文阅读流，保持 line 锚点全局连续且坐标可审计。
+    for note_type, note_id, note_para_index, text in _extract_note_paragraphs(file_path):
+        block = Block(
+            block_id=next_block_id(),
+            type=BlockType.FOOTNOTE if note_type == "footnote" else BlockType.ENDNOTE,
+            text=text,
+            style=None,
+            section_path=["脚注" if note_type == "footnote" else "尾注"],
+            body_order=body_order,
+            block_order=block_order,
+            para_index=note_para_index,
+            note_type=note_type,
+            note_id=note_id,
+            has_numbering=False,
+            numbering_unresolved=False,
+            is_list_item=False,
+            is_article_start=is_article_start(text),
+        )
+        blocks.append(block)
+        _split_block_to_anchors(block, anchors, next_anchor_id)
+        body_order += 1
+        block_order += 1
+
     # ---- 构建 ParsedDocument ----
     doc_meta = DocMeta(
         schema_version="0.1",
@@ -440,6 +566,30 @@ def parse_docx(file_path: str) -> ParsedDocument:
     )
 
     return parsed
+
+
+def _extract_note_paragraphs(file_path: str) -> list[tuple[str, str, int, str]]:
+    """从 DOCX 包内读取脚注/尾注正文，跳过 Word 的分隔符伪注释。"""
+    notes: list[tuple[str, str, int, str]] = []
+    with zipfile.ZipFile(file_path) as archive:
+        for note_type, member, tag_name in (
+            ("footnote", "word/footnotes.xml", "w:footnote"),
+            ("endnote", "word/endnotes.xml", "w:endnote"),
+        ):
+            if member not in archive.namelist():
+                continue
+            root = parse_xml(archive.read(member))
+            elements = list(root.findall(qn(tag_name)))
+            elements.sort(key=lambda element: int(element.get(qn("w:id"), "0")))
+            for element in elements:
+                note_id = element.get(qn("w:id"), "")
+                if note_id.lstrip("-").isdigit() and int(note_id) < 0:
+                    continue
+                for index, paragraph in enumerate(element.iter(qn("w:p"))):
+                    text = normalize_whitespace(extract_paragraph_text(paragraph))
+                    if text:
+                        notes.append((note_type, note_id, index, text))
+    return notes
 
 
 def _get_style_name(para_element, docx: DocxDocument) -> Optional[str]:
@@ -490,6 +640,8 @@ def _split_block_to_anchors(
             text=sent.text,
             block_id=block.block_id,
             para_index=block.para_index,
+            note_type=block.note_type,
+            note_id=block.note_id,
             char_start=sent.char_start,
             char_end=sent.char_end,
         )

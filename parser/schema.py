@@ -26,6 +26,8 @@ class BlockType(str, Enum):
     PARAGRAPH = "paragraph"
     LIST_ITEM = "list_item"
     TABLE_CELL = "table_cell"
+    FOOTNOTE = "footnote"
+    ENDNOTE = "endnote"
 
 
 class HeadingSource(str, Enum):
@@ -48,6 +50,8 @@ class Anchor(BaseModel):
     block_id: str = Field(description="所属 block 的 ID")
     # para_index 仅对段落类 block（heading/paragraph/list_item）有意义
     para_index: Optional[int] = Field(default=None, description="原始段落序号，从0开始")
+    note_type: Optional[str] = Field(default=None, description="footnote/endnote；正文为 null")
+    note_id: Optional[str] = Field(default=None, description="Word 注释 ID；正文为 null")
     char_start: int = Field(description="在 block.text 中的起始偏移（左闭）", ge=0)
     char_end: int = Field(description="在 block.text 中的结束偏移（右开）", ge=0)
 
@@ -71,6 +75,8 @@ class Block(BaseModel):
     body_order: int = Field(description="DOCX body 顶层元素顺序，从0开始")
     block_order: int = Field(description="所有 block 的全局阅读顺序，从0开始")
     para_index: Optional[int] = Field(default=None, description="原始段落序号，table_cell 时为 null")
+    note_type: Optional[str] = Field(default=None, description="footnote/endnote；正文为 null")
+    note_id: Optional[str] = Field(default=None, description="Word 注释 ID；正文为 null")
     # ---- 表格定位 ----
     table_index: Optional[int] = Field(default=None, description="表格编号，从0开始")
     row_index: Optional[int] = Field(default=None, description="行编号，从0开始")

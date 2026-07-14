@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import tempfile
 import uuid
 from pathlib import Path
@@ -18,7 +19,7 @@ from document_pipeline import (
     parse_and_validate_document,
     verify_document_claims,
 )
-from verification.schema import CaseLookupStatus, ComparisonVerdict
+from verification.schema import CaseLookupStatus, ComparisonVerdict, LookupStatus
 
 from .report import render_report_html
 from .schema import (
@@ -96,6 +97,7 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
 
     return DocumentCheckResponse(
         file_name=Path(request.file_name).name,
+        document_key="sha256:" + hashlib.sha256(document_bytes).hexdigest(),
         semantic_check=request.semantic_check,
         summary=_summarize(verification),
         verification=verification,
@@ -136,6 +138,9 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
 
     return DocumentCheckResponse(
         file_name=f"{Path(request.file_name).name}（选中片段）",
+        document_key="sha256:" + hashlib.sha256(
+            (Path(request.file_name).name + "\0" + request.text).encode("utf-8")
+        ).hexdigest(),
         semantic_check=request.semantic_check,
         summary=_summarize(verification),
         verification=verification,
@@ -177,6 +182,13 @@ def _summarize(verification) -> CheckSummary:
             issues += 1
             continue
         if comparison is None:
+            if check.lookup_status in {
+                LookupStatus.ARTICLE_FOUND,
+                LookupStatus.RELEVANT_ARTICLES_FOUND,
+            }:
+                passed += 1
+            else:
+                bugs += 1
             continue
         if comparison.verdict == ComparisonVerdict.PASS:
             passed += 1
@@ -192,8 +204,20 @@ def _summarize(verification) -> CheckSummary:
         1 for check in verification.case_checks
         if check.lookup_status == CaseLookupStatus.NOT_FOUND
     )
+    passed += cases_verified
+    issues += cases_not_found
+    bugs += sum(
+        1
+        for check in verification.case_checks
+        if check.lookup_status
+        in {
+            CaseLookupStatus.MANUAL_REVIEW,
+            CaseLookupStatus.SOURCE_NOT_CONFIGURED,
+            CaseLookupStatus.SOURCE_ERROR,
+        }
+    )
     return CheckSummary(
-        total=len(verification.legal_checks),
+        total=len(verification.legal_checks) + len(verification.case_checks),
         passed=passed,
         issues=issues,
         bugs=bugs,

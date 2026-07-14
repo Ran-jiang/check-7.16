@@ -7,7 +7,14 @@ from verification.schema import (
     SourceTier,
     SourceTrace,
 )
-from verification.semantic import DEFAULT_BASE_URL, QwenSemanticChecker
+from verification.semantic import DEFAULT_BASE_URL, PROMPT_PATH, QwenSemanticChecker
+
+
+def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
+    prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    assert "不评价法律论证是否成立" in prompt
+    assert "不评价文书结论在法律上是否成立" in prompt
+    assert "结论是否必然成立" not in prompt
 
 
 class FakeResponse:

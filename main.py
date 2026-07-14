@@ -17,7 +17,6 @@ CCitecheck CLI 入口。
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -109,6 +108,11 @@ def parse(
     qwen_model: Optional[str] = typer.Option(
         None, "--qwen-model", help="语义检查使用的千问模型"
     ),
+    include_statutes: bool = typer.Option(
+        True,
+        "--include-statutes/--no-include-statutes",
+        help="是否核查法规引用（默认开启）",
+    ),
     include_cases: bool = typer.Option(
         True,
         "--include-cases/--no-include-cases",
@@ -127,12 +131,15 @@ def parse(
         typer.echo(f"Error: File not found: {input_file}", err=True)
         raise typer.Exit(code=1)
 
-    if not input_path.suffix.lower() in (".docx",):
+    if input_path.suffix.lower() not in (".docx",):
         typer.echo(f"Error: Not a .docx file: {input_file}", err=True)
         raise typer.Exit(code=1)
 
     if out is None and claims_out is None and verify_out is None:
         typer.echo("Error: 必须指定 --out、--claims-out 或 --verify-out", err=True)
+        raise typer.Exit(code=1)
+    if not (include_statutes or include_cases):
+        typer.echo("Error: 法规引用与司法案例至少选择一种", err=True)
         raise typer.Exit(code=1)
 
     try:
@@ -155,14 +162,25 @@ def parse(
     # ---- 输出 v0.2 ClaimDocument JSON ----
     claim_doc: ClaimDocument | None = None
     if claims_out is not None or verify_out is not None:
-        claim_doc = _extract_v0_2_claims(parsed_doc, verbose)
+        claim_doc = _extract_v0_2_claims(
+            parsed_doc,
+            verbose,
+            include_statutes=include_statutes,
+            include_cases=include_cases,
+        )
 
     if claims_out is not None and claim_doc is not None:
         _write_v0_2_claims(claim_doc, claims_out)
 
     if verify_out is not None and claim_doc is not None:
         _write_v0_3_verification(
-            claim_doc, verify_out, law_db, semantic_check, qwen_model, include_cases
+            claim_doc,
+            verify_out,
+            law_db,
+            semantic_check,
+            qwen_model,
+            include_statutes,
+            include_cases,
         )
 
 
@@ -172,25 +190,33 @@ def parse(
 
 def _write_v0_1_output(parsed_doc: ParsedDocument, out_path_str: str) -> None:
     """写入 v0.1 JSON 输出"""
-    output = _serialize_parsed_document(parsed_doc)
     out_path = Path(out_path_str)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(output, encoding="utf-8")
+    out_path.write_text(parsed_doc.model_dump_json(indent=2), encoding="utf-8")
 
 
-def _extract_v0_2_claims(parsed_doc: ParsedDocument, verbose: bool = False) -> ClaimDocument:
+def _extract_v0_2_claims(
+    parsed_doc: ParsedDocument,
+    verbose: bool = False,
+    include_statutes: bool = True,
+    include_cases: bool = True,
+) -> ClaimDocument:
     """运行 v0.2 主张抽取"""
     from collections import Counter
 
     try:
-        claim_doc = extract_document_claims(parsed_doc)
+        claim_doc = extract_document_claims(
+            parsed_doc,
+            include_statutes=include_statutes,
+            include_cases=include_cases,
+        )
     except DocumentPipelineError as e:
         typer.echo(f"Claim validation FAILED:\n{e}", err=True)
         raise typer.Exit(code=2)
 
     # 打印摘要
     type_counts = Counter(c.claim_type.value for c in claim_doc.claims)
-    typer.echo(f"\n=== v0.2 Claim Extraction Summary ===")
+    typer.echo("\n=== v0.2 Claim Extraction Summary ===")
     typer.echo(f"Total claims: {len(claim_doc.claims)}")
     for ct in ["legal_source_claim", "case_citation", "case_holding_paraphrase"]:
         count = type_counts.get(ct, 0)
@@ -211,10 +237,9 @@ def _extract_v0_2_claims(parsed_doc: ParsedDocument, verbose: bool = False) -> C
 
 def _write_v0_2_claims(claim_doc: ClaimDocument, claims_out: str) -> None:
     """写入 v0.2 ClaimDocument JSON"""
-    output = _serialize_claim_document(claim_doc)
     out_path = Path(claims_out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(output, encoding="utf-8")
+    out_path.write_text(claim_doc.model_dump_json(indent=2), encoding="utf-8")
 
     typer.echo(f"Claims output: {claims_out}")
 
@@ -225,6 +250,7 @@ def _write_v0_3_verification(
     law_db: str,
     semantic_check: bool,
     qwen_model: str | None,
+    include_statutes: bool = True,
     include_cases: bool = True,
 ) -> None:
     """运行 v0.3 溯源链路并写入前端 JSON"""
@@ -234,6 +260,7 @@ def _write_v0_3_verification(
             law_db,
             semantic_check=semantic_check,
             qwen_model=qwen_model,
+            include_statutes=include_statutes,
             include_cases=include_cases,
         )
     except DocumentPipelineError as exc:
@@ -245,117 +272,11 @@ def _write_v0_3_verification(
         frontend_doc.model_dump_json(indent=2),
         encoding="utf-8",
     )
-    typer.echo(f"Verification checks: {len(frontend_doc.legal_checks)}")
+    typer.echo(
+        "Verification checks: "
+        f"{len(frontend_doc.legal_checks) + len(frontend_doc.case_checks)}"
+    )
     typer.echo(f"Verification output: {verify_out}")
-
-
-# ============================================================
-# JSON 序列化
-# ============================================================
-
-def _serialize_parsed_document(parsed_doc) -> str:
-    doc_dict = _build_v0_1_output_dict(parsed_doc)
-    return json.dumps(doc_dict, ensure_ascii=False, indent=2)
-
-
-def _build_v0_1_output_dict(parsed_doc) -> dict:
-    meta = parsed_doc.doc_meta
-    doc_meta_dict = {
-        "schema_version": meta.schema_version,
-        "doc_id": meta.doc_id,
-        "source_file": meta.source_file,
-        "doc_hash": meta.doc_hash,
-        "parsed_at": meta.parsed_at,
-    }
-    blocks_list = []
-    for b in parsed_doc.blocks:
-        blocks_list.append({
-            "block_id": b.block_id, "type": b.type.value, "text": b.text,
-            "style": b.style, "section_path": b.section_path,
-            "body_order": b.body_order, "block_order": b.block_order,
-            "para_index": b.para_index, "table_index": b.table_index,
-            "row_index": b.row_index, "cell_index": b.cell_index,
-            "has_numbering": b.has_numbering, "numbering_text": b.numbering_text,
-            "numbering_unresolved": b.numbering_unresolved,
-            "is_list_item": b.is_list_item, "list_group_id": b.list_group_id,
-            "is_article_start": b.is_article_start,
-            "heading_source": b.heading_source.value if b.heading_source else None,
-            "anchor_range": b.anchor_range, "sentence_anchors": b.sentence_anchors,
-        })
-    anchors_list = []
-    for a in parsed_doc.anchors:
-        anchors_list.append({
-            "anchor": a.anchor, "text": a.text, "block_id": a.block_id,
-            "para_index": a.para_index, "char_start": a.char_start,
-            "char_end": a.char_end,
-        })
-    chunks_list = []
-    for c in parsed_doc.chunks:
-        chunks_list.append({
-            "chunk_id": c.chunk_id, "section_path": c.section_path,
-            "block_ids": c.block_ids, "anchor_ids": c.anchor_ids,
-            "anchor_range": c.anchor_range, "estimated_tokens": c.estimated_tokens,
-            "overlap_anchor_ids": c.overlap_anchor_ids,
-        })
-    return {"doc_meta": doc_meta_dict, "blocks": blocks_list,
-            "anchors": anchors_list, "chunks": chunks_list}
-
-
-def _serialize_claim_document(claim_doc: ClaimDocument) -> str:
-    output_dict = _build_claim_output_dict(claim_doc)
-    return json.dumps(output_dict, ensure_ascii=False, indent=2)
-
-
-def _build_claim_output_dict(claim_doc: ClaimDocument) -> dict:
-    meta = claim_doc.claim_meta
-    meta_dict = {
-        "schema_version": meta.schema_version,
-        "claim_doc_id": meta.claim_doc_id,
-        "source_doc_id": meta.source_doc_id,
-        "source_doc_hash": meta.source_doc_hash,
-        "source_file": meta.source_file,
-        "extracted_at": meta.extracted_at,
-        "extractor_version": meta.extractor_version,
-        "llm_used": meta.llm_used,
-        "llm_chunk_failures": meta.llm_chunk_failures,
-    }
-    claims_list = []
-    for claim in claim_doc.claims:
-        cd = {
-            "claim_id": claim.claim_id,
-            "claim_type": claim.claim_type.value,
-            "text": claim.text,
-            "anchor_ids": claim.anchor_ids,
-            "block_ids": claim.block_ids,
-            "verification_route": claim.verification_route.value,
-            "entities": _serialize_entities(claim.entities),
-            "debug": {
-                "methods": [m if isinstance(m, str) else m.value for m in claim.debug.methods],
-                "candidate_count": claim.debug.candidate_count,
-                "text_mismatch": claim.debug.text_mismatch,
-            },
-        }
-        claims_list.append(cd)
-    return {"claim_meta": meta_dict, "claims": claims_list}
-
-
-def _serialize_entities(entities) -> dict:
-    if hasattr(entities, "model_dump"):
-        return entities.model_dump(exclude_none=False)
-    result = {}
-    for field_name in getattr(entities, '__fields__', {}):
-        value = getattr(entities, field_name, None)
-        if hasattr(value, "value"):
-            result[field_name] = value.value
-        elif isinstance(value, list):
-            result[field_name] = [
-                item.model_dump() if hasattr(item, "model_dump")
-                else (item.value if hasattr(item, "value") else item)
-                for item in value
-            ]
-        else:
-            result[field_name] = value
-    return result
 
 
 def main():

@@ -23,11 +23,14 @@ document.getElementById("help-button").addEventListener("click", openHelp)
 
 ui.setHandlers({
   onJump: check => {
-    jumpToText(check.claim_text).catch(error => ui.showMessage(error.message))
+    jumpToText(
+      check.location_text || check.claim_text,
+      check.location_occurrence || 0
+    ).catch(error => ui.showMessage(error.message))
   },
   onDecide: (checkId, decision) => {
     if (!lastResult) return {}
-    return saveDecision(lastResult.file_name, checkId, decision)
+    return saveDecision(lastResult.document_key, checkId, decision)
   },
 })
 
@@ -67,6 +70,7 @@ async function runCheck() {
   const scope = checkScope()
   if (!scope) return
   ui.resetProgress()
+  ui.setBusy(true)
   ui.showScreen("progress-screen")
   try {
     const docxBase64 = await getDocumentBase64()
@@ -84,6 +88,8 @@ async function runCheck() {
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "核查失败")
+  } finally {
+    ui.setBusy(false)
   }
 }
 
@@ -91,6 +97,7 @@ async function runSelectionCheck() {
   const scope = checkScope()
   if (!scope) return
   try {
+    ui.setBusy(true)
     const selectedText = await getSelectedText()
     if (!selectedText) {
       ui.showMessage("请先在文档中选中要核查的内容")
@@ -112,6 +119,8 @@ async function runSelectionCheck() {
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "选中内容核查失败")
+  } finally {
+    ui.setBusy(false)
   }
 }
 
@@ -121,7 +130,7 @@ function finishCheck(result) {
   ui.setStage("stage-report", "complete", "核查完成，可导出报告")
   recordHistory(result)
   ui.renderHistory(readHistory())
-  ui.renderResults(result, readDecisions(result.file_name))
+  ui.renderResults(result, readDecisions(result.document_key))
 }
 
 async function exportCurrentReport() {
@@ -130,17 +139,20 @@ async function exportCurrentReport() {
     return
   }
   try {
+    ui.setBusy(true)
     const report = await exportReport({
       file_name: lastResult.file_name,
       semantic_check: lastResult.semantic_check,
       summary: lastResult.summary,
       verification: lastResult.verification,
-      decisions: readDecisions(lastResult.file_name),
+      decisions: readDecisions(lastResult.document_key),
     })
     openExternal(`${window.location.origin}${report.url}`)
     ui.showMessage("核查报告已生成，可在浏览器中打印或另存为 PDF")
   } catch (error) {
     ui.showMessage(error.message || "报告导出失败")
+  } finally {
+    ui.setBusy(false)
   }
 }
 

@@ -5,17 +5,15 @@ CCitecheck v0.2 Claim 校验器测试。
   19. 正常文档返回空列表；构造异常场景能检测
 """
 
-import pytest
 from parser.schema import (
-    Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument,
+    Anchor, Block, BlockType, DocMeta, ParsedDocument,
 )
-from claims.arbiter import arbitrate_claim_candidates, build_claim_document
+from claims.arbiter import build_claim_document
 from claims.schema import (
-    Claim, ClaimCandidate, ClaimDebug, ClaimType,
+    Claim, ClaimDebug, ClaimType,
     ExtractionMethod, LegalSourceClaimEntities,
     LegalSource, LegalSourceType,
-    VerificationRoute, CaseCitationEntities,
-    CaseRef, CaseReferenceType, CaseHoldingParaphraseEntities,
+    VerificationRoute,
 )
 from claims.validators import validate_claim_document
 

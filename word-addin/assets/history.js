@@ -16,41 +16,42 @@ export function readHistory() {
 export function recordHistory(result) {
   const entry = {
     fileName: result.file_name,
+    documentKey: result.document_key,
     checkedAt: new Date().toISOString(),
     total: result.summary.total,
     issues: result.summary.issues,
   }
-  const history = readHistory().filter(item => item.fileName !== entry.fileName)
+  const history = readHistory().filter(item => item.documentKey !== entry.documentKey)
   localStorage.setItem(STORAGE_KEY, JSON.stringify([entry, ...history].slice(0, HISTORY_LIMIT)))
 }
 
-// ---- 每条核查项的人工处理标记（接受/忽略/转人工），按文件名持久化 ----
+// ---- 每条核查项的人工处理标记（接受/忽略），按文档内容哈希持久化 ----
 
 const DECISIONS_KEY = "ccitecheck.decisions"
 
-export function readDecisions(fileName) {
+export function readDecisions(documentKey) {
   try {
     const store = JSON.parse(localStorage.getItem(DECISIONS_KEY) || "{}")
-    return store[fileName] || {}
+    return store[documentKey] || {}
   } catch {
     return {}
   }
 }
 
-export function saveDecision(fileName, checkId, decision) {
+export function saveDecision(documentKey, checkId, decision) {
   let store = {}
   try {
     store = JSON.parse(localStorage.getItem(DECISIONS_KEY) || "{}")
   } catch {
     store = {}
   }
-  const decisions = store[fileName] || {}
+  const decisions = store[documentKey] || {}
   if (decision) {
     decisions[checkId] = decision
   } else {
     delete decisions[checkId]
   }
-  store[fileName] = decisions
+  store[documentKey] = decisions
   localStorage.setItem(DECISIONS_KEY, JSON.stringify(store))
   return decisions
 }

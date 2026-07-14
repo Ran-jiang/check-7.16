@@ -17,7 +17,7 @@ CCitecheck v0.2 Rule Engine 测试。
 
 import pytest
 from parser.schema import (
-    Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument,
+    Anchor, Block, BlockType, DocMeta, ParsedDocument,
 )
 from claims.rule_engine import extract_rule_candidates
 from claims.schema import (
@@ -28,7 +28,6 @@ from claims.extractor import build_indexes
 from claims.legal_citation import (
     extract_legal_sources, infer_source_type,
 )
-from claims.case_citation import extract_case_refs
 
 
 # ============================================================

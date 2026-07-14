@@ -34,10 +34,10 @@ CASE_NUMBER_PATTERN = re.compile(
     r"[（(〔]"
     r"([12]\d{3})"           # 年份（1xxx 或 2xxx）
     r"[）)〕]"
-    r"\S*?"                   # 法院简称（非空白字符，非贪婪）
-    r"[民刑行知行赔执]"        # 案件类型字（常见分类）
-    r"\S*?"                   # 可能的附加分类字
-    r"\d+"                     # 案号数字
+    r"[^\s，。；：、（）()〔〕]{0,12}?"  # 有界法院代码（旧案号可省略）
+    r"[民刑行知赔执破清海商]"             # 案件类型字
+    r"[^\s，。；：、（）()〔〕]{0,6}?"   # 初/终/再/申等附加分类
+    r"(?:字第)?\d+"                         # 新旧案号数字格式
     r"号"
 )
 
@@ -45,7 +45,7 @@ CASE_NUMBER_PATTERN = re.compile(
 
 # 指导案例：指导案例第X号 或 指导性案例第X号
 GUIDING_CASE_PATTERN = re.compile(
-    r"指导(?:性)?案例第[一二三四五六七八九十百\d]+号"
+    r"指导(?:性)?案例(?:第)?[一二三四五六七八九十百\d]+号"
 )
 
 # 公报案例 / 典型案例
@@ -63,8 +63,8 @@ GAZETTE_TYPICAL_PATTERN = re.compile(
 #   4. "诉"到"案"之间最多12字，且不得跨越句读（。！？；，、）
 #   5. "案"前不能是预/方/草/议/答/备/提/立/档（排除预案、方案、草案等）
 NAMED_CASE_PATTERN = re.compile(
-    r"\S{2,10}?(?<![被投申上起控])诉(?![讼称求请]|行为)"
-    r"\S{2,10}?[^。！？；，、]{0,12}?(?:纠纷)?(?<![预方草议答备提立档])案"
+    r"[^。！？；，\n]{2,60}?(?<![被投申上起控])诉(?![讼称求请]|行为)"
+    r"[^。！？；，\n]{1,60}?(?:纠纷)?(?<![预方草议答备提立档])案[）)]?"
 )
 
 # 指代词（指向当前文书内部，不可外部检索）— 显式排除
@@ -170,8 +170,17 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     Returns:
         CaseRef 列表
     """
-    # 排除指代词
-    if _has_self_reference(text):
+    # 纯“本案/该案”等指代不可检索；同句另有明确外部案例线索时仍保留。
+    has_explicit_reference = any(
+        pattern.search(text)
+        for pattern in (
+            CASE_NUMBER_PATTERN,
+            GUIDING_CASE_PATTERN,
+            GAZETTE_TYPICAL_PATTERN,
+            NAMED_CASE_PATTERN,
+        )
+    )
+    if _has_self_reference(text) and not has_explicit_reference:
         return []
 
     case_refs: list[CaseRef] = []
@@ -199,6 +208,10 @@ def extract_case_refs(text: str) -> list[CaseRef]:
 
     # 3. 公报案例 / 典型案例
     for m in GAZETTE_TYPICAL_PATTERN.finditer(text):
+        prefix = text[max(0, m.start() - 8):m.start()]
+        # “附录二：典型案例”只是章节标题，不是可外部检索的具体案例。
+        if re.search(r"附录[一二三四五六七八九十\d]*[：:]?\s*$", prefix):
+            continue
         case_refs.append(CaseRef(
             reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
             case_number=None,
@@ -208,7 +221,23 @@ def extract_case_refs(text: str) -> list[CaseRef]:
 
     # 4. 命名案（X诉Y……案）
     for m in NAMED_CASE_PATTERN.finditer(text):
-        case_name = m.group(0)
+        case_name = _clean_named_case_name(m.group(0))
+        if not case_name:
+            continue
+        numbered = [ref for ref in case_refs if ref.case_number]
+        guiding = [
+            ref
+            for ref in case_refs
+            if ref.case_name and GUIDING_CASE_PATTERN.fullmatch(ref.case_name)
+        ]
+        # “命名案（案号）”及“指导案例X号：命名案”都是同一案例的两种线索，
+        # 合并到一个 CaseRef，避免重复核验与重复结果卡片。
+        if len(numbered) == 1:
+            numbered[0].case_name = case_name
+            continue
+        if len(guiding) == 1:
+            guiding[0].case_name = f"{guiding[0].case_name}：{case_name}"
+            continue
         # 避免与已添加的重复
         if not any(c.case_name == case_name for c in case_refs):
             case_refs.append(CaseRef(
@@ -219,6 +248,18 @@ def extract_case_refs(text: str) -> list[CaseRef]:
             ))
 
     return case_refs
+
+
+def _clean_named_case_name(value: str) -> str:
+    """清除指导案例编号、引导词等非案名边界文本。"""
+    name = value.strip()
+    if "：" in name or ":" in name:
+        name = re.split(r"[：:]", name)[-1].strip()
+    name = re.sub(r"^(?:可参见|参见|例如|譬如|如|案例)\s*", "", name)
+    name = name.lstrip("0123456789一二三四五六七八九十百号、：: ")
+    if "诉" not in name or len(name) > 90:
+        return ""
+    return name
 
 
 def find_holding_trigger_position(

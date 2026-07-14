@@ -16,18 +16,10 @@
 import os
 import tempfile
 
-import pytest
 from docx import Document as DocxDocument
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 
 from parser.docx_parser import (
     parse_docx,
-    extract_paragraph_text,
-    extract_cell_text,
-    check_paragraph_numbering,
-    normalize_whitespace,
 )
 from parser.schema import BlockType
 from parser.utils import is_empty_text
@@ -187,7 +179,6 @@ class TestParsing:
     def test_heading_detection(self):
         """标题识别与 section_path。"""
         doc = DocxDocument()
-        from docx.enum.style import WD_STYLE_TYPE
         # 使用标题样式
         h1 = doc.add_paragraph("第一章 总则")
         h1.style = doc.styles["Heading 1"]

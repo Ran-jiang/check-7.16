@@ -52,7 +52,7 @@ export function getSelectedText() {
 // Word 的 search 对超长字符串会失败，截取片段前缀定位。
 const JUMP_SNIPPET_LIMIT = 90
 
-export async function jumpToText(snippet) {
+export async function jumpToText(snippet, occurrence = 0) {
   if (!window.Word?.run) {
     throw new Error("当前 Word 版本不支持文档内定位")
   }
@@ -65,7 +65,8 @@ export async function jumpToText(snippet) {
     if (!results.items.length) {
       throw new Error("未在文档中找到该片段（可能已被修改）")
     }
-    results.items[0].select()
+    const target = results.items[Math.min(occurrence, results.items.length - 1)]
+    target.select()
     await context.sync()
   })
 }

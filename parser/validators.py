@@ -7,7 +7,7 @@ CCitecheck v0.1 不变量校验。
 
 from __future__ import annotations
 
-from .schema import Anchor, Block, Chunk, ParsedDocument
+from .schema import Anchor, Block, ParsedDocument
 
 
 def validate_parsed_document(doc: ParsedDocument) -> list[str]:
@@ -25,7 +25,6 @@ def validate_parsed_document(doc: ParsedDocument) -> list[str]:
     # 构建查找表
     anchor_map: dict[str, Anchor] = {a.anchor: a for a in doc.anchors}
     block_map: dict[str, Block] = {b.block_id: b for b in doc.blocks}
-    chunk_map: dict[str, Chunk] = {c.chunk_id: c for c in doc.chunks}
 
     # ---- 1. 无损分句 ----
     violations.extend(_check_lossless_split(doc, anchor_map, block_map))
@@ -216,13 +215,15 @@ def _check_chunk_continuity(
 
         orders.sort()
 
-        # 检查是否连续（允许跳跃，但需要说明）
+        # 同一 chunk 的 block 必须在阅读顺序中连续；重复仅用于超长块重叠。
         # 由于超长 block 拆分场景，同一个 block_id 可以出现在多个 chunk
         # 我们只检查顺序是否单调递增
         for i in range(1, len(orders)):
             if orders[i] != orders[i - 1] + 1 and orders[i] != orders[i - 1]:
-                # 中间有空缺可能是正常情况（被跳过或拆分）
-                pass
+                violations.append(
+                    f"[chunk连续性] chunk {chunk.chunk_id}: "
+                    f"block_order {orders[i - 1]} 与 {orders[i]} 不连续"
+                )
 
         # 检查单调性
         prev_order = -1

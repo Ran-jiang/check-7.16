@@ -87,7 +87,7 @@ class LocalSQLiteSource:
                     trace.status = LookupStatus.ARTICLE_FOUND
                     trace.source_name = article["source_name"] or trace.source_name
                     trace.source_url = article["source_url"]
-                    trace.fetched_at = article["source_fetched_at"]
+                    trace.fetched_at = article["source_fetched_at"] or trace.fetched_at
                     evidence = ArticleEvidence(
                         law_title=article["title"],
                         source_type=article["source_type"],

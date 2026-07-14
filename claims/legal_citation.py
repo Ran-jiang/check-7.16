@@ -16,7 +16,6 @@ CCitecheck v0.2 法源/条款号识别。
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from .schema import ArticleRef, LegalSource, LegalSourceType
 
@@ -314,8 +313,7 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
     提取条、款、项，并建立归属关系。
     返回 ArticleRef 列表，每个 ArticleRef 包含条号及对应的款和项。
 
-    注意：当前实现提取同一法源后的所有条款号，
-    款和项的归属关系做了简化处理——款和项归属到最近的前一个条号。
+    款和项仅归属到它前面最近的条号；遇到下一个条号即停止。
 
     Args:
         text: 待分析的文本片段（通常是两个书名号之间的文本）
@@ -336,7 +334,7 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
         return []
 
     articles: list[ArticleRef] = []
-    for am in article_matches:
+    for index, am in enumerate(article_matches):
         article_num = am.group(1)
         suffix = am.group(2)
         if suffix:
@@ -345,17 +343,22 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
             article_text = f"第{article_num}条"
 
         article_end = am.end()
+        next_article_start = (
+            article_matches[index + 1].start()
+            if index + 1 < len(article_matches)
+            else len(text)
+        )
 
         # 收集属于此条号的款（位于此条之后、下一条之前或文本末尾）
         paras: list[str] = []
         for pm in paragraph_matches:
-            if pm.start() >= article_end:
+            if article_end <= pm.start() < next_article_start:
                 paras.append(f"第{pm.group(1)}款")
 
         # 收集属于此条号的项
         items: list[str] = []
         for im in item_matches:
-            if im.start() >= article_end:
+            if article_end <= im.start() < next_article_start:
                 items.append(f"第{im.group(1)}项")
 
         articles.append(ArticleRef(
@@ -373,11 +376,17 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
         end = _cn_num_to_int(rm.group(2))
         if not (0 < start < end and end - start <= 50):
             continue
+        start_text = f"第{rm.group(1)}条"
+        insert_at = next(
+            (index + 1 for index, article in enumerate(articles) if article.article == start_text),
+            len(articles),
+        )
         for number in range(start + 1, end):
             article_text = f"第{_int_to_cn_num(number)}条"
             if article_text not in existing:
                 existing.add(article_text)
-                articles.append(ArticleRef(article=article_text))
+                articles.insert(insert_at, ArticleRef(article=article_text))
+                insert_at += 1
 
     return articles
 
@@ -636,7 +645,17 @@ def _strip_noise_prefix(title: str) -> str:
     Returns:
         剥离后的法名
     """
+    # 若谓语被正则一起吞入，只保留最后一个明确引导语之后的部分。
+    embedded_markers = [
+        "请求依照", "请求依据", "请求根据", "应当依据", "应当依照",
+        "可以参照", "可以认定为", "认定为", "不属于", "违反了",
+    ]
+    for marker in embedded_markers:
+        if marker in title:
+            title = title.rsplit(marker, 1)[-1]
+
     noise_words = [
+        "人民法院可以认定为", "人民法院可以参照", "人民法院应当依据",
         "人民法院可以认定构成", "人民法院应当认定为",
         "人民法院经审查可以认定为", "人民法院认定",
         "法院可以认定构成", "法院应当认定为",
@@ -646,7 +665,7 @@ def _strip_noise_prefix(title: str) -> str:
         "认定构成", "认定为",
         "认定", "构成", "属于", "依据", "根据",
         "适用", "参照", "依照", "违反", "符合",
-        "所称", "的", "为", "被", "经审查", "不予", "依法",
+        "所称", "的", "为", "被", "经审查", "不予", "依法", "了",
         "法院", "可以", "应当",
     ]
     changed = True

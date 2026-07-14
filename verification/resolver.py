@@ -9,10 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-# 法条查询与千问语义核查都是 IO 密集调用，用线程池并发压缩总耗时
-_LOOKUP_WORKERS = 6
-_SEMANTIC_WORKERS = 4
-
 from claims.schema import ClaimDocument, ClaimType
 from laws.sqlite_store import (
     connect,
@@ -29,6 +25,7 @@ from .schema import (
     CaseCheck,
     CaseEvidence,
     CaseLookupStatus,
+    CaseSourceTrace,
     ComparisonVerdict,
     FrontendVerificationDocument,
     LegalCheck,
@@ -51,6 +48,10 @@ from .sources import (
     StatuteSource,
 )
 
+# 法条查询与千问语义核查都是 IO 密集调用，用线程池并发压缩总耗时
+_LOOKUP_WORKERS = 6
+_SEMANTIC_WORKERS = 4
+
 
 def build_default_sources(db_path: str | Path) -> list[StatuteSource]:
     return [
@@ -71,6 +72,7 @@ def verify_claim_document_for_frontend(
     source_chain = list(sources) if sources is not None else build_default_sources(db_path)
     recognizer = case_recognizer if case_recognizer is not None else PkulawCaseSource()
     known_titles = _load_known_titles(db_path)
+    locations = _claim_locations(claim_doc)
 
     items = _collect_check_items(claim_doc) if include_statutes else []
 
@@ -88,7 +90,12 @@ def verify_claim_document_for_frontend(
         if item.not_verifiable is not None:
             checks.append(
                 _not_verifiable_check(
-                    check_id, item.claim, item.law_title, item.article_no, item.not_verifiable
+                    check_id,
+                    item.claim,
+                    item.law_title,
+                    item.article_no,
+                    item.not_verifiable,
+                    locations[item.claim.claim_id],
                 )
             )
             continue
@@ -100,6 +107,8 @@ def verify_claim_document_for_frontend(
                 claim_id=item.claim.claim_id,
                 claim_text=item.claim.text,
                 anchor_ids=list(item.claim.anchor_ids),
+                location_text=locations[item.claim.claim_id][0],
+                location_occurrence=locations[item.claim.claim_id][1],
                 law_title=item.law_title,
                 article_no=item.article_no,
                 lookup_status=result.status,
@@ -113,7 +122,11 @@ def verify_claim_document_for_frontend(
     return FrontendVerificationDocument(
         source_claim_doc_id=claim_doc.claim_meta.claim_doc_id,
         legal_checks=checks,
-        case_checks=verify_case_claims(claim_doc, recognizer) if include_cases else [],
+        case_checks=(
+            verify_case_claims(claim_doc, recognizer, locations)
+            if include_cases
+            else []
+        ),
     )
 
 
@@ -134,7 +147,12 @@ class _CheckItem:
         # 无条号时按 claim 上下文做召回，不能复用
         if self.article_no:
             return (self.law_title, self.source_type, self.article_no)
-        return (self.law_title, self.source_type, None, self.claim.text)
+        return (
+            self.law_title,
+            self.source_type,
+            None,
+            self.claim.context_text or self.claim.text,
+        )
 
 
 def _collect_check_items(claim_doc: ClaimDocument) -> list[_CheckItem]:
@@ -172,7 +190,7 @@ def _run_lookups(
                 law_title=item.law_title,
                 source_type=item.source_type,
                 article_no=item.article_no,
-                context_text=item.claim.text,
+                context_text=item.claim.context_text or item.claim.text,
             ),
         )
     if not requests:
@@ -334,7 +352,7 @@ def _compare_with_llm(
     try:
         return semantic_checker.compare(
             _document_quote(item.claim),
-            item.claim.text,
+            item.claim.context_text or item.claim.text,
             _cited_source(item.law_title, item.article),
             lookup_result.evidence,
         )
@@ -348,37 +366,68 @@ def _compare_with_llm(
 def verify_case_claims(
     claim_doc: ClaimDocument,
     recognizer: CaseNumberRecognizer,
+    locations: dict[str, tuple[str, int]] | None = None,
 ) -> list[CaseCheck]:
-    claims_with_numbers = [
-        (claim, _cited_case_numbers(claim)) for claim in claim_doc.claims
+    locations = locations or _claim_locations(claim_doc)
+    refs = [
+        (claim, ref)
+        for claim in claim_doc.claims
+        for ref in getattr(claim.entities, "case_refs", [])
     ]
-    claims_with_numbers = [(c, nums) for c, nums in claims_with_numbers if nums]
-    if not claims_with_numbers:
+    if not refs:
         return []
 
     # 全篇合并为一次案号识别调用（法宝接口本身支持批量），节省额度与往返
-    joined_text = "\n".join(claim.text for claim, _ in claims_with_numbers)
-    recognized, error_status, message = _recognize_case_numbers(recognizer, joined_text)
+    claims_with_numbers = [
+        claim for claim, ref in refs if ref.case_number
+    ]
+    if claims_with_numbers:
+        joined_text = "\n".join(dict.fromkeys(claim.text for claim in claims_with_numbers))
+        recognized, error_status, message = _recognize_case_numbers(recognizer, joined_text)
+    else:
+        recognized, error_status, message = [], None, ""
 
     checks: list[CaseCheck] = []
-    next_id = 1
-    for claim, cited_numbers in claims_with_numbers:
-        for cited in cited_numbers:
-            evidence = _match_case_number(cited, recognized) if recognized is not None else None
-            status, note = _case_status(recognized, evidence, error_status, message)
-            checks.append(
-                CaseCheck(
-                    check_id=f"cc_{next_id:05d}",
-                    claim_id=claim.claim_id,
-                    claim_text=claim.text,
-                    anchor_ids=list(claim.anchor_ids),
-                    cited_case_number=cited,
-                    lookup_status=status,
-                    evidence=evidence,
-                    message=note,
-                )
+    for next_id, (claim, ref) in enumerate(refs, start=1):
+        location_text, occurrence = locations[claim.claim_id]
+        if ref.case_number:
+            evidence = (
+                _match_case_number(ref.case_number, recognized)
+                if recognized is not None
+                else None
             )
-            next_id += 1
+            status, note = _case_status(recognized, evidence, error_status, message)
+            trace = CaseSourceTrace(
+                source_name="北大法宝 MCP：案号识别",
+                source_url=evidence.url if evidence else None,
+                status=status,
+                message=note,
+            )
+        else:
+            evidence = None
+            status = CaseLookupStatus.MANUAL_REVIEW
+            note = "该案例线索未附案号，当前数据源不支持自动精确核验，请人工检索"
+            trace = CaseSourceTrace(
+                source_name="CCitecheck 案例路由",
+                status=status,
+                message=note,
+            )
+        checks.append(
+            CaseCheck(
+                check_id=f"cc_{next_id:05d}",
+                claim_id=claim.claim_id,
+                claim_text=claim.text,
+                anchor_ids=list(claim.anchor_ids),
+                location_text=location_text,
+                location_occurrence=occurrence,
+                cited_case_number=ref.case_number,
+                cited_case_name=ref.case_name,
+                lookup_status=status,
+                evidence=evidence,
+                message=note,
+                source_attempts=[trace],
+            )
+        )
     return checks
 
 
@@ -442,11 +491,18 @@ def _classify_not_verifiable(law_title: str) -> Optional[str]:
         return "征求意见稿尚未生效，不属于可核验的现行法源，请人工确认引用意图"
     if _GB_STANDARD_PATTERN.search(law_title):
         return "国家/行业标准不在法规库核验范围内，请以标准全文出版物为准"
+    if "专项通知" in law_title:
+        return "专项通知不按法条编号核验，请以发布机关原文件及适用期限为准"
     return None
 
 
 def _not_verifiable_check(
-    check_id: str, claim, law_title: str, article_no, reason: str
+    check_id: str,
+    claim,
+    law_title: str,
+    article_no,
+    reason: str,
+    location: tuple[str, int] = ("", 0),
 ) -> LegalCheck:
     trace = SourceTrace(
         tier=SourceTier.LOCAL_SQLITE,
@@ -459,6 +515,8 @@ def _not_verifiable_check(
         claim_id=claim.claim_id,
         claim_text=claim.text,
         anchor_ids=list(claim.anchor_ids),
+        location_text=location[0],
+        location_occurrence=location[1],
         law_title=law_title,
         article_no=article_no,
         lookup_status=LookupStatus.NOT_VERIFIABLE,
@@ -600,6 +658,24 @@ def _suggest_similar_title(law_title: str, known_titles: list[str]) -> Optional[
 
 def _document_quote(claim) -> str:
     return claim.text
+
+
+def _claim_locations(claim_doc: ClaimDocument) -> dict[str, tuple[str, int]]:
+    """为重复句生成稳定的搜索序号；同一锚点上的法规/案例共用序号。"""
+    counters: dict[str, int] = {}
+    identities: dict[tuple[str, ...], tuple[str, int]] = {}
+    result: dict[str, tuple[str, int]] = {}
+    for claim in claim_doc.claims:
+        identity = tuple(claim.anchor_ids)
+        location = identities.get(identity)
+        if location is None:
+            location_text = claim.text
+            occurrence = counters.get(location_text, 0)
+            counters[location_text] = occurrence + 1
+            location = (location_text, occurrence)
+            identities[identity] = location
+        result[claim.claim_id] = location
+    return result
 
 
 def _cited_source(law_title: str, article) -> str:

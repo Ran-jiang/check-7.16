@@ -7,9 +7,8 @@ CCitecheck v0.2 Claim Arbiter 测试。
   17. 不同 anchor、相同文本 → 不合并
 """
 
-import pytest
 from parser.schema import (
-    Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument,
+    Anchor, Block, BlockType, DocMeta, ParsedDocument,
 )
 from claims.arbiter import (
     arbitrate_claim_candidates,

@@ -9,18 +9,14 @@
   - 层级动态对齐
 """
 
-import pytest
 from parser.heading_detector import (
     detect_heading,
     detect_heading_level_from_style,
     is_pseudo_heading,
-    detect_chapter_type,
-    detect_numbered_heading,
     scan_chapter_types,
     normalize_heading_levels,
     HeadingSource,
 )
-from parser.utils import is_article_start
 
 
 class TestStyleDetection:

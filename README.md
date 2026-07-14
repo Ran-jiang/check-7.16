@@ -10,7 +10,7 @@
 核验结果同时支持：
 
 1. 法规溯源：本地法条库 + 北大法宝回退，确认法规、条文存在并取回原文。
-2. 语义对比：使用 `--semantic-check` 调用千问，核查法源、定位、时效、原意和结论是否必然获得支持。
+2. 语义对比：默认调用千问，核查法源、定位、时效以及引用表述是否忠实于权威原文；不评价法律论证或结论是否成立。
 
 ## 运行条件
 
@@ -18,12 +18,12 @@
 - `requirements.txt` 中的依赖
 - 本地法规库：`data/laws.sqlite`
 
-`DASHSCOPE_API_KEY` 默认不是必需项。只有运行 `--semantic-check` 时才需要它。服务器的统一密钥放在项目根目录 `.env`：
+默认流程开启语义核查，因此 `DASHSCOPE_API_KEY` 默认必需；仅显式使用 `--no-semantic-check` 时可以不配置。服务器的统一密钥放在项目根目录 `.env`：
 
 ```env
 DASHSCOPE_API_KEY=你的百炼APIKey
 QWEN_MODEL=qwen3.7-plus
-QWEN_BASE_URL=https://llm-qs6teo3293en0sk8.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 
 `.env` 已被 Git 忽略，不应提交到代码库。
@@ -44,13 +44,13 @@ python3 main.py doctor --law-db data/laws.sqlite
 
 - **核查全文 / 核查选中内容**：全文扫描或只核查当前选区（`POST /api/checks/selection`）。
 - **定位原文**：点击结果卡片的"定位原文"，光标跳转到文档中对应片段。
-- **接受 / 忽略 / 转人工**：对每条核查结论做人工标记，标记按文件持久化，作为尽职履责记录。
+- **接受 / 忽略**：对每条核查结论做人工标记，标记按文档内容哈希持久化，作为尽职履责记录。
 - **导出报告**：生成自包含 HTML 核查报告（`POST /api/reports`），含摘要、逐条明细、数据来源与人工处理记录，可直接打印或另存为 PDF 随文件交付。
 
 ### 首次运行
 
 ```bash
-cd citecheck  # 仓库根目录
+cd ccitecheck  # 仓库根目录
 python3 -m pip install -r requirements.txt
 npm install
 npm run certs
@@ -82,7 +82,7 @@ python3 main.py parse input.docx \
   --law-db data/laws.sqlite
 ```
 
-开启结论成立性审查：
+开启引用忠实度核查（默认已开启）：
 
 ```bash
 python3 main.py parse input.docx \
@@ -94,11 +94,11 @@ python3 main.py parse input.docx \
 ## 当前边界
 
 - 已支持：明确写出的法规名称、条文号、部分承前省略条文引用。
-- 已支持可选千问语义核查。
+- 已支持千问引用忠实度核查；只比较引用表述与权威文本，不评价法律论证是否成立。
 - 已支持无条号法规引用：对本地已有全文的法规召回最相关的当前有效条款，再执行语义核验。
 - 北大法宝 MCP 可在本地未命中时确认法规、时效和效力元数据；其当前无条号工具不返回匹配条号或条文全文。
 - 案号核验已接入北大法宝 `anhao_recognition`：对文书中带案号的案例引用（`with_case_number`）做识别 + 标准化验证，命中则回填权威案名、法院、裁判日期和溯源链接；文书案号在亿级案例库未命中时标记为疑似有误/不存在。
-- 语义审查只基于 claim、已查得的法条和元数据，不引入外部案件事实。
+- 语义核查只基于引用原句、所在语义块、已查得的法条和元数据，不引入外部案件事实。
 - 未支持：跨句复杂召回、完整案情事实归纳。
-- 案号核验只覆盖带案号的引用；无案号的案名/指导案例/典型案例引用（`without_case_number`）目前仅抽取不核验（留待接入案例关键词/语义检索工具）。
+- 带案号案例走北大法宝精确核验；无案号的案名/指导案例/典型案例会保留为 `manual_review`，明确提示人工检索，不再从结果中消失。
 - Word 网页版不支持获取完整压缩 DOCX；当前插件完整文档核查面向 Word for Mac 和 Word for Windows。

@@ -28,6 +28,7 @@ from .filters import is_out_of_scope_text
 from .schema import (
     Claim,
     ClaimCandidate,
+    ClaimDocument,
     ClaimDebug,
     ClaimType,
     ExtractionMethod,
@@ -115,6 +116,25 @@ def _derive_block_ids(
             block_ids_set.add(anchor.block_id)
     # 按 block_order 排序
     return sorted(block_ids_set)
+
+
+def _derive_context_text(
+    anchor_ids: list[str],
+    parsed_doc: ParsedDocument,
+    anchor_map: dict[str, Anchor],
+) -> str:
+    """返回首锚点所在 chunk 的完整文本，作为语义比对上下文。"""
+    if not anchor_ids:
+        return ""
+    target = anchor_ids[0]
+    for chunk in parsed_doc.chunks:
+        if target in chunk.anchor_ids:
+            return "".join(
+                anchor_map[anchor_id].text
+                for anchor_id in chunk.anchor_ids
+                if anchor_id in anchor_map
+            )
+    return _rebuild_text(anchor_ids, anchor_map)
 
 
 def _derive_verification_route(
@@ -378,8 +398,6 @@ def arbitrate_claim_candidates(
         set_a = set(cand_a.anchor_ids)
         nums_a = sorted([_parse_anchor_number(aid) for aid in cand_a.anchor_ids])
 
-        is_superset = False
-
         # 检查是否被更长的候选包含
         for j, cand_b in enumerate(deduped):
             if j == i:
@@ -458,6 +476,7 @@ def arbitrate_claim_candidates(
             block_ids=block_ids,
             verification_route=verification_route,
             entities=cand.entities,
+            context_text=_derive_context_text(cand.anchor_ids, parsed_doc, anchor_map),
             debug=debug,
         )
         claims.append(claim)
@@ -487,7 +506,7 @@ def build_claim_document(
     Returns:
         ClaimDocument 对象
     """
-    from .schema import ClaimDocument, ClaimMeta
+    from .schema import ClaimMeta
 
     if llm_chunk_failures is None:
         llm_chunk_failures = []

@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Literal, Optional, Union
+from typing import Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ============================================================
@@ -207,27 +207,36 @@ class CaseHoldingParaphraseEntities(BaseModel):
     )
 
 
-# ------------------------------------------------------------
-# 联合类型：根据 claim_type 自动选择对应的 entities 子模型
-# ------------------------------------------------------------
-# 使用 discriminated union：通过 claim_type 字段区分子类型
-# 注意：这个 union 在 ClaimCandidate 和 Claim 中使用
-
-ClaimEntities = Annotated[
-    Union[
-        LegalSourceClaimEntities,
-        CaseCitationEntities,
-        CaseHoldingParaphraseEntities,
-    ],
-    Field(discriminator="entity_type"),
+ClaimEntities = Union[
+    LegalSourceClaimEntities,
+    CaseCitationEntities,
+    CaseHoldingParaphraseEntities,
 ]
 
-# discriminator 需要一个字面量字段来区分，我们改为在运行时手动选择
-# 实际使用时，根据 claim_type 选择对应的 entities 模型
 
-# 为支持 discriminated union，给每个 entities 子模型加一个 literal 字段
-# 但这样会改变 JSON 输出。更实际的做法是：
-# entities 字段类型定义为 BaseModel 的 Union，序列化时用 model_dump
+def _coerce_entities(data):
+    """按 claim_type 还原实体子模型，保证 JSON 可以无损往返。"""
+    if not isinstance(data, dict):
+        return data
+    raw_entities = data.get("entities")
+    if raw_entities is None or isinstance(
+        raw_entities,
+        (LegalSourceClaimEntities, CaseCitationEntities, CaseHoldingParaphraseEntities),
+    ):
+        return data
+    claim_type = data.get("claim_type")
+    model = {
+        ClaimType.LEGAL_SOURCE_CLAIM: LegalSourceClaimEntities,
+        ClaimType.CASE_CITATION: CaseCitationEntities,
+        ClaimType.CASE_HOLDING_PARAPHRASE: CaseHoldingParaphraseEntities,
+        ClaimType.LEGAL_SOURCE_CLAIM.value: LegalSourceClaimEntities,
+        ClaimType.CASE_CITATION.value: CaseCitationEntities,
+        ClaimType.CASE_HOLDING_PARAPHRASE.value: CaseHoldingParaphraseEntities,
+    }.get(claim_type)
+    if model is not None:
+        data = dict(data)
+        data["entities"] = model.model_validate(raw_entities)
+    return data
 
 
 # ============================================================
@@ -271,7 +280,7 @@ class ClaimCandidate(BaseModel):
     """
     claim_type: ClaimType = Field(description="主张类型")
     anchor_ids: list[str] = Field(description="anchor 编号列表")
-    entities: BaseModel = Field(description="实体信息（各 claim_type 的对应子模型）")
+    entities: ClaimEntities = Field(description="实体信息（各 claim_type 的对应子模型）")
     method: ExtractionMethod = Field(description="抽取方法")
     chunk_id: Optional[str] = Field(
         default=None,
@@ -283,6 +292,11 @@ class ClaimCandidate(BaseModel):
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def restore_entity_type(cls, data):
+        return _coerce_entities(data)
 
 
 # ============================================================
@@ -304,13 +318,22 @@ class Claim(BaseModel):
     anchor_ids: list[str] = Field(description="anchor 编号列表")
     block_ids: list[str] = Field(description="派生 block ID 列表")
     verification_route: VerificationRoute = Field(description="核查路由")
-    entities: BaseModel = Field(description="实体信息")
+    entities: ClaimEntities = Field(description="实体信息")
+    context_text: str = Field(
+        default="",
+        description="主张所在语义块的上下文；仅供检索与引用忠实度比对",
+    )
     debug: ClaimDebug = Field(
         default_factory=ClaimDebug,
         description="调试信息"
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def restore_entity_type(cls, data):
+        return _coerce_entities(data)
 
 
 class ClaimMeta(BaseModel):

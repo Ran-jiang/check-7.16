@@ -8,13 +8,10 @@
   - 超长 block 拆分
 """
 
-import pytest
 from docx import Document as DocxDocument
 
 from parser.docx_parser import parse_docx
 from parser.chunk_builder import build_chunks
-from parser.schema import ParsedDocument, Anchor, Block, BlockType, Chunk, DocMeta
-from parser.utils import make_id_counter
 
 import os
 import tempfile

@@ -8,8 +8,7 @@
   - 无损不变量
 """
 
-import pytest
-from parser.sentence_splitter import split_sentences, SentenceSpan
+from parser.sentence_splitter import split_sentences
 
 
 class TestBasicSplitting:

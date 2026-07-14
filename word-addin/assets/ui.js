@@ -16,12 +16,21 @@ const LOOKUP_STATUS_LABELS = {
   not_verifiable: "非法条类文件，不做条文核验",
 }
 
+const CASE_STATUS_LABELS = {
+  verified: "案号已核验",
+  not_found: "案号未命中",
+  manual_review: "无案号，需人工检索",
+  source_not_configured: "案例数据源未配置",
+  source_error: "案例数据源调用失败",
+}
+
 export class CheckUi {
   constructor() {
     this.messageTimer = null
     this.handlers = { onJump: null, onDecide: null }
     this.decisions = {}
     this.checks = []
+    this.ready = false
   }
 
   setHandlers(handlers) {
@@ -35,10 +44,24 @@ export class CheckUi {
   }
 
   setDocument(name, status, ready) {
+    this.ready = ready
     document.getElementById("document-name").textContent = name
     document.getElementById("document-status").textContent = status
     document.getElementById("connection-dot").classList.toggle("is-ready", ready)
     document.getElementById("start-button").disabled = !ready
+    document.getElementById("selection-button").disabled = !ready
+  }
+
+  setBusy(busy) {
+    for (const id of ["start-button", "selection-button"]) {
+      const button = document.getElementById(id)
+      if (button) button.disabled = busy || !this.ready
+    }
+    for (const id of ["rerun-button", "export-button", "attach-button"]) {
+      const button = document.getElementById(id)
+      if (button) button.disabled = busy
+    }
+    document.querySelector(".app-shell").setAttribute("aria-busy", String(busy))
   }
 
   setStage(id, state, detail) {
@@ -69,7 +92,7 @@ export class CheckUi {
       const date = new Date(item.checkedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
       const outcome = item.issues ? `${item.issues} 项待核实` : `${item.total} 条已核查`
       copy.append(element("div", "history-meta", `${date} · ${outcome}`))
-      row.append(icon, copy, element("span", "row-chevron"))
+      row.append(icon, copy)
       list.append(row)
     }
   }
@@ -77,7 +100,10 @@ export class CheckUi {
   renderResults(result, decisions = {}) {
     const { summary, verification } = result
     this.decisions = decisions
-    this.checks = verification.legal_checks
+    this.checks = [
+      ...(verification.legal_checks || []).map(check => ({ ...check, check_kind: "statute" })),
+      ...(verification.case_checks || []).map(check => ({ ...check, check_kind: "case" })),
+    ].sort(compareCheckLocation)
     const title = document.getElementById("results-title")
     title.replaceChildren(
       element("span", "title-main", "共发现法律引用"),
@@ -88,16 +114,31 @@ export class CheckUi {
         (summary.bugs ? ` · ${summary.bugs} 处无法判断` : ""))
     )
     document.getElementById("results-subtitle").textContent = result.file_name
+    this.renderSummary(summary)
     this.renderTypeFilter()
     this.renderChecks()
     this.showScreen("results-screen")
+  }
+
+  renderSummary(summary) {
+    const grid = document.getElementById("summary-grid")
+    grid.replaceChildren(
+      summaryCard(summary.total, "全部引用"),
+      summaryCard(summary.issues, "待核实"),
+      summaryCard(summary.bugs, "无法判断"),
+    )
   }
 
   renderTypeFilter() {
     const select = document.getElementById("type-filter")
     const types = new Set()
     for (const check of this.checks) {
-      for (const finding of findingsOf(check)) types.add(finding.error_type)
+      const findings = findingsOf(check)
+      if (findings.length) {
+        for (const finding of findings) types.add(finding.error_type)
+      } else if (check.check_kind === "case") {
+        types.add(caseTypeOf(check))
+      }
     }
     const allOption = element("option", "", "全部类型")
     allOption.value = ""
@@ -115,16 +156,20 @@ export class CheckUi {
     const list = document.getElementById("results-list")
     list.replaceChildren()
     const visible = typeFilter
-      ? this.checks.filter(check => findingsOf(check).some(f => f.error_type === typeFilter))
+      ? this.checks.filter(check => (
+          findingsOf(check).some(f => f.error_type === typeFilter) ||
+          (check.check_kind === "case" && caseTypeOf(check) === typeFilter)
+        ))
       : this.checks
     if (!visible.length) {
-      list.append(element("div", "empty-results", typeFilter ? "该类型下没有核查结果。" : "未识别到明确的法规或条文引用。"))
+      list.append(element("div", "empty-results", typeFilter ? "该类型下没有核查结果。" : "未识别到明确的法规或案例引用。"))
       return
     }
     for (const check of visible) list.append(this.createResultCard(check))
   }
 
   createResultCard(check) {
+    if (check.check_kind === "case") return this.createCaseResultCard(check)
     const findings = findingsOf(check)
     const verdict = check.semantic_comparison?.verdict
     const state = findings.length ? "issue" : verdict === "pass" ? "pass" : verdict === "bug" ? "bug" : "not-run"
@@ -165,6 +210,48 @@ export class CheckUi {
 
     card.append(this.createActionRow(check))
     return card
+  }
+
+  createCaseResultCard(check) {
+    const state = check.lookup_status === "verified"
+      ? "pass"
+      : check.lookup_status === "not_found" ? "issue" : "bug"
+    const card = element("article", `result-card is-${state}`)
+    const top = element("div", "result-topline")
+    top.append(
+      element("div", "card-type", caseTypeOf(check)),
+      element("span", `status-pill is-${state}`,
+        state === "pass" ? "通过" : state === "issue" ? "待核实" : "无法判断")
+    )
+    card.append(top, element("blockquote", "claim-quote", check.claim_text))
+    const cited = check.cited_case_number || check.cited_case_name || "未命名案例线索"
+    card.append(element("div", "card-conf", `引用线索：${cited}`))
+    if (state === "issue") {
+      card.append(element("p", "card-suggestion", "请核实案号书写，并以权威案例库的检索结果为准。"))
+    } else if (check.message) {
+      card.append(element("p", "card-suggestion", check.message))
+    }
+    if (check.evidence) card.append(this.createCaseDetails(check))
+    card.append(this.createActionRow(check))
+    return card
+  }
+
+  createCaseDetails(check) {
+    const details = element("details", "result-details")
+    details.append(element("summary", "", "查看命中案例"))
+    details.append(element("div", "statute-line",
+      `${check.evidence.title || check.evidence.case_number}${check.evidence.court ? ` · ${check.evidence.court}` : ""}`))
+    const url = sourceUrlOf(check)
+    if (url) {
+      const line = element("div", "statute-line", "原文链接：")
+      const link = element("a", "statute-link", url)
+      link.href = url
+      link.target = "_blank"
+      link.rel = "noopener noreferrer"
+      line.append(link)
+      details.append(line)
+    }
+    return details
   }
 
   createDetails(check) {
@@ -242,10 +329,25 @@ function findingsOf(check) {
 
 // 法宝部分接口返回 Markdown 形式链接（[文本](URL)），归一化为纯 URL
 function sourceUrlOf(check) {
-  const raw = check.evidence?.data_source?.source_url || ""
+  const raw = check.evidence?.data_source?.source_url || check.evidence?.url || ""
   const match = String(raw).match(/\((https?:\/\/[^)]+)\)/)
   if (match) return match[1]
   return String(raw).startsWith("http") ? raw : ""
+}
+
+function caseTypeOf(check) {
+  return `司法案例：${CASE_STATUS_LABELS[check.lookup_status] || check.lookup_status}`
+}
+
+function compareCheckLocation(left, right) {
+  const anchor = check => Number(String(check.anchor_ids?.[0] || "").replace(/\D/g, "")) || Number.MAX_SAFE_INTEGER
+  return anchor(left) - anchor(right) || left.check_id.localeCompare(right.check_id)
+}
+
+function summaryCard(value, label) {
+  const card = element("div", "summary-card")
+  card.append(element("span", "summary-value", String(value)), element("span", "summary-label", label))
+  return card
 }
 
 function element(tag, className = "", text = "") {

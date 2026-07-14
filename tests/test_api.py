@@ -98,6 +98,29 @@ def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
     assert response.status_code == 400
 
 
+def test_case_only_selection_counts_no_number_case_as_manual_review(tmp_path, monkeypatch):
+    api_module = importlib.import_module("api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", tmp_path / "laws.sqlite")
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks/selection",
+        json={
+            "file_name": "案例研究.docx",
+            "text": "指导案例262号具有参考意义。",
+            "semantic_check": True,
+            "include_statutes": False,
+            "include_cases": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["bugs"] == 1
+    assert payload["verification"]["legal_checks"] == []
+    assert payload["verification"]["case_checks"][0]["lookup_status"] == "manual_review"
+    assert payload["document_key"].startswith("sha256:")
+
+
 def test_report_generation_and_retrieval(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
     _seed_law_db(db_path)
@@ -124,7 +147,7 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
             "semantic_check": check["semantic_check"],
             "summary": check["summary"],
             "verification": check["verification"],
-            "decisions": {check_id: "escalated"},
+            "decisions": {check_id: "accepted"},
         },
     )
     assert report.status_code == 200
@@ -133,7 +156,9 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
     page = client.get(url)
     assert page.status_code == 200
     assert "CCitecheck 法律引用核查报告" in page.text
-    assert "转人工复核" in page.text
+    assert "已接受" in page.text
+    assert "全链路溯源记录" in page.text
+    assert "获取时间" in page.text
     assert "民法典" in page.text
 
 

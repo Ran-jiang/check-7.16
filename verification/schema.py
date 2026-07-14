@@ -29,16 +29,9 @@ class LookupStatus(str, Enum):
 class CaseLookupStatus(str, Enum):
     VERIFIED = "verified"
     NOT_FOUND = "not_found"
+    MANUAL_REVIEW = "manual_review"
     SOURCE_NOT_CONFIGURED = "source_not_configured"
     SOURCE_ERROR = "source_error"
-
-
-class SemanticStatus(str, Enum):
-    SUPPORTED = "supported"
-    NOT_SUPPORTED = "not_supported"
-    CONDITIONAL_OR_INCOMPLETE = "conditional_or_incomplete"
-    INSUFFICIENT_CONTEXT = "insufficient_context"
-    ERROR = "error"
 
 
 class ComparisonVerdict(str, Enum):
@@ -90,7 +83,9 @@ class SourceTrace(BaseModel):
     tier: SourceTier
     source_name: str
     source_url: Optional[str] = None
-    fetched_at: Optional[str] = None
+    fetched_at: Optional[str] = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     status: LookupStatus
     message: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -116,28 +111,19 @@ class ArticleEvidence(BaseModel):
     data_source: SourceTrace
 
 
-class SemanticAssessment(BaseModel):
-    status: SemanticStatus
-    conclusion: str
-    required_elements: list[str] = Field(default_factory=list)
-    satisfied_elements: list[str] = Field(default_factory=list)
-    missing_or_uncertain_elements: list[str] = Field(default_factory=list)
-    reasoning_summary: str = ""
-    confidence: float = Field(ge=0, le=1)
-
-
 class LegalCheck(BaseModel):
     check_id: str
     claim_id: str
     claim_text: str
     anchor_ids: list[str] = Field(default_factory=list)
+    location_text: str = ""
+    location_occurrence: int = Field(default=0, ge=0)
     law_title: str
     article_no: Optional[str] = None
     lookup_status: LookupStatus
     evidence: Optional[ArticleEvidence] = None
     rule_findings: list[SemanticIssue] = Field(default_factory=list)
     semantic_comparison: Optional[SemanticComparison] = None
-    semantic_assessment: Optional[SemanticAssessment] = None
     source_attempts: list[SourceTrace] = Field(default_factory=list)
 
 
@@ -151,15 +137,27 @@ class CaseEvidence(BaseModel):
     url: Optional[str] = None
 
 
+class CaseSourceTrace(BaseModel):
+    source_name: str
+    source_url: Optional[str] = None
+    fetched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: CaseLookupStatus
+    message: str = ""
+
+
 class CaseCheck(BaseModel):
     check_id: str
     claim_id: str
     claim_text: str
     anchor_ids: list[str] = Field(default_factory=list)
-    cited_case_number: str
+    location_text: str = ""
+    location_occurrence: int = Field(default=0, ge=0)
+    cited_case_number: Optional[str] = None
+    cited_case_name: Optional[str] = None
     lookup_status: CaseLookupStatus
     evidence: Optional[CaseEvidence] = None
     message: str = ""
+    source_attempts: list[CaseSourceTrace] = Field(default_factory=list)
 
 
 class FrontendVerificationDocument(BaseModel):
