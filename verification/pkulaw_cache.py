@@ -141,6 +141,15 @@ class CachedPkulawClient:
     def recognize_case_numbers(self, text: str):
         return self.client.recognize_case_numbers(text)
 
+    def search_law_articles(self, text: str):
+        return self.client.search_law_articles(text)
+
+    def get_case_list(self, title: str = "", fulltext: str = ""):
+        return self.client.get_case_list(title=title, fulltext=fulltext)
+
+    def search_cases(self, text: str):
+        return self.client.search_cases(text)
+
     # ---- 内部 ----
 
     def _fresh_entry(self, conn: sqlite3.Connection, kind: str, key: str):

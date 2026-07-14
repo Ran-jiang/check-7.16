@@ -17,9 +17,9 @@ const LOOKUP_STATUS_LABELS = {
 }
 
 const CASE_STATUS_LABELS = {
-  verified: "案号已核验",
-  not_found: "案号未命中",
-  manual_review: "无案号，需人工检索",
+  verified: "案例已核验",
+  not_found: "案例未命中",
+  manual_review: "候选案例需人工确认",
   source_not_configured: "案例数据源未配置",
   source_error: "案例数据源调用失败",
 }
@@ -227,7 +227,7 @@ export class CheckUi {
     const cited = check.cited_case_number || check.cited_case_name || "未命名案例线索"
     card.append(element("div", "card-conf", `引用线索：${cited}`))
     if (state === "issue") {
-      card.append(element("p", "card-suggestion", "请核实案号书写，并以权威案例库的检索结果为准。"))
+      card.append(element("p", "card-suggestion", check.message || "请核实案例名称或案号，并以权威案例库的检索结果为准。"))
     } else if (check.message) {
       card.append(element("p", "card-suggestion", check.message))
     }

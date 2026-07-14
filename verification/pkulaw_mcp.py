@@ -11,13 +11,24 @@ import os
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from legal_numbers import chinese_number_to_int
+
 
 DEFAULT_GATEWAY = "https://apim-gateway.pkulaw.com"
+MCP_ENDPOINTS = {
+    "law_keyword": "/mcp-law/mcp",
+    "law_semantic": "/mcp-law-search-service/mcp",
+    "case_keyword": "/mcp-case/mcp",
+    "case_semantic": "/mcp-case-search-service/mcp",
+    "case_number": "/case_number_recognition/mcp",
+    "fatiao": "/mcp-fatiao/mcp",
+}
 
 
 def default_ssl_context() -> ssl.SSLContext:
@@ -62,8 +73,23 @@ class PkulawCaseNumber:
     url: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class PkulawCaseRecord:
+    title: str
+    case_number: str = ""
+    gid: str = ""
+    court: str = ""
+    last_instance_date: Optional[str] = None
+    url: Optional[str] = None
+    fulltext: Optional[str] = None
+
+
 class PkulawMcpError(RuntimeError):
     pass
+
+
+class PkulawNotConfiguredError(PkulawMcpError):
+    """No usable local MCP credential was configured."""
 
 
 class PkulawNotFoundError(PkulawMcpError):
@@ -78,15 +104,30 @@ class PkulawMcpClient:
         timeout: int = 20,
     ):
         _load_dotenv()
-        self.access_token = _clean_token(access_token or os.getenv("PKULAW_ACCESS_TOKEN"))
-        self.gateway = (gateway or os.getenv("PKULAW_MCP_GATEWAY") or DEFAULT_GATEWAY).rstrip("/")
+        legacy_headers = _legacy_headers()
+        self.access_token = _clean_token(
+            access_token
+            or os.getenv("PKULAW_ACCESS_TOKEN")
+            or _header_value(legacy_headers, "authorization")
+        )
+        self.gateway = (
+            gateway
+            or os.getenv("PKULAW_MCP_GATEWAY")
+            or _legacy_gateway()
+            or DEFAULT_GATEWAY
+        ).rstrip("/")
+        self.headers = {
+            key: value
+            for key, value in legacy_headers.items()
+            if key.lower() != "authorization"
+        }
         self.timeout = timeout
         if not self.access_token:
-            raise PkulawMcpError("PKULAW_ACCESS_TOKEN is not configured")
+            raise PkulawNotConfiguredError("Pkulaw MCP credentials are not configured")
 
     def get_law_item_content(self, title: str, article_no: str) -> PkulawArticle:
         payload = self._call_tool(
-            endpoint="/mcp-fatiao",
+            endpoint=MCP_ENDPOINTS["fatiao"],
             tool_name="get_law_item_content",
             arguments={"title": title, "tiao_num": article_no_to_number(article_no)},
         )
@@ -97,21 +138,56 @@ class PkulawMcpClient:
         if not title and not fulltext:
             raise PkulawMcpError("title or fulltext is required")
         payload = self._call_tool(
-            endpoint="/mcp-law",
+            endpoint=MCP_ENDPOINTS["law_keyword"],
             tool_name="get_law_list",
             arguments={"title": title, "fulltext": fulltext},
         )
         data = _extract_payload_data(payload)
         return _parse_law_list_response(data)
 
+    def search_law_articles(self, text: str) -> list[PkulawArticle]:
+        if not text.strip():
+            raise PkulawMcpError("semantic law query is required")
+        payload = self._call_tool(
+            endpoint=MCP_ENDPOINTS["law_semantic"],
+            tool_name="search_article",
+            arguments={"text": text},
+        )
+        data = _extract_payload_data(payload)
+        return _parse_article_search_response(data)
+
     def recognize_case_numbers(self, text: str) -> list[PkulawCaseNumber]:
         payload = self._call_tool(
-            endpoint="/case_number_recognition",
+            endpoint=MCP_ENDPOINTS["case_number"],
             tool_name="anhao_recognition",
             arguments={"text": text},
         )
         data = _extract_payload_data(payload)
         return _parse_anhao_response(data)
+
+    def get_case_list(
+        self, title: str = "", fulltext: str = ""
+    ) -> list[PkulawCaseRecord]:
+        if not title and not fulltext:
+            raise PkulawMcpError("case title or fulltext is required")
+        payload = self._call_tool(
+            endpoint=MCP_ENDPOINTS["case_keyword"],
+            tool_name="get_case_list",
+            arguments={"title": title, "fulltext": fulltext},
+        )
+        data = _extract_payload_data(payload)
+        return _parse_case_list_response(data)
+
+    def search_cases(self, text: str) -> list[PkulawCaseRecord]:
+        if not text.strip():
+            raise PkulawMcpError("semantic case query is required")
+        payload = self._call_tool(
+            endpoint=MCP_ENDPOINTS["case_semantic"],
+            tool_name="search_case",
+            arguments={"text": text},
+        )
+        data = _extract_payload_data(payload)
+        return _parse_case_list_response(data)
 
     def _call_tool(self, endpoint: str, tool_name: str, arguments: dict[str, Any]) -> Any:
         url = f"{self.gateway}{endpoint}"
@@ -128,6 +204,7 @@ class PkulawMcpClient:
             url,
             data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
             headers={
+                **self.headers,
                 "Authorization": f"Bearer {self.access_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
@@ -165,12 +242,17 @@ def article_no_to_number(article_no: str) -> int | float:
         return int(text)
     if "之" in text:
         base, suffix = text.split("之", 1)
-        base_number = _chinese_number_to_int(base)
-        suffix_number = _chinese_number_to_int(suffix)
-        if base_number > 0 and 0 < suffix_number < 10:
+        base_number = chinese_number_to_int(base)
+        suffix_number = chinese_number_to_int(suffix)
+        if (
+            base_number is not None
+            and suffix_number is not None
+            and base_number > 0
+            and 0 < suffix_number < 10
+        ):
             return float(f"{base_number}.{suffix_number}")
-    value = _chinese_number_to_int(text)
-    if value <= 0:
+    value = chinese_number_to_int(text)
+    if value is None or value <= 0:
         raise PkulawMcpError(f"Unsupported article number: {article_no}")
     return value
 
@@ -197,11 +279,12 @@ def _extract_payload_data(payload: Any) -> Any:
     content = result.get("content") if isinstance(result, dict) else None
     is_error = bool(isinstance(result, dict) and result.get("isError"))
     if isinstance(content, list) and content:
-        first = content[0]
-        if isinstance(first, dict) and first.get("type") == "text":
-            text = first.get("text", "")
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+            text = item.get("text", "")
             if not text:
-                return {}
+                continue
             try:
                 return json.loads(text)
             except json.JSONDecodeError:
@@ -246,6 +329,53 @@ def _parse_anhao_response(data: Any) -> list[PkulawCaseNumber]:
     return [_parse_case_number(item) for item in items if isinstance(item, dict)]
 
 
+def _parse_case_list_response(data: Any) -> list[PkulawCaseRecord]:
+    records = _response_records(data)
+    return [
+        parsed
+        for item in records
+        if isinstance(item, dict)
+        if (parsed := _parse_case_record(item)) is not None
+    ]
+
+
+def _parse_case_record(item: dict[str, Any]) -> PkulawCaseRecord | None:
+    record = _flatten_metadata(item)
+    title = _first_value(record, "Title", "title", "CaseName", "case_name")
+    case_number = _first_value(
+        record,
+        "CaseFlag",
+        "caseFlag",
+        "CaseNO",
+        "CaseNo",
+        "case_number",
+        "caseNumber",
+    )
+    if not title and not case_number:
+        return None
+    return PkulawCaseRecord(
+        title=str(title or case_number),
+        case_number=str(case_number or ""),
+        gid=str(_first_value(record, "Gid", "gid", "GID") or ""),
+        court=str(_first_value(record, "Court", "court") or ""),
+        last_instance_date=_optional_text(
+            _first_value(record, "LastInstanceDate", "lastInstanceDate", "judgment_date")
+        ),
+        url=_optional_text(_first_value(record, "Url", "url", "URL")),
+        fulltext=_optional_text(
+            _first_value(
+                record,
+                "FullText",
+                "fulltext",
+                "full_text",
+                "Content",
+                "content",
+                "excerpt",
+            )
+        ),
+    )
+
+
 def _parse_case_number(item: dict[str, Any]) -> PkulawCaseNumber:
     return PkulawCaseNumber(
         text=item.get("text", ""),
@@ -261,10 +391,55 @@ def _parse_case_number(item: dict[str, Any]) -> PkulawCaseNumber:
 
 
 def _parse_law_list_response(data: Any) -> list[PkulawLawRecord]:
-    records = _response_data(data)
-    if not isinstance(records, list):
-        raise PkulawMcpError("Unexpected get_law_list response shape")
+    records = _response_records(data)
     return [_parse_law_record(record) for record in records if isinstance(record, dict)]
+
+
+def _parse_article_search_response(data: Any) -> list[PkulawArticle]:
+    records = _response_records(data)
+    articles: list[PkulawArticle] = []
+    for raw in records:
+        if not isinstance(raw, dict):
+            continue
+        record = _flatten_metadata(raw)
+        title = _first_value(record, "Title", "title", "LawTitle", "law_title")
+        article_text = _first_value(
+            record,
+            "FullText",
+            "fulltext",
+            "article_text",
+            "ArticleText",
+            "Content",
+            "content",
+            "text",
+        )
+        if not title or not article_text:
+            continue
+        base = _parse_law_record(record)
+        article_no = _first_value(
+            record,
+            "ArticleNO",
+            "ArticleNo",
+            "article_no",
+            "TiaoNum",
+            "tiao_num",
+        )
+        articles.append(
+            PkulawArticle(
+                title=base.title,
+                url=base.url,
+                category=base.category,
+                document_no=base.document_no,
+                issue_department=base.issue_department,
+                issue_date=base.issue_date,
+                implement_date=base.implement_date,
+                timeliness=base.timeliness,
+                effectiveness=base.effectiveness,
+                article_no=str(article_no or "相关条款"),
+                article_text=str(article_text),
+            )
+        )
+    return articles
 
 
 def _parse_law_record(record: dict[str, Any]) -> PkulawLawRecord:
@@ -295,6 +470,39 @@ def _response_data(data: Any) -> Any:
     return data
 
 
+def _response_records(data: Any) -> list[Any]:
+    value = _response_data(data)
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in ("items", "records", "results", "list", "articles", "cases"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return nested
+    if value in (None, {}):
+        return []
+    raise PkulawMcpError("Unexpected Pkulaw list response shape")
+
+
+def _flatten_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        return {**record, **metadata}
+    return record
+
+
+def _first_value(record: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _optional_text(value: Any) -> Optional[str]:
+    return str(value) if value not in (None, "") else None
+
+
 def _as_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -305,35 +513,6 @@ def _as_list(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _chinese_number_to_int(text: str) -> int:
-    digits = {
-        "零": 0,
-        "〇": 0,
-        "一": 1,
-        "二": 2,
-        "两": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6,
-        "七": 7,
-        "八": 8,
-        "九": 9,
-    }
-    units = {"十": 10, "百": 100, "千": 1000}
-    section = 0
-    number = 0
-    for char in text:
-        if char in digits:
-            number = digits[char]
-        elif char in units:
-            section += (number or 1) * units[char]
-            number = 0
-        else:
-            return 0
-    return section + number
-
-
 def _clean_token(token: Optional[str]) -> Optional[str]:
     if token is None:
         return None
@@ -341,6 +520,34 @@ def _clean_token(token: Optional[str]) -> Optional[str]:
     if value.lower().startswith("bearer "):
         return value[7:].strip()
     return value
+
+
+def _legacy_headers() -> dict[str, str]:
+    raw = os.getenv("PKULAW_MCP_HEADERS", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PkulawMcpError("PKULAW_MCP_HEADERS must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise PkulawMcpError("PKULAW_MCP_HEADERS must be a JSON object")
+    return {str(key): str(value) for key, value in parsed.items()}
+
+
+def _header_value(headers: dict[str, str], name: str) -> Optional[str]:
+    target = name.lower()
+    return next((value for key, value in headers.items() if key.lower() == target), None)
+
+
+def _legacy_gateway() -> Optional[str]:
+    value = os.getenv("PKULAW_MCP_URL", "").strip()
+    if not value:
+        return None
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return None
 
 
 def _load_dotenv() -> None:

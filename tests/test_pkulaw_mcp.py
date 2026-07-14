@@ -1,6 +1,12 @@
 import json
 
-from verification.pkulaw_mcp import PkulawMcpClient, article_no_to_number
+import pytest
+
+from verification.pkulaw_mcp import (
+    MCP_ENDPOINTS,
+    PkulawMcpClient,
+    article_no_to_number,
+)
 
 
 class FakePkulawClient(PkulawMcpClient):
@@ -109,3 +115,109 @@ def test_recognize_case_numbers_parses_anhaoname_array():
 def test_article_no_to_number_supports_chinese_and_zhi_suffix():
     assert article_no_to_number("第五百七十七条") == 577
     assert article_no_to_number("第二条之一") == 2.1
+
+
+class CapturingPkulawClient(FakePkulawClient):
+    def __init__(self, payload):
+        super().__init__(payload)
+        self.calls = []
+
+    def _call_tool(self, endpoint, tool_name, arguments):
+        self.calls.append((endpoint, tool_name, arguments))
+        return self.payload
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "endpoint", "tool_name", "arguments"),
+    [
+        (
+            "get_law_list",
+            ("民法典", "违约责任"),
+            MCP_ENDPOINTS["law_keyword"],
+            "get_law_list",
+            {"title": "民法典", "fulltext": "违约责任"},
+        ),
+        (
+            "get_case_list",
+            ("指导案例262号", "平台 责任"),
+            MCP_ENDPOINTS["case_keyword"],
+            "get_case_list",
+            {"title": "指导案例262号", "fulltext": "平台 责任"},
+        ),
+    ],
+)
+def test_keyword_tools_use_official_mcp_paths_and_arguments(
+    method, args, endpoint, tool_name, arguments
+):
+    payload = _mcp_text_payload({"Message": "成功", "Data": []})
+    client = CapturingPkulawClient(payload)
+
+    getattr(client, method)(*args)
+
+    assert client.calls == [(endpoint, tool_name, arguments)]
+
+
+def test_semantic_tools_parse_law_and_case_records():
+    law_client = CapturingPkulawClient(
+        _mcp_text_payload(
+            {
+                "Message": "成功",
+                "Data": [
+                    {
+                        "Title": "中华人民共和国民法典",
+                        "ArticleNO": "第五百七十七条",
+                        "FullText": "当事人一方不履行合同义务，应当承担违约责任。",
+                        "Url": "https://example.com/law/577",
+                    }
+                ],
+            }
+        )
+    )
+    case_client = CapturingPkulawClient(
+        _mcp_text_payload(
+            {
+                "Message": "成功",
+                "Data": [
+                    {
+                        "Title": "指导性案例262号：某平台纠纷案",
+                        "CaseNO": "（2024）最高法民终262号",
+                        "Court": "最高人民法院",
+                        "Url": "https://example.com/case/262",
+                    }
+                ],
+            }
+        )
+    )
+
+    articles = law_client.search_law_articles("违约责任")
+    cases = case_client.search_cases("指导案例262号")
+
+    assert articles[0].article_no == "第五百七十七条"
+    assert articles[0].article_text.startswith("当事人")
+    assert law_client.calls[0][:2] == (
+        MCP_ENDPOINTS["law_semantic"],
+        "search_article",
+    )
+    assert cases[0].case_number == "（2024）最高法民终262号"
+    assert case_client.calls[0][:2] == (
+        MCP_ENDPOINTS["case_semantic"],
+        "search_case",
+    )
+
+
+def test_legacy_url_and_headers_configuration_is_supported(monkeypatch):
+    monkeypatch.delenv("PKULAW_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("PKULAW_MCP_GATEWAY", raising=False)
+    monkeypatch.setenv(
+        "PKULAW_MCP_URL", "https://apim-gateway.pkulaw.com/mcp-fatiao"
+    )
+    monkeypatch.setenv(
+        "PKULAW_MCP_HEADERS",
+        json.dumps({"Authorization": "Bearer legacy-token", "X-Test": "value"}),
+    )
+
+    client = PkulawMcpClient()
+
+    assert client.access_token == "legacy-token"
+    assert client.gateway == "https://apim-gateway.pkulaw.com"
+    assert client.headers == {"X-Test": "value"}

@@ -9,6 +9,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from legal_numbers import chinese_number_to_int
+
 
 SCHEMA_VERSION = "1.1"
 
@@ -363,35 +365,13 @@ def normalize_article_key(article_no: str) -> str:
     compact = "".join(str(article_no).split())
     compact = compact.removeprefix("第").replace("条", "")
     base, separator, suffix = compact.partition("之")
-    base_number = _chinese_number_to_int(base)
+    base_number = chinese_number_to_int(base)
     if base_number is None:
         return compact
     if not separator:
         return str(base_number)
-    suffix_number = _chinese_number_to_int(suffix)
+    suffix_number = chinese_number_to_int(suffix)
     return f"{base_number}-{suffix_number}" if suffix_number is not None else compact
-
-
-def _chinese_number_to_int(value: str) -> int | None:
-    if value.isdigit():
-        return int(value)
-    digits = {
-        "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
-        "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
-        "壹": 1, "贰": 2, "叁": 3, "肆": 4, "伍": 5,
-        "陆": 6, "柒": 7, "捌": 8, "玖": 9,
-    }
-    units = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000}
-    if not value or any(char not in digits and char not in units for char in value):
-        return None
-    total = current = 0
-    for char in value:
-        if char in digits:
-            current = digits[char]
-        else:
-            total += (current or 1) * units[char]
-            current = 0
-    return total + current
 
 
 def normalize_version_key(version_key: str) -> str:

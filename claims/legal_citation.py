@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 
+from legal_numbers import chinese_number_to_int
+
 from .schema import ArticleRef, LegalSource, LegalSourceType
 
 
@@ -372,9 +374,9 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
     #   会漏掉第四十四条）
     existing = {a.article for a in articles}
     for rm in ARTICLE_RANGE_PATTERN.finditer(text):
-        start = _cn_num_to_int(rm.group(1))
-        end = _cn_num_to_int(rm.group(2))
-        if not (0 < start < end and end - start <= 50):
+        start = chinese_number_to_int(rm.group(1))
+        end = chinese_number_to_int(rm.group(2))
+        if start is None or end is None or not (0 < start < end and end - start <= 50):
             continue
         start_text = f"第{rm.group(1)}条"
         insert_at = next(
@@ -389,27 +391,6 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
                 insert_at += 1
 
     return articles
-
-
-def _cn_num_to_int(text: str) -> int:
-    """中文数字（或阿拉伯数字）转 int。无法解析时返回 0。"""
-    text = text.strip()
-    if text.isdigit():
-        return int(text)
-    digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
-              "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
-    units = {"十": 10, "百": 100, "千": 1000}
-    section = 0
-    number = 0
-    for char in text:
-        if char in digits:
-            number = digits[char]
-        elif char in units:
-            section += (number or 1) * units[char]
-            number = 0
-        else:
-            return 0
-    return section + number
 
 
 def _int_to_cn_num(value: int) -> str:

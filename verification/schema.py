@@ -143,6 +143,7 @@ class CaseSourceTrace(BaseModel):
     fetched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: CaseLookupStatus
     message: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CaseCheck(BaseModel):

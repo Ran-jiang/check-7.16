@@ -22,9 +22,9 @@ LOOKUP_STATUS_LABELS = {
 }
 
 CASE_STATUS_LABELS = {
-    "verified": "案号已验证",
-    "not_found": "案号未命中，疑似有误或不存在",
-    "manual_review": "无案号，需人工检索",
+    "verified": "案例已验证",
+    "not_found": "案例未命中，疑似有误或不存在",
+    "manual_review": "候选案例需人工确认",
     "source_not_configured": "数据源未配置",
     "source_error": "数据源调用失败",
 }
@@ -228,6 +228,20 @@ def _source_attempt_sections(attempts) -> list[str]:
         parts.append(
             f'<div class="trace">{source} · 状态 {_esc(status)}{time_text}{message}</div>'
         )
+        metadata = getattr(attempt, "metadata", {})
+        for route in metadata.get("route_attempts", []):
+            route_name = _esc(route.get("service", "unknown"))
+            route_status = _esc(route.get("status", "unknown"))
+            candidate_count = route.get("candidate_count")
+            candidate_text = (
+                f" · 候选 {int(candidate_count)} 条"
+                if isinstance(candidate_count, int)
+                else ""
+            )
+            parts.append(
+                f'<div class="trace">↳ MCP {route_name} · 状态 '
+                f"{route_status}{candidate_text}</div>"
+            )
     return parts
 
 

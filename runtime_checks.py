@@ -58,8 +58,8 @@ def _check_law_database(db_path: Path) -> CheckResult:
 
 
 def _check_pkulaw_token() -> CheckResult:
-    if os.getenv("PKULAW_ACCESS_TOKEN"):
-        return CheckResult("pkulaw", True, "fallback source configured")
+    if os.getenv("PKULAW_ACCESS_TOKEN") or os.getenv("PKULAW_MCP_HEADERS"):
+        return CheckResult("pkulaw", True, "statute and case MCP sources configured")
     return CheckResult("pkulaw", True, "optional fallback not configured")
 
 

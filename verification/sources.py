@@ -19,12 +19,19 @@ from .pkulaw_cache import CachedPkulawClient, cache_enabled
 from .pkulaw_mcp import (
     PkulawArticle,
     PkulawCaseNumber,
+    PkulawCaseRecord,
     PkulawLawRecord,
     PkulawMcpClient,
     PkulawMcpError,
+    PkulawNotConfiguredError,
     PkulawNotFoundError,
 )
-from .schema import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
+from .query_builder import (
+    build_law_fulltext_query,
+    build_law_semantic_query,
+    build_law_title_query,
+)
+from .schema import ArticleEvidence, ArticleExcerpt, LookupStatus, SourceTier, SourceTrace
 
 
 @dataclass
@@ -52,12 +59,30 @@ class CaseNumberRecognizer(Protocol):
         ...
 
 
+class CaseSearcher(CaseNumberRecognizer, Protocol):
+    def search_keyword(
+        self, title: str, fulltext: str
+    ) -> list[PkulawCaseRecord]:
+        ...
+
+    def search_semantic(self, text: str) -> list[PkulawCaseRecord]:
+        ...
+
+
 class PkulawCaseSource:
     def __init__(self, client: Optional[PkulawMcpClient] = None):
         self.client = client
 
     def recognize(self, text: str) -> list[PkulawCaseNumber]:
         return self._client().recognize_case_numbers(text)
+
+    def search_keyword(
+        self, title: str, fulltext: str
+    ) -> list[PkulawCaseRecord]:
+        return self._client().get_case_list(title=title, fulltext=fulltext)
+
+    def search_semantic(self, text: str) -> list[PkulawCaseRecord]:
+        return self._client().search_cases(text)
 
     def _client(self) -> PkulawMcpClient:
         if self.client is None:
@@ -175,20 +200,31 @@ class PkulawFallbackSource:
     def lookup(self, request: LookupRequest) -> LookupResult:
         if request.article_no:
             return self._lookup_article(request)
-        return self._lookup_law_list(request, fulltext="")
+        return self._lookup_without_article(request)
 
     def _lookup_article(self, request: LookupRequest) -> LookupResult:
         trace = SourceTrace(
             tier=SourceTier.PKULAW_FALLBACK,
             source_name="北大法宝 MCP：精准查找法条-关键词",
             status=LookupStatus.LAW_NOT_FOUND,
+            metadata={
+                "route_attempts": [
+                    {"service": "fatiao", "status": "started"}
+                ]
+            },
         )
         try:
-            article = self._client().get_law_item_content(request.law_title, request.article_no or "")
+            article = self._client().get_law_item_content(
+                build_law_title_query(request.law_title), request.article_no or ""
+            )
         except PkulawNotFoundError:
+            trace.metadata["route_attempts"][-1]["status"] = "not_found"
             # 精准查条未命中：再查法规列表，区分"法规存在但无此条"与"法规不存在"
             return self._lookup_after_article_miss(request, trace)
         except PkulawMcpError as exc:
+            trace.metadata["route_attempts"][-1].update(
+                {"status": "error", "message": str(exc)}
+            )
             trace.status = _pkulaw_error_status(exc)
             trace.message = str(exc)
             return LookupResult(trace.status, None, trace)
@@ -196,12 +232,16 @@ class PkulawFallbackSource:
         # fatiao 的标题匹配非常宽松（查《合同法》可能返回《民法典》条文），
         # 返回法规与请求法规不同名时不得作为证据，转入法规列表精确匹配流程
         if _match_law_record(request.law_title, [article]) is None:
+            trace.metadata["route_attempts"][-1].update(
+                {"status": "mismatched", "returned_title": article.title}
+            )
             trace.message = f"精准查条返回了不同名法规《{article.title}》，已忽略"
             return self._lookup_after_article_miss(request, trace)
 
+        trace.metadata["route_attempts"][-1]["status"] = "completed"
         trace.status = LookupStatus.ARTICLE_FOUND
         trace.source_url = article.url
-        trace.metadata = _article_metadata(article)
+        trace.metadata = {**_article_metadata(article), **trace.metadata}
         evidence = ArticleEvidence(
             law_title=article.title,
             source_type=request.source_type,
@@ -218,11 +258,31 @@ class PkulawFallbackSource:
     def _lookup_after_article_miss(
         self, request: LookupRequest, trace: SourceTrace
     ) -> LookupResult:
+        route_attempts = trace.metadata.setdefault("route_attempts", [])
         try:
-            records = self._client().get_law_list(title=request.law_title)
+            records = self._client().get_law_list(
+                title=build_law_title_query(request.law_title)
+            )
+            route_attempts.append(
+                {
+                    "service": "law_keyword",
+                    "status": "completed",
+                    "candidate_count": len(records),
+                }
+            )
         except PkulawNotFoundError:
             records = []
+            route_attempts.append(
+                {"service": "law_keyword", "status": "not_found"}
+            )
         except PkulawMcpError as exc:
+            route_attempts.append(
+                {
+                    "service": "law_keyword",
+                    "status": "error",
+                    "message": str(exc),
+                }
+            )
             trace.status = _pkulaw_error_status(exc)
             trace.message = f"精准查条未命中，法规列表查询失败：{exc}"
             return LookupResult(trace.status, None, trace)
@@ -235,6 +295,7 @@ class PkulawFallbackSource:
                 "search_completed": True,
                 # 法宝模糊检索返回的相近标题，供法名纠错建议使用
                 "candidate_titles": [record.title for record in records[:5]],
+                "route_attempts": route_attempts,
             }
             return LookupResult(trace.status, None, trace)
 
@@ -244,6 +305,7 @@ class PkulawFallbackSource:
         trace.metadata = {
             "search_completed": True,
             **_law_record_metadata(matched),
+            "route_attempts": route_attempts,
         }
         evidence = ArticleEvidence(
             law_title=matched.title,
@@ -258,29 +320,148 @@ class PkulawFallbackSource:
         )
         return LookupResult(trace.status, evidence, trace)
 
+    def _lookup_without_article(self, request: LookupRequest) -> LookupResult:
+        query = build_law_semantic_query(request.context_text, request.law_title)
+        route_attempts: list[dict] = []
+        try:
+            search_semantic = getattr(self._client(), "search_law_articles", None)
+            articles = search_semantic(query) if callable(search_semantic) else []
+            route_attempts.append(
+                {
+                    "service": "law_semantic",
+                    "status": "completed" if callable(search_semantic) else "unavailable",
+                    "candidate_count": len(articles),
+                }
+            )
+        except PkulawNotFoundError:
+            articles = []
+            route_attempts.append(
+                {"service": "law_semantic", "status": "not_found"}
+            )
+        except PkulawMcpError as exc:
+            articles = []
+            route_attempts.append(
+                {
+                    "service": "law_semantic",
+                    "status": "error",
+                    "message": str(exc),
+                }
+            )
+
+        matches = [
+            article
+            for article in articles
+            if _match_law_record(request.law_title, [article]) is article
+        ]
+        if matches:
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK,
+                source_name="北大法宝 MCP：检索法律法规-语义",
+                source_url=matches[0].url,
+                status=LookupStatus.RELEVANT_ARTICLES_FOUND,
+                message="文书未注明条号，已通过法规语义检索召回相关条款",
+                metadata={
+                    "retrieval_method": "pkulaw_law_semantic",
+                    "route_attempts": route_attempts,
+                },
+            )
+            evidence = ArticleEvidence(
+                law_title=matches[0].title,
+                source_type=request.source_type,
+                article_text="\n\n".join(
+                    f"{article.article_no}　{article.article_text}"
+                    for article in matches
+                ),
+                version_label=_first(matches[0].timeliness),
+                version_status=_first(matches[0].timeliness),
+                effective_from=matches[0].implement_date,
+                source_metadata=trace.metadata,
+                related_articles=[
+                    ArticleExcerpt(
+                        article_no=article.article_no,
+                        article_text=article.article_text,
+                        relevance_score=max(0.0, 1.0 - index * 0.05),
+                    )
+                    for index, article in enumerate(matches)
+                ],
+                data_source=trace,
+            )
+            return LookupResult(trace.status, evidence, trace)
+
+        fulltext = build_law_fulltext_query(request.context_text, request.law_title)
+        result = self._lookup_law_list(request, fulltext=fulltext)
+        keyword_attempts = result.trace.metadata.get("route_attempts", [])
+        result.trace.metadata["route_attempts"] = route_attempts + keyword_attempts
+        return result
+
     def _lookup_law_list(self, request: LookupRequest, fulltext: str) -> LookupResult:
         trace = SourceTrace(
             tier=SourceTier.PKULAW_FALLBACK,
             source_name="北大法宝 MCP：检索法律法规-关键词",
             status=LookupStatus.LAW_NOT_FOUND,
         )
+        title_query = build_law_title_query(request.law_title)
+        route_attempts: list[dict] = []
         try:
-            records = self._client().get_law_list(title=request.law_title, fulltext=fulltext)
+            records = self._client().get_law_list(
+                title=title_query, fulltext=fulltext
+            )
+            route_attempts.append(
+                {
+                    "service": "law_keyword",
+                    "status": "completed",
+                    "mode": "title_and_fulltext" if fulltext else "title",
+                    "candidate_count": len(records),
+                }
+            )
+            if fulltext and _match_law_record(request.law_title, records) is None:
+                title_records = self._client().get_law_list(title=title_query)
+                route_attempts.append(
+                    {
+                        "service": "law_keyword",
+                        "status": "completed",
+                        "mode": "title_fallback",
+                        "candidate_count": len(title_records),
+                    }
+                )
+                records = _dedupe_law_records(records + title_records)
         except PkulawNotFoundError as exc:
+            route_attempts.append(
+                {"service": "law_keyword", "status": "not_found"}
+            )
             trace.message = str(exc)
-            trace.metadata = {"search_completed": True}
+            trace.metadata = {
+                "search_completed": True,
+                "route_attempts": route_attempts,
+            }
             return LookupResult(trace.status, None, trace)
         except PkulawMcpError as exc:
+            route_attempts.append(
+                {
+                    "service": "law_keyword",
+                    "status": "error",
+                    "message": str(exc),
+                }
+            )
             trace.status = _pkulaw_error_status(exc)
             trace.message = str(exc)
+            trace.metadata = {"route_attempts": route_attempts}
             return LookupResult(trace.status, None, trace)
 
-        if not records:
-            trace.message = "No Pkulaw candidate law found"
-            trace.metadata = {"search_completed": True}
+        matched = _match_law_record(request.law_title, records)
+        if matched is None:
+            trace.message = "北大法宝检索完成，未找到同名法规"
+            trace.metadata = {
+                "search_completed": True,
+                "route_attempts": route_attempts,
+            }
+            if records:
+                trace.metadata["candidate_titles"] = [
+                    record.title for record in records[:5]
+                ]
             return LookupResult(trace.status, None, trace)
 
-        top = records[0]
+        top = matched
         trace.status = LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
         trace.message = (
             "北大法宝已检索到该法规，但当前 MCP 工具在无条号时"
@@ -290,6 +471,7 @@ class PkulawFallbackSource:
         trace.metadata = {
             "candidate_count": len(records),
             "candidates": [_law_record_metadata(record) for record in records],
+            "route_attempts": route_attempts,
         }
         evidence = ArticleEvidence(
             law_title=top.title,
@@ -315,7 +497,7 @@ class PkulawFallbackSource:
 
 
 def _pkulaw_error_status(exc: PkulawMcpError) -> LookupStatus:
-    if "PKULAW_ACCESS_TOKEN" in str(exc):
+    if isinstance(exc, PkulawNotConfiguredError):
         return LookupStatus.SOURCE_NOT_CONFIGURED
     return LookupStatus.SOURCE_ERROR
 
@@ -368,3 +550,14 @@ def _law_record_metadata(record: PkulawLawRecord) -> dict:
 
 def _first(values: list[str]) -> Optional[str]:
     return values[0] if values else None
+
+
+def _dedupe_law_records(records: list[PkulawLawRecord]) -> list[PkulawLawRecord]:
+    deduped: list[PkulawLawRecord] = []
+    seen: set[tuple[str, Optional[str]]] = set()
+    for record in records:
+        key = (record.title, record.url)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(record)
+    return deduped

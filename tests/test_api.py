@@ -98,7 +98,7 @@ def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
     assert response.status_code == 400
 
 
-def test_case_only_selection_counts_no_number_case_as_manual_review(tmp_path, monkeypatch):
+def test_case_only_selection_reports_unconfigured_case_source(tmp_path, monkeypatch):
     api_module = importlib.import_module("api.app")
     monkeypatch.setattr(api_module, "LAW_DB", tmp_path / "laws.sqlite")
     client = TestClient(api_module.app)
@@ -117,7 +117,7 @@ def test_case_only_selection_counts_no_number_case_as_manual_review(tmp_path, mo
     assert payload["summary"]["total"] == 1
     assert payload["summary"]["bugs"] == 1
     assert payload["verification"]["legal_checks"] == []
-    assert payload["verification"]["case_checks"][0]["lookup_status"] == "manual_review"
+    assert payload["verification"]["case_checks"][0]["lookup_status"] == "source_not_configured"
     assert payload["document_key"].startswith("sha256:")
 
 

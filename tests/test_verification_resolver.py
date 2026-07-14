@@ -29,7 +29,12 @@ from verification.schema import (
     SourceTier,
     SourceTrace,
 )
-from verification.pkulaw_mcp import PkulawCaseNumber, PkulawLawRecord
+from verification.pkulaw_mcp import (
+    PkulawArticle,
+    PkulawCaseNumber,
+    PkulawCaseRecord,
+    PkulawLawRecord,
+)
 from verification.sources import LocalSQLiteSource, LookupRequest, LookupResult, PkulawFallbackSource
 
 
@@ -240,6 +245,48 @@ def test_pkulaw_unnumbered_lookup_reports_tool_text_limit():
     assert "不返回匹配条号和条文全文" in result.trace.message
 
 
+class FakeSemanticLawClient(FakeLawListClient):
+    def search_law_articles(self, text):
+        assert text.startswith("在《中华人民共和国国家安全法》中检索")
+        return [
+            PkulawArticle(
+                title="中华人民共和国国家安全法",
+                article_no="第三条",
+                article_text="国家安全工作应当坚持总体国家安全观。",
+                url="https://example.com/law/3",
+            )
+        ]
+
+
+def test_pkulaw_unnumbered_lookup_uses_semantic_article_service_first():
+    result = PkulawFallbackSource(FakeSemanticLawClient()).lookup(
+        LookupRequest(
+            law_title="中华人民共和国国家安全法",
+            source_type="law",
+            context_text="国家安全工作应当坚持总体国家安全观。",
+        )
+    )
+
+    assert result.status == LookupStatus.RELEVANT_ARTICLES_FOUND
+    assert result.evidence.related_articles[0].article_no == "第三条"
+    assert result.trace.metadata["retrieval_method"] == "pkulaw_law_semantic"
+
+
+def test_pkulaw_unnumbered_lookup_without_credentials_is_nonfatal(monkeypatch):
+    monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "")
+    monkeypatch.setenv("PKULAW_MCP_HEADERS", "")
+
+    result = PkulawFallbackSource().lookup(
+        LookupRequest(
+            law_title="虚构测试法",
+            source_type="law",
+            context_text="测试引用表述",
+        )
+    )
+
+    assert result.status == LookupStatus.SOURCE_NOT_CONFIGURED
+
+
 class FakeArticleSource:
     def lookup(self, request: LookupRequest) -> LookupResult:
         trace = SourceTrace(
@@ -376,6 +423,74 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
     assert verified.evidence.url.endswith(".html")
     assert flagged.lookup_status == CaseLookupStatus.NOT_FOUND
     assert flagged.evidence is None
+
+
+class FakeCaseSearcher:
+    def __init__(self):
+        self.keyword_calls = []
+        self.semantic_calls = []
+
+    def recognize(self, text):
+        raise AssertionError("no-number case must not use case-number recognition")
+
+    def search_keyword(self, title, fulltext):
+        self.keyword_calls.append((title, fulltext))
+        return [PkulawCaseRecord(title="不相关案例", url="https://example.com/other")]
+
+    def search_semantic(self, text):
+        self.semantic_calls.append(text)
+        return [
+            PkulawCaseRecord(
+                title="指导性案例262号：某平台纠纷案",
+                case_number="（2024）最高法民终262号",
+                gid="case-262",
+                court="最高人民法院",
+                url="https://example.com/case/262",
+            )
+        ]
+
+
+def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(source_doc_id="doc-test", source_doc_hash="sha256:test"),
+        claims=[
+            Claim(
+                claim_id="cl_00001",
+                claim_type=ClaimType.CASE_CITATION,
+                text="最高人民法院在指导案例262号中明确了平台责任。",
+                context_text="最高人民法院在指导案例262号中明确了平台责任。",
+                anchor_ids=["line00001"],
+                block_ids=["b_00001"],
+                verification_route=VerificationRoute.CASE_DATABASE_SEARCH,
+                entities=CaseCitationEntities(
+                    case_refs=[
+                        CaseRef(
+                            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+                            case_name="指导案例262号",
+                            court="最高人民法院",
+                        )
+                    ]
+                ),
+                debug=ClaimDebug(methods=["rule"], candidate_count=1),
+            )
+        ],
+    )
+    searcher = FakeCaseSearcher()
+
+    frontend_doc = verify_claim_document_for_frontend(
+        claim_doc,
+        db_path,
+        case_recognizer=searcher,
+    )
+
+    check = frontend_doc.case_checks[0]
+    assert check.lookup_status == CaseLookupStatus.VERIFIED
+    assert check.evidence.case_number == "（2024）最高法民终262号"
+    assert len(check.source_attempts) == 2
+    assert searcher.keyword_calls[0][0] == "指导案例262号"
+    assert searcher.semantic_calls
 
 
 def test_match_law_record_accepts_promulgation_notice_title():
