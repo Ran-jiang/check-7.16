@@ -13,7 +13,6 @@ from claims.arbiter import arbitrate_claim_candidates, build_claim_document
 from claims.schema import (
     Claim, ClaimCandidate, ClaimDebug, ClaimType,
     ExtractionMethod, LegalSourceClaimEntities,
-    LegalSourceParaphraseEntities,
     LegalSource, LegalSourceType,
     VerificationRoute, CaseCitationEntities,
     CaseRef, CaseReferenceType, CaseHoldingParaphraseEntities,
@@ -284,41 +283,6 @@ def test_detect_wrong_verification_route():
     violations = validate_claim_document(doc, claim_doc)
     assert len(violations) > 0
     assert any("verification_route" in v.lower() for v in violations)
-
-
-# ============================================================
-# Test 19g: paraphrase_text 不是子串 → 检测到
-# ============================================================
-
-def test_detect_paraphrase_not_substring():
-    """paraphrase_text 不是 claim.text 子串 → (arbiter 置空，但若绕过则校验发现)"""
-    text = "《商标法》第四十八条规定，商标的使用是指将商标用于商品。"
-    doc = _make_parsed_doc([text])
-
-    claim = Claim(
-        claim_id="cl_00001",
-        claim_type=ClaimType.LEGAL_SOURCE_PARAPHRASE,
-        text=text,
-        anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
-        entities=LegalSourceParaphraseEntities(
-            legal_sources=[
-                LegalSource(
-                    title="商标法",
-                    source_type=LegalSourceType.LAW,
-                    articles=[],
-                )
-            ],
-            paraphrase_text="不存在的内容XYZ",  # 不是子串
-        ),
-        debug=ClaimDebug(),
-    )
-
-    claim_doc = build_claim_document(doc, [claim])
-    violations = validate_claim_document(doc, claim_doc)
-    assert len(violations) > 0
-    assert any("paraphrase_text" in v.lower() or "子串" in v for v in violations)
 
 
 # ============================================================

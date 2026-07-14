@@ -125,7 +125,7 @@ def _derive_verification_route(
     根据 claim_type 和 entities 推导核查路由（确定性规则）。
 
     规则：
-      legal_source_claim / legal_source_paraphrase:
+      legal_source_claim:
         所有 legal_sources 的 source_type 均为 judicial_interpretation
         → judicial_interpretation_database
         否则 → statute_database
@@ -145,7 +145,7 @@ def _derive_verification_route(
     Returns:
         核查路由
     """
-    if claim_type in (ClaimType.LEGAL_SOURCE_CLAIM, ClaimType.LEGAL_SOURCE_PARAPHRASE):
+    if claim_type == ClaimType.LEGAL_SOURCE_CLAIM:
         if hasattr(entities, "legal_sources") and entities.legal_sources:
             all_ji = all(
                 ls.source_type == "judicial_interpretation"
@@ -315,16 +315,6 @@ def arbitrate_claim_candidates(
     for cand in filtered:
         rebuilt_text = _rebuild_text(cand.anchor_ids, anchor_map)
 
-        # 校验 paraphrase_text
-        if hasattr(cand.entities, "paraphrase_text") and cand.entities.paraphrase_text:
-            if cand.entities.paraphrase_text not in rebuilt_text:
-                logger.warning(
-                    "paraphrase_text 不是 claim.text 子串，置空。"
-                    "paraphrase_text=%s, claim_text=%s",
-                    cand.entities.paraphrase_text[:100],
-                    rebuilt_text[:100],
-                )
-                cand.entities.paraphrase_text = ""
 
         # 校验 holding_text
         if hasattr(cand.entities, "holding_text") and cand.entities.holding_text:

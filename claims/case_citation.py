@@ -67,13 +67,6 @@ NAMED_CASE_PATTERN = re.compile(
     r"\S{2,10}?[^。！？；，、]{0,12}?(?:纠纷)?(?<![预方草议答备提立档])案"
 )
 
-# 外国案例模式：X v. Y 格式（英美法系案名）
-# 例：Bartz v. Anthropic PBC / Kneschke v. LAION
-# 约束：party 名称至少 2 个字母，v. 后可带空格
-FOREIGN_CASE_PATTERN = re.compile(
-    r'[A-Z][a-z]+\s+v\.\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*'
-)
-
 # 指代词（指向当前文书内部，不可外部检索）— 显式排除
 PRONOUN_PATTERNS = [
     re.compile(r"本案"),
@@ -217,17 +210,6 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     for m in NAMED_CASE_PATTERN.finditer(text):
         case_name = m.group(0)
         # 避免与已添加的重复
-        if not any(c.case_name == case_name for c in case_refs):
-            case_refs.append(CaseRef(
-                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
-                case_number=None,
-                case_name=case_name,
-                court=None,
-            ))
-
-    # 5. 外国案例（X v. Y 格式）
-    for m in FOREIGN_CASE_PATTERN.finditer(text):
-        case_name = m.group(0)
         if not any(c.case_name == case_name for c in case_refs):
             case_refs.append(CaseRef(
                 reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,

@@ -113,7 +113,7 @@ def is_out_of_scope_candidate(candidate: ClaimCandidate) -> bool:
         True 如果是越界输出，应被丢弃
     """
     # 含法源引用的候选绝不过滤
-    # 检查 entities 是否含有 legal_sources（legal_source_claim / legal_source_paraphrase）
+    # 检查 entities 是否含有 legal_sources（legal_source_claim）
     entities = candidate.entities
     if hasattr(entities, "legal_sources") and entities.legal_sources:
         return False

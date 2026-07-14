@@ -4,7 +4,7 @@ CCitecheck v0.2 Rule Engine 测试。
 测试规则抽取器的核心功能：
   1. 单法源完整主张 → legal_source_claim
   2. 多法源一句 → 一个 claim，legal_sources 含两个法源
-  3. 法条转述 → legal_source_paraphrase
+  3. 法条转述并入 legal_source_claim（不再区分）
   4. 法条+法律判断 → 仍为 legal_source_claim
   5. 三种括号案号 → with_case_number
   6. 指导案例 → without_case_number
@@ -144,23 +144,17 @@ def test_multiple_legal_sources():
 
 
 # ============================================================
-# Test 3: 法条转述 → legal_source_paraphrase
+# Test 3: 法条转述并入 legal_source_claim（不再区分逐字/转述）
 # ============================================================
 
-def test_legal_source_paraphrase():
-    """法条号后跟'规定'且后有转述内容 → legal_source_paraphrase"""
-    text = "《中华人民共和国商标法》第四十八条规定，商标的使用，是指将商标用于商品、商品包装或者容器。"
-    doc = _make_parsed_doc([text])
-    indexes = _make_indexes(doc)
-
-    candidates = extract_rule_candidates(doc, indexes)
-
+def test_paraphrase_style_citation_is_legal_source_claim():
+    """法条号后跟'规定'的转述式引用，同样识别为 legal_source_claim"""
+    doc = _make_parsed_doc(["《商标法》第四十八条规定，商标的使用是指将商标用于商品。"])
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
     assert len(candidates) == 1
     c = candidates[0]
-    assert c.claim_type == ClaimType.LEGAL_SOURCE_PARAPHRASE
-    # paraphrase_text 应为 claim.text 子串
-    assert hasattr(c.entities, "paraphrase_text")
-    assert "商标的使用" in c.entities.paraphrase_text
+    assert c.claim_type == ClaimType.LEGAL_SOURCE_CLAIM
+    assert c.entities.legal_sources[0].title == "商标法"
 
 
 # ============================================================
@@ -329,7 +323,7 @@ def test_non_legal_source_excluded(non_legal_text):
     # 不应抽取法律类 claim
     legal_cands = [
         c for c in candidates
-        if c.claim_type in (ClaimType.LEGAL_SOURCE_CLAIM, ClaimType.LEGAL_SOURCE_PARAPHRASE)
+        if c.claim_type == ClaimType.LEGAL_SOURCE_CLAIM
     ]
     assert len(legal_cands) == 0, f"合同/授权书不应产生法源候选: {candidates}"
 

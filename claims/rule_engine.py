@@ -11,7 +11,7 @@ CCitecheck v0.2 规则抽取器。
 
 规则抽取流程：
   1. 遍历每个 anchor
-  2. 检测法源引用 → legal_source_claim 或 legal_source_paraphrase
+  2. 检测法源引用 → legal_source_claim
   3. 检测案例引用 → case_citation 或 case_holding_paraphrase
   4. 同一句只产出一个候选（多法源合并为一个候选）
 """
@@ -28,10 +28,9 @@ from .case_citation import (
     has_holding_trigger,
 )
 from .legal_citation import (
-    extract_legal_sources,
-    find_paraphrase_trigger_position,
-    has_article_reference,
     extract_articles_only,
+    extract_legal_sources,
+    has_article_reference,
 )
 from .schema import (
     CaseCitationEntities,
@@ -40,7 +39,6 @@ from .schema import (
     ClaimType,
     ExtractionMethod,
     LegalSourceClaimEntities,
-    LegalSourceParaphraseEntities,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,11 +218,8 @@ def _make_legal_candidate(
     """
     根据法源引用生成候选。
 
-    类型判定（tie-break）：
-      1. 若某法源的条款号之后紧跟转述触发词（规定/明确/指出/载明）
-         且触发词后仍有实体内容 → legal_source_paraphrase
-      2. 否则 → legal_source_claim
-         （包括含"依据/根据/依照"引导的句子，以及无引导词但含法源的句子）
+    所有法源引用统一为 legal_source_claim，不区分逐字引用与转述——
+    语义核查层对两者的处理本就一致（对照权威原文做语义判定）。
 
     Args:
         anchor_id: 当前 anchor 编号
@@ -237,21 +232,6 @@ def _make_legal_candidate(
     if not legal_sources:
         return None
 
-    # 检查是否有转述触发
-    paraphrase_pos = find_paraphrase_trigger_position(text, legal_sources)
-    if paraphrase_pos is not None:
-        paraphrase_text = text[paraphrase_pos:]
-        return ClaimCandidate(
-            claim_type=ClaimType.LEGAL_SOURCE_PARAPHRASE,
-            anchor_ids=[anchor_id],
-            entities=LegalSourceParaphraseEntities(
-                legal_sources=legal_sources,
-                paraphrase_text=paraphrase_text,
-            ),
-            method=ExtractionMethod.RULE,
-        )
-
-    # 默认 → legal_source_claim
     return ClaimCandidate(
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         anchor_ids=[anchor_id],

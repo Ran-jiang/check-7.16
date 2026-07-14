@@ -192,8 +192,7 @@ def _extract_v0_2_claims(parsed_doc: ParsedDocument, verbose: bool = False) -> C
     type_counts = Counter(c.claim_type.value for c in claim_doc.claims)
     typer.echo(f"\n=== v0.2 Claim Extraction Summary ===")
     typer.echo(f"Total claims: {len(claim_doc.claims)}")
-    for ct in ["legal_source_claim", "legal_source_paraphrase",
-                "case_citation", "case_holding_paraphrase"]:
+    for ct in ["legal_source_claim", "case_citation", "case_holding_paraphrase"]:
         count = type_counts.get(ct, 0)
         if count > 0:
             typer.echo(f"  {ct}: {count}")

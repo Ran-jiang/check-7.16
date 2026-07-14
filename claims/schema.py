@@ -35,7 +35,6 @@ class ClaimType(str, Enum):
         - 即使后半句包含法律判断（如"被告应当承担违约责任"），也抽取为此类型
         - 理由：后续至少需要检索该法条并返回原文
 
-    legal_source_paraphrase: 带法源依据的法条内容转述
         - 法条号后紧跟"规定/明确/指出/载明"等触发词
         - 触发词后有实体转述内容
 
@@ -47,7 +46,6 @@ class ClaimType(str, Enum):
         - 同一句中既有案例引用，又有"认为/指出/裁判要旨"等观点触发词
     """
     LEGAL_SOURCE_CLAIM = "legal_source_claim"
-    LEGAL_SOURCE_PARAPHRASE = "legal_source_paraphrase"
     CASE_CITATION = "case_citation"
     CASE_HOLDING_PARAPHRASE = "case_holding_paraphrase"
 
@@ -184,23 +182,6 @@ class LegalSourceClaimEntities(BaseModel):
     )
 
 
-class LegalSourceParaphraseEntities(BaseModel):
-    """
-    legal_source_paraphrase 的实体。
-
-    paraphrase_text 必须是 claim.text 的子串（由 arbiter 校验）。
-    这是"不改写原文"的结构性保证之一。
-    """
-    legal_sources: list[LegalSource] = Field(
-        default_factory=list,
-        description="法律规范来源列表"
-    )
-    paraphrase_text: str = Field(
-        default="",
-        description="转述文本，必须是 claim.text 的子串"
-    )
-
-
 class CaseCitationEntities(BaseModel):
     """case_citation 的实体"""
     case_refs: list[CaseRef] = Field(
@@ -235,7 +216,6 @@ class CaseHoldingParaphraseEntities(BaseModel):
 ClaimEntities = Annotated[
     Union[
         LegalSourceClaimEntities,
-        LegalSourceParaphraseEntities,
         CaseCitationEntities,
         CaseHoldingParaphraseEntities,
     ],

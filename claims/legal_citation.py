@@ -64,9 +64,6 @@ ITEM_PATTERN = re.compile(
     rf"第[（(]?({_CN_NUM})[）)]?项"
 )
 
-# 转述触发词：法条号后紧跟这些词 → legal_source_paraphrase
-PARAPHRASE_TRIGGER_PATTERN = re.compile(r"(规定|明确|指出|载明)")
-
 # 法源引导词：用于辅助判断句子是否含法律依据
 LEGAL_BASIS_WORDS = {"依据", "根据", "依照", "按照", "参照", "适用"}
 
@@ -698,71 +695,6 @@ def extract_articles_only(text: str) -> list:
         ArticleRef 列表
     """
     return _extract_articles_from_text(text)
-
-
-def find_paraphrase_trigger_position(
-    text: str,
-    legal_sources: list[LegalSource],
-) -> Optional[int]:
-    """
-    检测是否存在法条转述触发词，返回转述文本的起始位置。
-
-    规则：如果某法源包含条款号，且条款号之后紧跟
-    "规定/明确/指出/载明"等触发词，且触发词后仍有实体内容，
-    则触发词后的文本是转述内容。
-
-    Args:
-        text: 完整文本
-        legal_sources: 已提取的法源列表
-
-    Returns:
-        转述文本起始位置（触发词之后的第一个字符位置），
-        如果没有触发或没有后续内容则返回 None
-    """
-    # 找到最后一个带条款号的法源
-    last_article_pos = -1
-    for ls in legal_sources:
-        if ls.articles:
-            # 在文本中查找该法源位置
-            title_pos = text.find(f"《{ls.title}》")
-            if title_pos >= 0:
-                # 查找该法源后的最后一条款号
-                for art in ls.articles:
-                    art_pos = text.find(art.article, title_pos)
-                    if art_pos > last_article_pos:
-                        last_article_pos = art_pos
-
-    if last_article_pos < 0:
-        return None
-
-    # 从最后一个条款号之后查找触发词
-    after_article = text[last_article_pos:]
-    # 先跳过条款号本身
-    # 找到条款号结束位置
-    art_match = ARTICLE_PATTERN.search(after_article)
-    if art_match:
-        after_article = after_article[art_match.end():]
-
-    # 查找触发词
-    trigger_match = PARAPHRASE_TRIGGER_PATTERN.search(after_article)
-    if not trigger_match:
-        return None
-
-    # 触发词之后的内容
-    trigger_end = trigger_match.end()
-    remaining = after_article[trigger_end:]
-
-    # 去除触发词后紧跟的逗号、冒号
-    remaining = re.sub(r"^[，,：:\s]+", "", remaining)
-
-    if not remaining or not remaining.strip():
-        return None
-
-    # 计算在原文中的绝对位置
-    # remaining 是原文的后缀（从原文某位置到末尾），因此
-    # absolute_start = len(text) - len(remaining)
-    absolute_start = len(text) - len(remaining)
-    return absolute_start
 
 
 def has_legal_basis_words(text: str) -> bool:

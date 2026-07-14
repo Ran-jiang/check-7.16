@@ -21,7 +21,6 @@ from claims.arbiter import (
 from claims.schema import (
     Claim, ClaimCandidate, ClaimDebug, ClaimType,
     ExtractionMethod, LegalSourceClaimEntities,
-    LegalSourceParaphraseEntities,
     CaseCitationEntities, CaseRef, CaseReferenceType,
     VerificationRoute, LegalSource, LegalSourceType,
 )

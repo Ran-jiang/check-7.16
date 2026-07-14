@@ -138,10 +138,7 @@ class _CheckItem:
 def _collect_check_items(claim_doc: ClaimDocument) -> list[_CheckItem]:
     items: list[_CheckItem] = []
     for claim in claim_doc.claims:
-        if claim.claim_type not in (
-            ClaimType.LEGAL_SOURCE_CLAIM,
-            ClaimType.LEGAL_SOURCE_PARAPHRASE,
-        ):
+        if claim.claim_type != ClaimType.LEGAL_SOURCE_CLAIM:
             continue
         for legal_source in getattr(claim.entities, "legal_sources", []):
             not_verifiable = _classify_not_verifiable(legal_source.title)
@@ -551,8 +548,7 @@ def _suggest_similar_title(law_title: str, known_titles: list[str]) -> Optional[
 
 
 def _document_quote(claim) -> str:
-    paraphrase_text = getattr(claim.entities, "paraphrase_text", "")
-    return paraphrase_text or claim.text
+    return claim.text
 
 
 def _cited_source(law_title: str, article) -> str:

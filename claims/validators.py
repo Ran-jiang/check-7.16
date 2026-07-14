@@ -12,7 +12,7 @@ validate_claim_document 对 ClaimDocument 执行全量不变量校验。
   - claim_type 合法
   - verification_route 合法且符合对应表
   - entities 通过对应 claim_type 的 pydantic 子模型校验
-  - paraphrase_text / holding_text 为 claim.text 子串
+  - holding_text 为 claim.text 子串
   - debug.methods 仅含 rule / llm
 """
 
@@ -148,13 +148,6 @@ def validate_claim_document(
                 f"[verification_route] claim {claim.claim_id}: {vr_violation}"
             )
 
-        # paraphrase_text 为 claim.text 子串
-        if hasattr(claim.entities, "paraphrase_text") and claim.entities.paraphrase_text:
-            if claim.entities.paraphrase_text not in claim.text:
-                violations.append(
-                    f"[entities] claim {claim.claim_id}: "
-                    f"paraphrase_text 不是 claim.text 子串"
-                )
 
         # holding_text 为 claim.text 子串
         if hasattr(claim.entities, "holding_text") and claim.entities.holding_text:
@@ -199,7 +192,7 @@ def _check_verification_route(claim: Claim) -> str | None:
     ct = claim.claim_type
     vr = claim.verification_route
 
-    if ct in (ClaimType.LEGAL_SOURCE_CLAIM, ClaimType.LEGAL_SOURCE_PARAPHRASE):
+    if ct == ClaimType.LEGAL_SOURCE_CLAIM:
         expected = (
             VerificationRoute.JUDICIAL_INTERPRETATION_DATABASE
             if _all_judicial_interpretation(claim.entities)
