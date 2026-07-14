@@ -15,6 +15,7 @@ from laws.sqlite_store import (
 )
 
 from .article_retrieval import retrieve_relevant_articles
+from .pkulaw_cache import CachedPkulawClient, cache_enabled
 from .pkulaw_mcp import (
     PkulawArticle,
     PkulawCaseNumber,
@@ -303,9 +304,13 @@ class PkulawFallbackSource:
         )
         return LookupResult(trace.status, evidence, trace)
 
-    def _client(self) -> PkulawMcpClient:
+    def _client(self):
         if self.client is None:
-            self.client = PkulawMcpClient()
+            client = PkulawMcpClient()
+            if cache_enabled():
+                # 法条/法规元数据查询默认走 SQLite 缓存（案号识别不缓存）
+                client = CachedPkulawClient(client)
+            self.client = client
         return self.client
 
 

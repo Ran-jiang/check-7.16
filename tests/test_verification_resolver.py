@@ -393,3 +393,181 @@ def test_match_law_record_accepts_promulgation_notice_title():
 
     # 只有培训班通知（无印发/发布字样）时不得视为命中
     assert _match_law_record("常见类型移动互联网应用程序必要个人信息范围规定", records[:1]) is None
+
+
+def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
+    return Claim(
+        claim_id=claim_id,
+        claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
+        text=text,
+        anchor_ids=["line00001"],
+        block_ids=["b_00001"],
+        verification_route=VerificationRoute.STATUTE_DATABASE,
+        entities=LegalSourceClaimEntities(
+            legal_sources=[
+                LegalSource(
+                    title=title,
+                    source_type=LegalSourceType.LAW,
+                    articles=[ArticleRef(article=article)],
+                )
+            ]
+        ),
+        debug=ClaimDebug(methods=["rule"], candidate_count=1),
+    )
+
+
+class CountingSource:
+    """记录 lookup 调用次数的假法条源。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def lookup(self, request: LookupRequest) -> LookupResult:
+        self.calls.append((request.law_title, request.article_no))
+        trace = SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="counting",
+            status=LookupStatus.ARTICLE_FOUND,
+        )
+        evidence = ArticleEvidence(
+            law_title=request.law_title,
+            source_type="law",
+            article_no=request.article_no,
+            article_text="条文",
+            data_source=trace,
+        )
+        return LookupResult(LookupStatus.ARTICLE_FOUND, evidence, trace)
+
+
+def test_duplicate_citations_share_one_lookup(tmp_path: Path):
+    """同一（法名, 条号）在多个 claim 中重复引用时只查一次。"""
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(
+            source_doc_id="doc-test",
+            source_doc_hash="sha256:test",
+            source_file="test.docx",
+        ),
+        claims=[
+            _simple_claim("cl_00001", "第一次引用第五条。", "个人信息保护法", "第五条"),
+            _simple_claim("cl_00002", "第二次引用第五条。", "个人信息保护法", "第五条"),
+            _simple_claim("cl_00003", "引用第六条。", "个人信息保护法", "第六条"),
+        ],
+    )
+    source = CountingSource()
+    frontend_doc = verify_claim_document_for_frontend(
+        claim_doc, db_path, sources=[source]
+    )
+    # 3 条 check 全部产出，但底层只发生 2 次查询（第五条去重）
+    assert len(frontend_doc.legal_checks) == 3
+    assert len(source.calls) == 2
+    assert frontend_doc.legal_checks[0].evidence.article_text == "条文"
+    assert frontend_doc.legal_checks[1].evidence.article_text == "条文"
+
+
+class CountingRecognizer:
+    def __init__(self):
+        self.calls = 0
+
+    def recognize(self, text: str):
+        self.calls += 1
+        return [
+            PkulawCaseNumber(
+                text="（2020）京01民终1号",
+                start=0,
+                end=10,
+                gid="g1",
+                case_flag="（2020）京01民终1号",
+                court="北京市第一中级人民法院",
+                title="某案",
+            )
+        ]
+
+
+def test_case_claims_batched_into_single_recognition(tmp_path: Path):
+    """多个含案号的 claim 合并为一次案号识别调用。"""
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+
+    def case_claim(claim_id: str, number: str) -> Claim:
+        return Claim(
+            claim_id=claim_id,
+            claim_type=ClaimType.CASE_CITATION,
+            text=f"参见{number}判决。",
+            anchor_ids=["line00001"],
+            block_ids=["b_00001"],
+            verification_route=VerificationRoute.CASE_DATABASE_SEARCH,
+            entities=CaseCitationEntities(
+                reference_type=CaseReferenceType.WITH_CASE_NUMBER,
+                case_refs=[CaseRef(reference_type=CaseReferenceType.WITH_CASE_NUMBER, case_number=number)],
+            ),
+            debug=ClaimDebug(methods=["rule"], candidate_count=1),
+        )
+
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(
+            source_doc_id="doc-test",
+            source_doc_hash="sha256:test",
+            source_file="test.docx",
+        ),
+        claims=[
+            case_claim("cl_00001", "（2020）京01民终1号"),
+            case_claim("cl_00002", "（2021）沪02民终2号"),
+        ],
+    )
+    recognizer = CountingRecognizer()
+    frontend_doc = verify_claim_document_for_frontend(
+        claim_doc, db_path, case_recognizer=recognizer, include_statutes=False
+    )
+    assert recognizer.calls == 1
+    assert len(frontend_doc.case_checks) == 2
+    statuses = {check.lookup_status for check in frontend_doc.case_checks}
+    assert statuses == {CaseLookupStatus.VERIFIED, CaseLookupStatus.NOT_FOUND}
+
+
+def test_rule_findings_skip_semantic_llm(tmp_path: Path):
+    """确定性规则已有结论时不再调用语义核查。"""
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+
+    class RepealedSource:
+        def lookup(self, request: LookupRequest) -> LookupResult:
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK,
+                source_name="fake",
+                status=LookupStatus.LAW_FOUND_ARTICLE_MISSING,
+            )
+            evidence = ArticleEvidence(
+                law_title=request.law_title,
+                source_type="law",
+                article_no=request.article_no,
+                version_status="废止或失效",
+                data_source=trace,
+            )
+            return LookupResult(trace.status, evidence, trace)
+
+    class ExplodingChecker:
+        def compare(self, *args, **kwargs):
+            raise AssertionError("确定性结论已存在，不应调用 LLM")
+
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(
+            source_doc_id="doc-test",
+            source_doc_hash="sha256:test",
+            source_file="test.docx",
+        ),
+        claims=[
+            _simple_claim("cl_00001", "依据《合同法》第五十二条。", "合同法", "第五十二条"),
+        ],
+    )
+    frontend_doc = verify_claim_document_for_frontend(
+        claim_doc,
+        db_path,
+        sources=[RepealedSource()],
+        semantic_checker=ExplodingChecker(),
+    )
+    check = frontend_doc.legal_checks[0]
+    assert check.rule_findings
+    assert check.rule_findings[0].error_type == SemanticErrorType.OUTDATED_SOURCE
+    assert check.semantic_comparison is None

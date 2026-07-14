@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import difflib
 import re
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
+
+# 法条查询与千问语义核查都是 IO 密集调用，用线程池并发压缩总耗时
+_LOOKUP_WORKERS = 6
+_SEMANTIC_WORKERS = 4
 
 from claims.schema import ClaimDocument, ClaimType
 from laws.sqlite_store import (
@@ -63,75 +69,44 @@ def verify_claim_document_for_frontend(
     source_chain = list(sources) if sources is not None else build_default_sources(db_path)
     recognizer = case_recognizer if case_recognizer is not None else PkulawCaseSource()
     known_titles = _load_known_titles(db_path)
-    checks: list[LegalCheck] = []
-    next_id = 1
 
-    for claim in claim_doc.claims:
-        if not include_statutes:
-            break
-        if claim.claim_type not in (
-            ClaimType.LEGAL_SOURCE_CLAIM,
-            ClaimType.LEGAL_SOURCE_PARAPHRASE,
-        ):
+    items = _collect_check_items(claim_doc) if include_statutes else []
+
+    # ---- 阶段一：法条查询。同一（法名, 条号）只查一次，唯一查询并发执行 ----
+    lookup_results = _run_lookups(source_chain, items)
+
+    # ---- 阶段二：确定性规则判定 + 语义核查。已有确定结论的检查跳过千问 ----
+    semantic_results = _run_semantics(
+        semantic_checker, items, lookup_results, known_titles
+    )
+
+    checks: list[LegalCheck] = []
+    for index, item in enumerate(items):
+        check_id = f"vc_{index + 1:05d}"
+        if item.not_verifiable is not None:
+            checks.append(
+                _not_verifiable_check(
+                    check_id, item.claim, item.law_title, item.article_no, item.not_verifiable
+                )
+            )
             continue
-        legal_sources = getattr(claim.entities, "legal_sources", [])
-        for legal_source in legal_sources:
-            articles = legal_source.articles or [None]
-            not_verifiable = _classify_not_verifiable(legal_source.title)
-            for article in articles:
-                article_no = article.article if article is not None else None
-                if not_verifiable is not None:
-                    checks.append(
-                        _not_verifiable_check(
-                            f"vc_{next_id:05d}",
-                            claim,
-                            legal_source.title,
-                            article_no,
-                            not_verifiable,
-                        )
-                    )
-                    next_id += 1
-                    continue
-                result, attempts = _lookup_with_chain(
-                    source_chain,
-                    LookupRequest(
-                        law_title=legal_source.title,
-                        source_type=legal_source.source_type.value,
-                        article_no=article_no,
-                        context_text=claim.text,
-                    ),
-                )
-                doc_quote = _document_quote(claim)
-                rule_findings = _build_rule_findings(
-                    legal_source.title,
-                    article_no,
-                    result,
-                    attempts,
-                    known_titles,
-                )
-                semantic_comparison = _compare_semantics(
-                    semantic_checker,
-                    doc_quote,
-                    claim.text,
-                    _cited_source(legal_source.title, article),
-                    result,
-                )
-                checks.append(
-                    LegalCheck(
-                        check_id=f"vc_{next_id:05d}",
-                        claim_id=claim.claim_id,
-                        claim_text=claim.text,
-                        anchor_ids=list(claim.anchor_ids),
-                        law_title=legal_source.title,
-                        article_no=article_no,
-                        lookup_status=result.status,
-                        evidence=result.evidence,
-                        rule_findings=rule_findings,
-                        semantic_comparison=semantic_comparison,
-                        source_attempts=attempts,
-                    )
-                )
-                next_id += 1
+        result, attempts = lookup_results[item.lookup_key]
+        rule_findings, semantic_comparison = semantic_results[index]
+        checks.append(
+            LegalCheck(
+                check_id=check_id,
+                claim_id=item.claim.claim_id,
+                claim_text=item.claim.text,
+                anchor_ids=list(item.claim.anchor_ids),
+                law_title=item.law_title,
+                article_no=item.article_no,
+                lookup_status=result.status,
+                evidence=result.evidence,
+                rule_findings=rule_findings,
+                semantic_comparison=semantic_comparison,
+                source_attempts=attempts,
+            )
+        )
 
     return FrontendVerificationDocument(
         source_claim_doc_id=claim_doc.claim_meta.claim_doc_id,
@@ -140,17 +115,206 @@ def verify_claim_document_for_frontend(
     )
 
 
+@dataclass
+class _CheckItem:
+    """一条待核查的（claim × 法规 × 条号）组合。"""
+
+    claim: object
+    law_title: str
+    source_type: str
+    article: object
+    article_no: Optional[str]
+    not_verifiable: Optional[str]
+
+    @property
+    def lookup_key(self) -> tuple:
+        # 有条号时结果与上下文无关，可跨 claim 复用；
+        # 无条号时按 claim 上下文做召回，不能复用
+        if self.article_no:
+            return (self.law_title, self.source_type, self.article_no)
+        return (self.law_title, self.source_type, None, self.claim.text)
+
+
+def _collect_check_items(claim_doc: ClaimDocument) -> list[_CheckItem]:
+    items: list[_CheckItem] = []
+    for claim in claim_doc.claims:
+        if claim.claim_type not in (
+            ClaimType.LEGAL_SOURCE_CLAIM,
+            ClaimType.LEGAL_SOURCE_PARAPHRASE,
+        ):
+            continue
+        for legal_source in getattr(claim.entities, "legal_sources", []):
+            not_verifiable = _classify_not_verifiable(legal_source.title)
+            for article in legal_source.articles or [None]:
+                items.append(
+                    _CheckItem(
+                        claim=claim,
+                        law_title=legal_source.title,
+                        source_type=legal_source.source_type.value,
+                        article=article,
+                        article_no=article.article if article is not None else None,
+                        not_verifiable=not_verifiable,
+                    )
+                )
+    return items
+
+
+def _run_lookups(
+    source_chain: list[StatuteSource], items: list[_CheckItem]
+) -> dict[tuple, tuple[LookupResult, list]]:
+    """对唯一的 lookup_key 并发执行查询链。"""
+    requests: dict[tuple, LookupRequest] = {}
+    for item in items:
+        if item.not_verifiable is not None:
+            continue
+        requests.setdefault(
+            item.lookup_key,
+            LookupRequest(
+                law_title=item.law_title,
+                source_type=item.source_type,
+                article_no=item.article_no,
+                context_text=item.claim.text,
+            ),
+        )
+    if not requests:
+        return {}
+    keys = list(requests)
+    with ThreadPoolExecutor(max_workers=_LOOKUP_WORKERS) as pool:
+        outcomes = list(
+            pool.map(lambda key: _lookup_with_chain(source_chain, requests[key]), keys)
+        )
+    return dict(zip(keys, outcomes))
+
+
+def _run_semantics(
+    semantic_checker: SemanticChecker | None,
+    items: list[_CheckItem],
+    lookup_results: dict[tuple, tuple[LookupResult, list]],
+    known_titles: list[str],
+) -> dict[int, tuple[list[SemanticIssue], SemanticComparison | None]]:
+    """先算确定性规则；规则已有结论的跳过千问，其余需要 LLM 的并发执行。"""
+    results: dict[int, tuple[list[SemanticIssue], SemanticComparison | None]] = {}
+    llm_jobs: list[tuple[int, _CheckItem, LookupResult]] = []
+
+    for index, item in enumerate(items):
+        if item.not_verifiable is not None:
+            results[index] = ([], None)
+            continue
+        result, attempts = lookup_results[item.lookup_key]
+        rule_findings = _build_rule_findings(
+            item.law_title, item.article_no, result, attempts, known_titles
+        )
+        if rule_findings:
+            # 确定性核查层已给出结论，无需再消耗千问调用
+            results[index] = (rule_findings, None)
+            continue
+        placeholder = _semantic_without_llm(semantic_checker, item, result)
+        if placeholder is not _NEEDS_LLM:
+            results[index] = (rule_findings, placeholder)
+            continue
+        results[index] = (rule_findings, None)
+        llm_jobs.append((index, item, result))
+
+    if llm_jobs and semantic_checker is not None:
+        with ThreadPoolExecutor(max_workers=_SEMANTIC_WORKERS) as pool:
+            outcomes = list(
+                pool.map(
+                    lambda job: _compare_with_llm(semantic_checker, job[1], job[2]),
+                    llm_jobs,
+                )
+            )
+        for (index, _, _), comparison in zip(llm_jobs, outcomes):
+            rule_findings, _ = results[index]
+            results[index] = (rule_findings, comparison)
+
+    return results
+
+
+_NEEDS_LLM = object()
+
+
+def _semantic_without_llm(
+    semantic_checker: SemanticChecker | None,
+    item: _CheckItem,
+    lookup_result: LookupResult,
+):
+    """不需要调 LLM 就能决定语义结论的情形；返回 _NEEDS_LLM 表示需要调用。"""
+    if semantic_checker is None:
+        return None
+    if lookup_result.status == LookupStatus.LAW_NOT_FOUND:
+        cited_source = _cited_source(item.law_title, item.article)
+        return SemanticComparison(
+            verdict=ComparisonVerdict.ISSUE,
+            issues=[
+                SemanticIssue(
+                    error_type=SemanticErrorType.SOURCE_NOT_FOUND,
+                    risk_level=RiskLevel.HIGH,
+                    diff_summary=f"权威来源未检索到{cited_source}"[:80],
+                    suggestion="请核实法规名称、发布机关、发文字号及条款号。",
+                )
+            ],
+            confidence=ComparisonConfidence.HIGH,
+            notes="",
+        )
+    if lookup_result.status not in (
+        LookupStatus.ARTICLE_FOUND,
+        LookupStatus.RELEVANT_ARTICLES_FOUND,
+    ):
+        return SemanticComparison(
+            verdict=ComparisonVerdict.BUG,
+            confidence=ComparisonConfidence.LOW,
+            notes=(
+                "未取得可供语义核查的法条原文："
+                f"{lookup_result.trace.message or lookup_result.status.value}"
+            ),
+        )
+    if lookup_result.evidence is None:
+        return SemanticComparison(
+            verdict=ComparisonVerdict.BUG,
+            confidence=ComparisonConfidence.LOW,
+            notes="检索状态为已命中，但缺少法条证据。",
+        )
+    return _NEEDS_LLM
+
+
+def _compare_with_llm(
+    semantic_checker: SemanticChecker,
+    item: _CheckItem,
+    lookup_result: LookupResult,
+) -> SemanticComparison:
+    try:
+        return semantic_checker.compare(
+            _document_quote(item.claim),
+            item.claim.text,
+            _cited_source(item.law_title, item.article),
+            lookup_result.evidence,
+        )
+    except SemanticCheckError as exc:
+        return SemanticComparison(
+            verdict=ComparisonVerdict.BUG,
+            confidence=ComparisonConfidence.LOW,
+            notes=str(exc),
+        )
+
+
 def verify_case_claims(
     claim_doc: ClaimDocument,
     recognizer: CaseNumberRecognizer,
 ) -> list[CaseCheck]:
+    claims_with_numbers = [
+        (claim, _cited_case_numbers(claim)) for claim in claim_doc.claims
+    ]
+    claims_with_numbers = [(c, nums) for c, nums in claims_with_numbers if nums]
+    if not claims_with_numbers:
+        return []
+
+    # 全篇合并为一次案号识别调用（法宝接口本身支持批量），节省额度与往返
+    joined_text = "\n".join(claim.text for claim, _ in claims_with_numbers)
+    recognized, error_status, message = _recognize_case_numbers(recognizer, joined_text)
+
     checks: list[CaseCheck] = []
     next_id = 1
-    for claim in claim_doc.claims:
-        cited_numbers = _cited_case_numbers(claim)
-        if not cited_numbers:
-            continue
-        recognized, error_status, message = _recognize_case_numbers(recognizer, claim.text)
+    for claim, cited_numbers in claims_with_numbers:
         for cited in cited_numbers:
             evidence = _match_case_number(cited, recognized) if recognized is not None else None
             status, note = _case_status(recognized, evidence, error_status, message)
@@ -214,62 +378,6 @@ def _case_status(recognized, evidence, error_status, message):
 def _normalize_case_number(value: str) -> str:
     table = str.maketrans({"（": "(", "）": ")", "〔": "(", "〕": ")", "　": "", " ": ""})
     return value.translate(table)
-
-
-def _compare_semantics(
-    semantic_checker: SemanticChecker | None,
-    doc_quote: str,
-    quote_context: str,
-    cited_source: str,
-    lookup_result: LookupResult,
-) -> SemanticComparison | None:
-    if semantic_checker is None:
-        return None
-    if lookup_result.status == LookupStatus.LAW_NOT_FOUND:
-        return SemanticComparison(
-            verdict=ComparisonVerdict.ISSUE,
-            issues=[
-                SemanticIssue(
-                    error_type=SemanticErrorType.SOURCE_NOT_FOUND,
-                    risk_level=RiskLevel.HIGH,
-                    diff_summary=f"权威来源未检索到{cited_source}",
-                    suggestion="请核实法规名称、发布机关、发文字号及条款号。",
-                )
-            ],
-            confidence=ComparisonConfidence.HIGH,
-            notes="",
-        )
-    if lookup_result.status not in (
-        LookupStatus.ARTICLE_FOUND,
-        LookupStatus.RELEVANT_ARTICLES_FOUND,
-    ):
-        return SemanticComparison(
-            verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
-            notes=(
-                "未取得可供语义核查的法条原文："
-                f"{lookup_result.trace.message or lookup_result.status.value}"
-            ),
-        )
-    if lookup_result.evidence is None:
-        return SemanticComparison(
-            verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
-            notes="检索状态为已命中，但缺少法条证据。",
-        )
-    try:
-        return semantic_checker.compare(
-            doc_quote,
-            quote_context,
-            cited_source,
-            lookup_result.evidence,
-        )
-    except SemanticCheckError as exc:
-        return SemanticComparison(
-            verdict=ComparisonVerdict.BUG,
-            confidence=ComparisonConfidence.LOW,
-            notes=str(exc),
-        )
 
 
 # ============================================================

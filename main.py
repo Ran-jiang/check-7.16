@@ -41,6 +41,38 @@ app = typer.Typer(
 
 
 @app.command()
+def cache(
+    action: str = typer.Argument(
+        "status", help="status=查看 / refresh=再验证过期条目 / clear=清空"
+    ),
+):
+    """管理北大法宝查询缓存（data/pkulaw_cache.sqlite）。"""
+    from verification.pkulaw_cache import cache_clear, cache_refresh, cache_status
+
+    if action == "status":
+        info = cache_status()
+        typer.echo(f"缓存库: {info['path']}")
+        if not info["groups"]:
+            typer.echo("缓存为空")
+        for group in info["groups"]:
+            typer.echo(
+                f"  {group['kind']}/{group['status']}: {group['n']} 条"
+            )
+        typer.echo(f"已过期待处理: {info['expired']} 条")
+    elif action == "refresh":
+        outcome = cache_refresh()
+        typer.echo(
+            f"再验证续期 {outcome['revalidated']} 条，清除失效 {outcome['removed']} 条"
+        )
+    elif action == "clear":
+        count = cache_clear()
+        typer.echo(f"已清空 {count} 条缓存")
+    else:
+        typer.echo(f"未知操作: {action}（可用 status/refresh/clear）")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def doctor(
     law_db: str = typer.Option(
         "data/laws.sqlite", "--law-db", help="SQLite 本地法规库路径"
@@ -141,7 +173,9 @@ def parse(
         _write_v0_2_claims(claim_doc, claims_out)
 
     if verify_out is not None and claim_doc is not None:
-        _write_v0_3_verification(claim_doc, verify_out, law_db, semantic_check, qwen_model)
+        _write_v0_3_verification(
+            claim_doc, verify_out, law_db, semantic_check, qwen_model, include_cases
+        )
 
 
 # ============================================================
@@ -206,6 +240,7 @@ def _write_v0_3_verification(
     law_db: str,
     semantic_check: bool,
     qwen_model: str | None,
+    include_cases: bool = True,
 ) -> None:
     """运行 v0.3 溯源链路并写入前端 JSON"""
     try:

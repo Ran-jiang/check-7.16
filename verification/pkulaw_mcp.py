@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -134,17 +135,28 @@ class PkulawMcpClient:
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout, context=default_ssl_context()
-            ) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise PkulawMcpError(f"Pkulaw MCP HTTP {exc.code}: {detail[:300]}") from exc
-        except urllib.error.URLError as exc:
-            raise PkulawMcpError(f"Pkulaw MCP request failed: {exc.reason}") from exc
-        return _parse_mcp_response(raw)
+        # 网络抖动/网关 5xx 退避重试；"未找到数据"是成功响应，不会走到这里。
+        # 重试耗尽后抛 PkulawMcpError → 上游只报"无法判断"，绝不误判"法源不存在"。
+        last_error: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                time.sleep(0.5 * (2 ** (attempt - 1)))
+            try:
+                with urllib.request.urlopen(
+                    request, timeout=self.timeout, context=default_ssl_context()
+                ) as response:
+                    raw = response.read().decode("utf-8")
+                return _parse_mcp_response(raw)
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                last_error = PkulawMcpError(
+                    f"Pkulaw MCP HTTP {exc.code}: {detail[:300]}"
+                )
+                if exc.code < 500:  # 4xx 是配置/鉴权问题，重试无意义
+                    raise last_error from exc
+            except urllib.error.URLError as exc:
+                last_error = PkulawMcpError(f"Pkulaw MCP request failed: {exc.reason}")
+        raise last_error
 
 
 def article_no_to_number(article_no: str) -> int | float:

@@ -48,7 +48,8 @@ def verify_document_claims(
     include_cases: bool = True,
 ) -> FrontendVerificationDocument:
     semantic_checker = None
-    if semantic_check:
+    # 只查案例时用不到千问，不因缺少 key 阻断案号核验
+    if semantic_check and include_statutes:
         try:
             semantic_checker = QwenSemanticChecker.from_env(qwen_model)
         except SemanticCheckError as exc:
