@@ -269,10 +269,11 @@ body {
 .results-filters { margin: 22px 0 14px; }
 .status-filter {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
   overflow-x: auto;
+  border-bottom: 1px solid #dfe1e6;
   scrollbar-width: none;
 }
 .status-filter::-webkit-scrollbar { display: none; }
@@ -281,17 +282,17 @@ body {
   flex: 0 0 auto;
   min-width: max-content;
   border: 0;
-  border-radius: 6px;
-  padding: 7px 9px;
+  border-radius: 0;
+  padding: 0 0 10px;
   background: transparent;
   color: #646a73;
   font-size: 13px;
   text-align: center;
   cursor: pointer;
 }
-.status-tab:hover { background: #f1f3f5; }
-.status-tab.is-active { background: var(--blue); color: #fff; font-weight: 600; }
-.status-tab.is-active .status-count { color: #fff; }
+.status-tab:hover { color: #1f2329; }
+.status-tab.is-active { background: transparent; color: #1f2329; font-weight: 700; }
+.status-tab.is-active .status-count { color: var(--blue); }
 .status-count {
   margin-left: 4px;
   color: var(--blue);
