@@ -183,8 +183,14 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .action-button:hover { border-color: #b9bec7; color: #1f2329; }
 .jump-button { font-weight: 500; }
 .decision-button.is-active { background: #4e5969; border-color: #4e5969; color: #fff; }
-.decision-button[data-decision="accepted"] { border-color: #93b4f8; color: var(--blue); font-weight: 600; }
-.decision-button[data-decision="accepted"]:hover { border-color: var(--blue); color: var(--blue-dark); }
+.decision-button[data-decision="accepted"],
+.decision-group .decision-button:last-child {
+  border-color: var(--blue);
+  color: var(--blue);
+  font-weight: 600;
+}
+.decision-button[data-decision="accepted"]:hover,
+.decision-group .decision-button:last-child:hover { border-color: var(--blue-dark); color: var(--blue-dark); }
 .decision-button[data-decision="accepted"].is-active { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
 
 /* 底部通栏主操作：导出核查报告 */
