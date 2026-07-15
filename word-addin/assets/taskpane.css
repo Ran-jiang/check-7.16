@@ -229,3 +229,90 @@ body {
 .statute-line { margin-top: 10px; font-size: 12.5px; color: #4e5969; line-height: 1.7; word-break: break-all; }
 .statute-line .statute-link { margin: 0; font-size: 12.5px; color: var(--blue); }
 .statute-text-inline { color: #6b7280; white-space: pre-wrap; word-break: break-word; }
+
+/* ---- v5 法务审阅清单：单行统计 + 状态/问题双层筛选 ---- */
+.results-screen,
+.results-screen button,
+.results-screen select {
+  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
+}
+.results-heading h1 {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.9;
+  color: #1f2329;
+}
+.title-main { font-size: 15px; font-weight: 600; }
+.title-count {
+  display: inline-block;
+  padding: 0 2px;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--blue);
+  vertical-align: -1px;
+}
+.results-subtitle { margin-top: 5px; }
+.results-filters { margin: 22px 0 14px; }
+.status-filter {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  overflow-x: auto;
+  border-bottom: 1px solid #dfe1e6;
+  scrollbar-width: none;
+}
+.status-filter::-webkit-scrollbar { display: none; }
+.status-tab {
+  position: relative;
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0 0 10px;
+  background: transparent;
+  color: #646a73;
+  font-size: 13px;
+  cursor: pointer;
+}
+.status-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: transparent;
+}
+.status-tab.is-active { color: #1f2329; font-weight: 600; }
+.status-tab.is-active::after { background: var(--blue); }
+.status-count {
+  margin-left: 4px;
+  color: var(--blue);
+  font-size: 14px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+.filter-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding-top: 9px;
+}
+.filter-tools .type-filter {
+  max-width: 68%;
+  border: 0;
+  padding: 4px 20px 4px 0;
+  background-color: transparent;
+  color: #4e5969;
+  font-size: 13px;
+  font-weight: 400;
+}
+.filter-tools .text-button { margin-left: auto; font-size: 13px; }
+.status-pill {
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}

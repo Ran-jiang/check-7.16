@@ -12,10 +12,11 @@ import { CheckUi } from "./ui.js"
 const ui = new CheckUi()
 let documentName = "未命名文档.docx"
 let lastResult = null
+let lastCheckMode = "full"
 
 document.getElementById("start-button").addEventListener("click", runCheck)
 document.getElementById("selection-button").addEventListener("click", runSelectionCheck)
-document.getElementById("rerun-button").addEventListener("click", runCheck)
+document.getElementById("rerun-button").addEventListener("click", rerunCurrentCheck)
 document.getElementById("export-button").addEventListener("click", exportCurrentReport)
 document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
@@ -82,7 +83,7 @@ async function runCheck() {
       semantic_check: true,
       ...scope,
     })
-    finishCheck(result)
+    finishCheck(result, "full")
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "核查失败")
@@ -113,7 +114,7 @@ async function runSelectionCheck() {
       semantic_check: true,
       ...scope,
     })
-    finishCheck(result)
+    finishCheck(result, "selection")
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "选中内容核查失败")
@@ -122,11 +123,17 @@ async function runSelectionCheck() {
   }
 }
 
-function finishCheck(result) {
+function finishCheck(result, mode) {
   lastResult = result
+  lastCheckMode = mode
+  document.getElementById("rerun-button").textContent = mode === "selection" ? "继续核查" : "重新核查"
   ui.setStage("stage-check", "complete", `已识别 ${result.summary.total} 处法律引用`)
   ui.setStage("stage-report", "complete", "核查完成，可导出报告")
   ui.renderResults(result, readDecisions(result.document_key))
+}
+
+function rerunCurrentCheck() {
+  return lastCheckMode === "selection" ? runSelectionCheck() : runCheck()
 }
 
 async function exportCurrentReport() {

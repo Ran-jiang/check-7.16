@@ -31,6 +31,8 @@ export class CheckUi {
     this.decisions = {}
     this.checks = []
     this.ready = false
+    this.statusFilter = "all"
+    this.typeFilter = ""
   }
 
   setHandlers(handlers) {
@@ -84,30 +86,54 @@ export class CheckUi {
     this.checks = [
       ...(verification.legal_checks || []).map(check => ({ ...check, check_kind: "statute" })),
       ...(verification.case_checks || []).map(check => ({ ...check, check_kind: "case" })),
-    ].sort(compareCheckLocation)
+    ].sort((left, right) => (
+      stateOrder(checkState(left)) - stateOrder(checkState(right)) || compareCheckLocation(left, right)
+    ))
     const title = document.getElementById("results-title")
     title.replaceChildren(
-      element("span", "title-main", "共发现法律引用"),
+      element("span", "title-main", "核查完成！共发现法律引用"),
       element("em", "title-count", String(summary.total)),
-      element("span", "title-main", "处"),
-      element("span", "title-sub",
-        `${summary.passed} 处已通过 · ${summary.issues} 处待核实` +
-        (summary.bugs ? ` · ${summary.bugs} 处无法判断` : ""))
+      element("span", "title-main", "处，"),
+      element("em", "title-count", String(summary.passed)),
+      element("span", "title-main", "处已通过，"),
+      element("em", "title-count", String(summary.issues)),
+      element("span", "title-main", "处待核实，"),
+      element("em", "title-count", String(summary.bugs)),
+      element("span", "title-main", "处无法判断")
     )
     document.getElementById("results-subtitle").textContent = result.file_name
-    this.renderSummary(summary)
+    this.statusFilter = "all"
+    this.typeFilter = ""
+    this.renderStatusFilter(summary)
     this.renderTypeFilter()
     this.renderChecks()
     this.showScreen("results-screen")
   }
 
-  renderSummary(summary) {
-    const grid = document.getElementById("summary-grid")
-    grid.replaceChildren(
-      summaryCard(summary.total, "全部引用"),
-      summaryCard(summary.issues, "待核实"),
-      summaryCard(summary.bugs, "无法判断"),
-    )
+  renderStatusFilter(summary) {
+    const container = document.getElementById("status-filter")
+    const options = [
+      ["all", "全部", summary.total],
+      ["issue", "待核实", summary.issues],
+      ["bug", "无法判断", summary.bugs],
+      ["pass", "已通过", summary.passed],
+    ]
+    container.replaceChildren()
+    for (const [value, label, count] of options) {
+      const button = element("button", `status-tab${value === this.statusFilter ? " is-active" : ""}`)
+      button.type = "button"
+      button.role = "tab"
+      button.setAttribute("aria-selected", String(value === this.statusFilter))
+      button.append(label, element("em", "status-count", String(count)))
+      button.addEventListener("click", () => {
+        this.statusFilter = value
+        this.typeFilter = ""
+        this.renderStatusFilter(summary)
+        this.renderTypeFilter()
+        this.renderChecks()
+      })
+      container.append(button)
+    }
   }
 
   renderTypeFilter() {
@@ -130,20 +156,24 @@ export class CheckUi {
       select.append(option)
     }
     select.value = ""
-    select.onchange = () => this.renderChecks(select.value)
+    select.classList.toggle("is-hidden", !["all", "issue"].includes(this.statusFilter))
+    select.onchange = () => {
+      this.typeFilter = select.value
+      this.renderChecks()
+    }
   }
 
-  renderChecks(typeFilter = "") {
+  renderChecks() {
     const list = document.getElementById("results-list")
     list.replaceChildren()
-    const visible = typeFilter
-      ? this.checks.filter(check => (
-          findingsOf(check).some(f => f.error_type === typeFilter) ||
-          (check.check_kind === "case" && caseTypeOf(check) === typeFilter)
-        ))
-      : this.checks
+    const visible = this.checks.filter(check => {
+      if (this.statusFilter !== "all" && checkState(check) !== this.statusFilter) return false
+      if (!this.typeFilter) return true
+      return findingsOf(check).some(f => f.error_type === this.typeFilter) ||
+        (check.check_kind === "case" && caseTypeOf(check) === this.typeFilter)
+    })
     if (!visible.length) {
-      list.append(element("div", "empty-results", typeFilter ? "该类型下没有核查结果。" : "未识别到明确的法规或案例引用。"))
+      list.append(element("div", "empty-results", this.typeFilter ? "该类型下没有核查结果。" : "该状态下没有核查结果。"))
       return
     }
     for (const check of visible) list.append(this.createResultCard(check))
@@ -152,8 +182,7 @@ export class CheckUi {
   createResultCard(check) {
     if (check.check_kind === "case") return this.createCaseResultCard(check)
     const findings = findingsOf(check)
-    const verdict = check.semantic_comparison?.verdict
-    const state = findings.length ? "issue" : verdict === "pass" ? "pass" : verdict === "bug" ? "bug" : "not-run"
+    const state = checkState(check)
     const pillText = state === "issue" ? "待核实" : state === "pass" ? "通过" : state === "bug" ? "无法判断" : "未核查"
 
     const card = element("article", `result-card is-${state}`)
@@ -194,9 +223,7 @@ export class CheckUi {
   }
 
   createCaseResultCard(check) {
-    const state = check.lookup_status === "verified"
-      ? "pass"
-      : check.lookup_status === "not_found" ? "issue" : "bug"
+    const state = checkState(check)
     const card = element("article", `result-card is-${state}`)
     const top = element("div", "result-topline")
     top.append(
@@ -309,6 +336,22 @@ function findingsOf(check) {
   return [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
 }
 
+function checkState(check) {
+  if (check.check_kind === "case") {
+    return check.lookup_status === "verified" ? "pass" : check.lookup_status === "not_found" ? "issue" : "bug"
+  }
+  if (findingsOf(check).length) return "issue"
+  if (check.semantic_comparison?.verdict === "pass") return "pass"
+  if (!check.semantic_comparison && ["article_found", "relevant_articles_found"].includes(check.lookup_status)) {
+    return "pass"
+  }
+  return "bug"
+}
+
+function stateOrder(state) {
+  return { issue: 0, bug: 1, pass: 2 }[state] ?? 3
+}
+
 export function stripRepeatedArticleHeading(text, articleNo) {
   if (!articleNo) return String(text || "")
   return String(text || "").replace(
@@ -336,12 +379,6 @@ function caseTypeOf(check) {
 function compareCheckLocation(left, right) {
   const anchor = check => Number(String(check.anchor_ids?.[0] || "").replace(/\D/g, "")) || Number.MAX_SAFE_INTEGER
   return anchor(left) - anchor(right) || left.check_id.localeCompare(right.check_id)
-}
-
-function summaryCard(value, label) {
-  const card = element("div", "summary-card")
-  card.append(element("span", "summary-value", String(value)), element("span", "summary-label", label))
-  return card
 }
 
 function element(tag, className = "", text = "") {

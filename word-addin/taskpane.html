@@ -90,18 +90,17 @@
 
     <section id="results-screen" class="screen results-screen is-hidden" aria-labelledby="results-title">
       <div class="results-heading">
-        <p class="eyebrow">核查完成</p>
         <h1 id="results-title">核查结果</h1>
         <p id="results-subtitle" class="results-subtitle"></p>
       </div>
-      <div id="summary-grid" class="summary-grid"></div>
-      <div class="results-toolbar">
-        <select id="type-filter" class="type-filter" aria-label="按错误类型筛选">
-          <option value="">全部类型</option>
-        </select>
-        <span class="toolbar-buttons">
+      <div class="results-filters">
+        <div id="status-filter" class="status-filter" role="tablist" aria-label="按核查状态筛选"></div>
+        <div class="filter-tools">
+          <select id="type-filter" class="type-filter" aria-label="按问题类型筛选">
+            <option value="">全部类型</option>
+          </select>
           <button id="rerun-button" class="text-button" type="button">重新核查</button>
-        </span>
+        </div>
       </div>
       <div id="results-list" class="results-list"></div>
       <div class="results-action">
