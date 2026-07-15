@@ -173,13 +173,26 @@ def _legal_check_section(check, decision: str | None) -> str:
             f'<div class="field"><b>备注：</b>{_esc(check.semantic_comparison.notes)}</div>'
         )
     if evidence is not None and evidence.article_text:
-        heading = f"《{evidence.law_title or check.law_title}》{evidence.article_no or check.article_no or ''}"
-        parts.append(f'<div class="statute">{_esc(heading)}　{_esc(evidence.article_text)}</div>')
+        article_no = evidence.article_no or check.article_no or ""
+        heading = f"《{evidence.law_title or check.law_title}》{article_no}"
+        article_text = _strip_repeated_article_heading(evidence.article_text, article_no)
+        parts.append(f'<div class="statute">{_esc(heading)}　{_esc(article_text)}</div>')
     parts.extend(_source_attempt_sections(check.source_attempts))
     if decision in DECISION_LABELS:
         parts.append(f'<div class="decision">人工处理：{DECISION_LABELS[decision]}</div>')
     parts.append("</div>")
     return "".join(parts)
+
+
+def _strip_repeated_article_heading(text: str, article_no: str) -> str:
+    if not article_no:
+        return text
+    return re.sub(
+        r"^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*",
+        "",
+        text,
+        count=1,
+    )
 
 
 def _case_check_section(check, decision: str | None) -> str:

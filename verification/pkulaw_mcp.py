@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import ssl
 import time
@@ -310,7 +311,17 @@ def _parse_law_item_response(data: Any, requested_article_no: str) -> PkulawArti
         timeliness=base.timeliness,
         effectiveness=base.effectiveness,
         article_no=requested_article_no,
-        article_text=text,
+        article_text=_strip_article_heading(str(text)),
+    )
+
+
+def _strip_article_heading(text: str) -> str:
+    """法宝 FullText 有时自带“第X条”，证据字段只保存条文内容。"""
+    return re.sub(
+        r"^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*",
+        "",
+        text,
+        count=1,
     )
 
 

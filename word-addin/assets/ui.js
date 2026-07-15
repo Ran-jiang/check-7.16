@@ -256,8 +256,10 @@ export class CheckUi {
     if (check.evidence?.article_text) {
       const textLine = element("div", "statute-line")
       textLine.append("原文内容：")
-      const heading = `《${check.evidence.law_title || check.law_title}》${check.evidence.article_no || check.article_no || ""}`
-      textLine.append(element("span", "statute-text-inline", `${heading}　${check.evidence.article_text}`))
+      const articleNo = check.evidence.article_no || check.article_no || ""
+      const heading = `《${check.evidence.law_title || check.law_title}》${articleNo}`
+      const articleText = stripRepeatedArticleHeading(check.evidence.article_text, articleNo)
+      textLine.append(element("span", "statute-text-inline", `${heading}　${articleText}`))
       details.append(textLine)
     }
     return details
@@ -305,6 +307,14 @@ export class CheckUi {
 
 function findingsOf(check) {
   return [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
+}
+
+export function stripRepeatedArticleHeading(text, articleNo) {
+  if (!articleNo) return String(text || "")
+  return String(text || "").replace(
+    /^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*/,
+    ""
+  )
 }
 
 // 法宝部分接口返回 Markdown 形式链接（[文本](URL)），归一化为纯 URL
