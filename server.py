@@ -1,4 +1,4 @@
-"""Run the CCitecheck Word add-in server."""
+"""Run the CCiteheck Word add-in server."""
 
 from __future__ import annotations
 

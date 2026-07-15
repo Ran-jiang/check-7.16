@@ -10,7 +10,7 @@
   --danger: #a8443b;
   --warning-bg: #fff6ed;
   --danger-bg: #fff1ef;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
 }
 
 * { box-sizing: border-box; }
@@ -40,18 +40,18 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
 .home-screen { padding: 38px 20px 104px; }
-.hero { display: flex; align-items: center; justify-content: center; gap: 4px; margin: 26px auto 8px; font-family: Georgia, "Times New Roman", serif; }
-.hero-c { font-size: clamp(158px, 48vw, 216px); font-weight: 700; line-height: .74; color: var(--ink); }
-.hero-stack { display: flex; flex-direction: column; letter-spacing: -5px; }
-.hero-line { line-height: .82; font-size: clamp(54px, 17vw, 76px); }
-.hero-line-top { font-weight: 700; color: var(--ink); }
-.hero-line-bottom { font-weight: 400; color: #a4a4a4; }
+.hero {
+  margin: 62px auto 10px; text-align: center;
+  font-family: "Songti SC", "STSong", SimSun, serif;
+  font-size: clamp(42px, 13vw, 58px); font-weight: 700; letter-spacing: -.045em;
+  color: var(--ink);
+}
 .hero-caption { text-align: center; color: var(--soft); letter-spacing: .18em; margin: 2px 0 46px; font-size: 14px; }
 .section-label { color: #8c8c8c; font-size: 12px; letter-spacing: .14em; font-weight: 650; }
 .document-row {
   display: flex; align-items: center; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--line);
 }
-.document-icon { flex: 0 0 44px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: #e9ebed; }
+.document-icon { flex: 0 0 44px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 8px; background: #e9ebed; }
 .document-icon svg { width: 21px; fill: none; stroke: #555; stroke-width: 1.5; stroke-linejoin: round; }
 .document-copy { min-width: 0; flex: 1; }
 .document-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -63,12 +63,6 @@ button:disabled { cursor: not-allowed; opacity: .62; }
   display: flex; align-items: stretch; gap: 10px;
   background: linear-gradient(180deg, rgba(245,246,247,0), rgba(245,246,247,.94) 22%, #f5f6f7 45%);
 }
-.attach-button {
-  flex: 0 0 52px; width: 52px; border: 1px solid #dfe1e4; border-radius: 12px;
-  background: #fff; display: grid; place-items: center; cursor: pointer;
-}
-.attach-button:hover { background: #f7f7f7; }
-.attach-button svg { width: 20px; fill: none; stroke: #555; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .primary-button { flex: 1; min-height: 52px; border: 0; border-radius: 12px; background: #171717; color: #fff; font-weight: 700; cursor: pointer; }
 .primary-button:disabled { background: #b9b9b9; cursor: not-allowed; }
 
@@ -205,9 +199,7 @@ label.scope-row { cursor: pointer; }
 
 /* ---- v4 终版微调：字体渲染 / 一行混排标题 / 建议分行 / 原文两行 ---- */
 :root {
-  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
-               "Segoe UI", "Microsoft YaHei UI", "Hiragino Sans GB",
-               "Noto Sans CJK SC", sans-serif;
+  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
 }
 body {
   -webkit-font-smoothing: antialiased;

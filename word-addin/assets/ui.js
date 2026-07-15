@@ -57,7 +57,7 @@ export class CheckUi {
       const button = document.getElementById(id)
       if (button) button.disabled = busy || !this.ready
     }
-    for (const id of ["rerun-button", "export-button", "attach-button"]) {
+    for (const id of ["rerun-button", "export-button"]) {
       const button = document.getElementById(id)
       if (button) button.disabled = busy
     }

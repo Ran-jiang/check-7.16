@@ -1,5 +1,5 @@
 """
-CCitecheck CLI 入口。
+CCiteheck CLI 入口。
 
 用法:
   python main.py sample.docx --out result.json
@@ -34,7 +34,7 @@ from runtime_checks import check_runtime
 
 app = typer.Typer(
     name="ccitecheck",
-    help="CCitecheck - DOCX 法律文档中间表示层 + 可验证主张识别层",
+    help="CCiteheck - DOCX 法律文档中间表示层 + 可验证主张识别层",
 )
 
 

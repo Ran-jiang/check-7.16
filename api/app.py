@@ -37,7 +37,7 @@ LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
-app = FastAPI(title="CCitecheck API", version="1.0.0")
+app = FastAPI(title="CCiteheck API", version="1.0.0")
 app.mount("/assets", StaticFiles(directory=ADDIN_ROOT / "assets"), name="assets")
 
 

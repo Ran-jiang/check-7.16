@@ -61,7 +61,7 @@ def render_report_html(request: ReportRequest) -> str:
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>CCitecheck 核查报告 - {_esc(request.file_name)}</title>
+<title>CCiteheck 核查报告 - {_esc(request.file_name)}</title>
 <style>
   body {{ font-family: "Songti SC", "SimSun", serif; margin: 40px auto; max-width: 860px;
          color: #1a1a1a; line-height: 1.7; }}
@@ -94,7 +94,7 @@ def render_report_html(request: ReportRequest) -> str:
 </style>
 </head>
 <body>
-<h1>CCitecheck 法律引用核查报告</h1>
+<h1>CCiteheck 法律引用核查报告</h1>
 <table class="meta">
   <tr><td><b>核查文件</b></td><td>{_esc(request.file_name)}</td></tr>
   <tr><td><b>报告生成时间</b></td><td>{generated_at}</td></tr>
@@ -117,7 +117,7 @@ def render_report_html(request: ReportRequest) -> str:
 {"".join(case_rows) if case_rows else "<p>未识别到案例引用。</p>"}
 
 <footer>
-  本报告由 CCitecheck 自动生成，核查过程与数据来源已结构化记录，可供审计追溯。
+  本报告由 CCiteheck 自动生成，核查过程与数据来源已结构化记录，可供审计追溯。
   核查结论仅针对法律引用的存在性、时效与语义对应关系，不构成法律意见。
 </footer>
 </body>

@@ -1,2 +1,1 @@
-"""Verification and source tracing support for CCitecheck."""
-
+"""Verification and source tracing support for CCiteheck."""

@@ -8,11 +8,22 @@ export async function connectToWord() {
   }
 }
 
-export function getDocumentName() {
-  const url = Office.context.document.url
-  if (!url) return "当前文档.docx"
-  const fileName = decodeURIComponent(url.split("/").pop() || "")
-  return fileName || "当前文档.docx"
+export async function getDocumentName() {
+  const directUrl = Office.context.document.url || ""
+  const propertiesUrl = directUrl || await getDocumentUrlFromProperties()
+  if (!propertiesUrl) return "未命名文档.docx"
+  const path = propertiesUrl.split(/[?#]/, 1)[0]
+  const fileName = decodeURIComponent(path.split(/[\\/]/).pop() || "")
+  return fileName || "未命名文档.docx"
+}
+
+function getDocumentUrlFromProperties() {
+  if (!Office.context.document.getFilePropertiesAsync) return Promise.resolve("")
+  return new Promise(resolve => {
+    Office.context.document.getFilePropertiesAsync(result => {
+      resolve(result.status === Office.AsyncResultStatus.Succeeded ? result.value?.url || "" : "")
+    })
+  })
 }
 
 export async function getDocumentBase64() {

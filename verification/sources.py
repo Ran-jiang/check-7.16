@@ -97,7 +97,7 @@ class LocalSQLiteSource:
     def lookup(self, request: LookupRequest) -> LookupResult:
         trace = SourceTrace(
             tier=SourceTier.LOCAL_SQLITE,
-            source_name="CCitecheck 本地 SQLite 法规库",
+            source_name="CCiteheck 本地 SQLite 法规库",
             status=LookupStatus.LAW_NOT_FOUND,
         )
         if not self.db_path.exists():

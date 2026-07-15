@@ -6,9 +6,9 @@
            xsi:type="TaskPaneApp">
   <Id>8a36ad2d-89f5-4c71-a761-743f6949dfee</Id>
   <Version>1.0.0.0</Version>
-  <ProviderName>CCitecheck</ProviderName>
+  <ProviderName>CCiteheck</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
-  <DisplayName DefaultValue="CCitecheck 法律引用核查"/>
+  <DisplayName DefaultValue="CCiteheck 法律引用核查"/>
   <Description DefaultValue="在 Word 中进行法规溯源与语义核查。"/>
   <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png"/>
@@ -82,7 +82,7 @@
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="Group.Label" DefaultValue="CCitecheck"/>
+        <bt:String id="Group.Label" DefaultValue="CCiteheck"/>
         <bt:String id="Button.Label" DefaultValue="开始核查"/>
       </bt:ShortStrings>
       <bt:LongStrings>

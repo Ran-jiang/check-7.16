@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://appsforoffice.microsoft.com; script-src 'self' https://appsforoffice.microsoft.com; style-src 'self'; connect-src 'self'; img-src 'self' data:;">
-  <title>CCitecheck</title>
+  <title>CCiteheck</title>
   <link rel="stylesheet" href="/assets/taskpane.css">
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 </head>
@@ -13,7 +13,7 @@
     <header class="app-header">
       <button id="brand-button" class="brand" type="button" aria-label="返回首页">
         <span class="brand-dot" aria-hidden="true"></span>
-        <span>CCitecheck</span>
+        <span>CCiteheck</span>
       </button>
       <div class="header-actions">
         <button id="help-button" class="icon-button" type="button" aria-label="项目简介与功能介绍" title="项目简介与功能介绍">?</button>
@@ -21,14 +21,8 @@
     </header>
 
     <section id="home-screen" class="screen home-screen" aria-labelledby="home-title">
-      <div class="hero" aria-hidden="true">
-        <span class="hero-c">C</span>
-        <span class="hero-stack">
-          <span class="hero-line hero-line-top">ITE</span>
-          <span class="hero-line hero-line-bottom">HECK</span>
-        </span>
-      </div>
-      <h1 id="home-title" class="sr-only">CCitecheck 可验证主张核查</h1>
+      <div class="hero" aria-hidden="true">CCiteheck</div>
+      <h1 id="home-title" class="sr-only">CCiteheck 可验证主张核查</h1>
       <p class="hero-caption">可验证主张核查</p>
 
       <section class="current-document" aria-labelledby="current-document-title">
@@ -49,24 +43,19 @@
         <div class="section-label" id="scope-title">核查范围</div>
         <label class="scope-row" for="statute-toggle">
           <div class="scope-copy">
-            <strong>法规引用</strong>
-            <small>法源存在 · 条号定位 · 时效 · 语义一致</small>
+            <strong>法律法规引用</strong>
           </div>
           <input id="statute-toggle" class="toggle" type="checkbox" checked>
         </label>
         <label class="scope-row" for="case-toggle">
           <div class="scope-copy">
-            <strong>司法案例</strong>
-            <small>案号真实性验证与权威案例溯源</small>
+            <strong>司法案例引用</strong>
           </div>
           <input id="case-toggle" class="toggle" type="checkbox" checked>
         </label>
       </section>
 
       <div class="bottom-action">
-        <button id="attach-button" class="attach-button" type="button" aria-label="重新读取当前文档" title="重新读取当前文档">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>
-        </button>
         <button id="start-button" class="primary-button" type="button" disabled>核查全文</button>
       </div>
       <button id="selection-button" class="secondary-button" type="button" disabled>核查选中内容</button>

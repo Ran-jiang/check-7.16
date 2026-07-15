@@ -10,14 +10,13 @@ import {
 import { CheckUi } from "./ui.js"
 
 const ui = new CheckUi()
-let documentName = "当前文档.docx"
+let documentName = "未命名文档.docx"
 let lastResult = null
 
 document.getElementById("start-button").addEventListener("click", runCheck)
 document.getElementById("selection-button").addEventListener("click", runSelectionCheck)
 document.getElementById("rerun-button").addEventListener("click", runCheck)
 document.getElementById("export-button").addEventListener("click", exportCurrentReport)
-document.getElementById("attach-button").addEventListener("click", connect)
 document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
 
@@ -44,7 +43,7 @@ async function connect() {
   ui.setDocument("正在读取 Word 文档…", "正在连接插件", false)
   try {
     await Promise.all([connectToWord(), checkHealth()])
-    documentName = getDocumentName()
+    documentName = await getDocumentName()
     ui.setDocument(documentName, "已连接 · 可核查全文或选中片段", true)
     document.getElementById("selection-button").disabled = false
   } catch (error) {
@@ -59,7 +58,7 @@ function checkScope() {
     include_cases: document.getElementById("case-toggle").checked,
   }
   if (!scope.include_statutes && !scope.include_cases) {
-    ui.showMessage("请至少选择一种核查范围（法规引用或司法案例）")
+    ui.showMessage("请至少选择一种核查范围（法律法规引用或司法案例引用）")
     return null
   }
   return scope

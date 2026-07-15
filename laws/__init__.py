@@ -1,2 +1,1 @@
-"""Local law database support for CCitecheck."""
-
+"""Local law database support for CCiteheck."""

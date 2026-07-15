@@ -161,7 +161,7 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
 
     page = client.get(url)
     assert page.status_code == 200
-    assert "CCitecheck 法律引用核查报告" in page.text
+    assert "CCiteheck 法律引用核查报告" in page.text
     assert "已接受" in page.text
     assert "全链路溯源记录" in page.text
     assert "获取时间" in page.text

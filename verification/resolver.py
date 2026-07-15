@@ -447,7 +447,7 @@ def verify_case_claims(
                 _case_search_key(claim, ref)
             ]
             trace = traces[-1] if traces else CaseSourceTrace(
-                source_name="CCitecheck 案例检索路由",
+                source_name="CCiteheck 案例检索路由",
                 status=status,
                 message=note,
             )
@@ -495,7 +495,7 @@ def _search_case_reference(recognizer, claim, ref):
         note = "该案例线索未附案号，当前案例源不支持案名或语义检索，请人工核验"
         return CaseLookupStatus.MANUAL_REVIEW, None, note, [
             CaseSourceTrace(
-                source_name="CCitecheck 案例检索路由",
+                source_name="CCiteheck 案例检索路由",
                 status=CaseLookupStatus.MANUAL_REVIEW,
                 message=note,
             )
@@ -741,7 +741,7 @@ def _not_verifiable_check(
 ) -> LegalCheck:
     trace = SourceTrace(
         tier=SourceTier.LOCAL_SQLITE,
-        source_name="CCitecheck 文件类型分类",
+        source_name="CCiteheck 文件类型分类",
         status=LookupStatus.NOT_VERIFIABLE,
         message=reason,
     )

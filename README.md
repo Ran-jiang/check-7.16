@@ -1,4 +1,4 @@
-# CCitecheck
+# CCiteheck
 
 法律文书引注检查工具，支持 CLI 和 Microsoft Word 任务窗格插件。默认链路做确定性的引注溯源：
 
@@ -63,7 +63,7 @@ npm start
 ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/
 ```
 
-重启 Word，在“开始 → 加载项”中选择“CCitecheck 法律引用核查”。
+重启 Word，在“开始 → 加载项”中选择“CCiteheck 法律引用核查”。
 
 ### 校验 manifest
 
