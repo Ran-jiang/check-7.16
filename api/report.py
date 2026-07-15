@@ -173,7 +173,8 @@ def _legal_check_section(check, decision: str | None) -> str:
             f'<div class="field"><b>备注：</b>{_esc(check.semantic_comparison.notes)}</div>'
         )
     if evidence is not None and evidence.article_text:
-        parts.append(f'<div class="statute">{_esc(evidence.article_text)}</div>')
+        heading = f"《{evidence.law_title or check.law_title}》{evidence.article_no or check.article_no or ''}"
+        parts.append(f'<div class="statute">{_esc(heading)}　{_esc(evidence.article_text)}</div>')
     parts.extend(_source_attempt_sections(check.source_attempts))
     if decision in DECISION_LABELS:
         parts.append(f'<div class="decision">人工处理：{DECISION_LABELS[decision]}</div>')

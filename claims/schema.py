@@ -323,6 +323,10 @@ class Claim(BaseModel):
         default="",
         description="主张所在语义块的上下文；仅供检索与引用忠实度比对",
     )
+    location_text: str = Field(
+        default="",
+        description="用于 Word 精确定位的原文；表格配对引用定位到内容单元格",
+    )
     debug: ClaimDebug = Field(
         default_factory=ClaimDebug,
         description="调试信息"

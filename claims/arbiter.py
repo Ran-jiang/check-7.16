@@ -137,6 +137,23 @@ def _derive_context_text(
     return _rebuild_text(anchor_ids, anchor_map)
 
 
+def _derive_location_text(
+    anchor_ids: list[str], parsed_doc: ParsedDocument, anchor_map: dict[str, Anchor]
+) -> str:
+    """表格左右单元格配对时，定位到承载内容的右侧单元格。"""
+    block_map = {block.block_id: block for block in parsed_doc.blocks}
+    anchors = [anchor_map[item] for item in anchor_ids if item in anchor_map]
+    blocks = [block_map.get(anchor.block_id) for anchor in anchors]
+    if (
+        len(blocks) > 1
+        and all(block and block.type.value == "table_cell" for block in blocks)
+        and len({block.table_index for block in blocks}) == 1
+        and len({block.row_index for block in blocks}) == 1
+    ):
+        return anchors[-1].text
+    return _rebuild_text(anchor_ids, anchor_map)
+
+
 def _derive_verification_route(
     claim_type: ClaimType,
     entities,
@@ -477,6 +494,7 @@ def arbitrate_claim_candidates(
             verification_route=verification_route,
             entities=cand.entities,
             context_text=_derive_context_text(cand.anchor_ids, parsed_doc, anchor_map),
+            location_text=_derive_location_text(cand.anchor_ids, parsed_doc, anchor_map),
             debug=debug,
         )
         claims.append(claim)

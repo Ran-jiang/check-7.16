@@ -78,25 +78,6 @@ export class CheckUi {
     this.setStage("stage-report", "", "等待执行")
   }
 
-  renderHistory(history) {
-    const section = document.getElementById("history-section")
-    const list = document.getElementById("history-list")
-    list.replaceChildren()
-    section.classList.toggle("is-hidden", history.length === 0)
-    for (const item of history) {
-      const row = element("div", "history-item")
-      const icon = element("div", "document-icon")
-      icon.textContent = "§"
-      const copy = element("div", "history-copy")
-      copy.append(element("div", "history-name", item.fileName))
-      const date = new Date(item.checkedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
-      const outcome = item.issues ? `${item.issues} 项待核实` : `${item.total} 条已核查`
-      copy.append(element("div", "history-meta", `${date} · ${outcome}`))
-      row.append(icon, copy)
-      list.append(row)
-    }
-  }
-
   renderResults(result, decisions = {}) {
     const { summary, verification } = result
     this.decisions = decisions
@@ -262,22 +243,21 @@ export class CheckUi {
       check.evidence?.related_articles?.length ? "查看召回的相关条款" : "查看法条原文"
     ))
     const url = sourceUrlOf(check)
-    const linkLine = element("div", "statute-line")
-    linkLine.append("原文链接：")
     if (url) {
+      const linkLine = element("div", "statute-line")
+      linkLine.append("原文链接：")
       const link = element("a", "statute-link", url)
       link.href = url
       link.target = "_blank"
       link.rel = "noopener noreferrer"
       linkLine.append(link)
-    } else {
-      linkLine.append("本地法规库（无外部链接）")
+      details.append(linkLine)
     }
-    details.append(linkLine)
     if (check.evidence?.article_text) {
       const textLine = element("div", "statute-line")
       textLine.append("原文内容：")
-      textLine.append(element("span", "statute-text-inline", check.evidence.article_text))
+      const heading = `《${check.evidence.law_title || check.law_title}》${check.evidence.article_no || check.article_no || ""}`
+      textLine.append(element("span", "statute-text-inline", `${heading}　${check.evidence.article_text}`))
       details.append(textLine)
     }
     return details
@@ -331,8 +311,12 @@ function findingsOf(check) {
 function sourceUrlOf(check) {
   const raw = check.evidence?.data_source?.source_url || check.evidence?.url || ""
   const match = String(raw).match(/\((https?:\/\/[^)]+)\)/)
-  if (match) return match[1]
-  return String(raw).startsWith("http") ? raw : ""
+  const url = match ? match[1] : String(raw).startsWith("http") ? String(raw) : ""
+  try {
+    return /(^|\.)pkulaw\.com$/i.test(new URL(url).hostname) ? url : ""
+  } catch {
+    return ""
+  }
 }
 
 function caseTypeOf(check) {

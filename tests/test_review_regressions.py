@@ -128,6 +128,9 @@ def test_adjacent_table_law_name_and_article_cells_merge_into_one_claim():
     assert source.articles[0].article == "第127条"
     assert source.resolution == "explicit"
 
+    claims = arbitrate_claim_candidates(candidates, doc)
+    assert claims[0].location_text == "第127条规定数据权益。"
+
 
 def test_article_paragraphs_and_items_stop_at_next_article():
     sources = extract_legal_sources(

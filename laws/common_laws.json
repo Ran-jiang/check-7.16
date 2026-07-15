@@ -10,7 +10,7 @@
   {"title": "中华人民共和国个人信息保护法", "source_type": "law", "category": "数据合规", "authority": "全国人大常委会", "priority": 9},
   {"title": "中华人民共和国数据安全法", "source_type": "law", "category": "数据合规", "authority": "全国人大常委会", "priority": 10},
   {"title": "中华人民共和国网络安全法", "source_type": "law", "category": "数据合规", "authority": "全国人大常委会", "priority": 11},
-  {"title": "中华人民共和国反不正当竞争法", "source_type": "law", "category": "市场竞争", "authority": "全国人大常委会", "priority": 12},
+  {"title": "中华人民共和国反不正当竞争法", "source_type": "law", "category": "市场竞争", "authority": "全国人大常委会", "priority": 12, "aliases": ["反法", "反不正当竞争法", "反不正当竞争法互联网专条"]},
   {"title": "中华人民共和国反垄断法", "source_type": "law", "category": "市场竞争", "authority": "全国人大常委会", "priority": 13},
   {"title": "中华人民共和国广告法", "source_type": "law", "category": "营销合规", "authority": "全国人大常委会", "priority": 14},
   {"title": "中华人民共和国消费者权益保护法", "source_type": "law", "category": "消费者保护", "authority": "全国人大常委会", "priority": 15},

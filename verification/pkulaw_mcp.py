@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import ssl
 import time
 import urllib.error
@@ -231,8 +232,9 @@ class PkulawMcpClient:
                 )
                 if exc.code < 500:  # 4xx 是配置/鉴权问题，重试无意义
                     raise last_error from exc
-            except urllib.error.URLError as exc:
-                last_error = PkulawMcpError(f"Pkulaw MCP request failed: {exc.reason}")
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+                reason = getattr(exc, "reason", exc)
+                last_error = PkulawMcpError(f"Pkulaw MCP request failed: {reason}")
         raise last_error
 
 
@@ -323,10 +325,35 @@ def _parse_law_item_response(data: Any, requested_article_no: str) -> PkulawArti
 
 
 def _parse_anhao_response(data: Any) -> list[PkulawCaseNumber]:
-    items = data.get("anhaoname") if isinstance(data, dict) else None
+    value = _response_data(data)
+    items: Any = None
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, dict):
+        for key in (
+            "anhaoname", "anhaoName", "AnhaoName", "items", "records",
+            "results", "list", "cases", "case_numbers", "caseNumbers",
+        ):
+            candidate = value.get(key)
+            if isinstance(candidate, list):
+                items = candidate
+                break
+        # 部分网关在仅识别到一个案号时直接返回记录对象。
+        if items is None and any(
+            key in value for key in ("caseFlag", "case_number", "CaseNO", "text")
+        ):
+            items = [value]
+    if items is None and value in (None, {}):
+        return []
     if not isinstance(items, list):
         raise PkulawMcpError("Unexpected anhao_recognition response shape")
-    return [_parse_case_number(item) for item in items if isinstance(item, dict)]
+    parsed = [_parse_case_number(item) for item in items if isinstance(item, dict)]
+    # 网关偶尔会在不同包装层重复返回同一案号，以规范化案号/GID 去重。
+    unique: dict[tuple[str, str], PkulawCaseNumber] = {}
+    for item in parsed:
+        key = (_compact_case_number(item.case_flag or item.text), item.gid)
+        unique.setdefault(key, item)
+    return list(unique.values())
 
 
 def _parse_case_list_response(data: Any) -> list[PkulawCaseRecord]:
@@ -377,17 +404,26 @@ def _parse_case_record(item: dict[str, Any]) -> PkulawCaseRecord | None:
 
 
 def _parse_case_number(item: dict[str, Any]) -> PkulawCaseNumber:
+    item = _flatten_metadata(item)
     return PkulawCaseNumber(
-        text=item.get("text", ""),
-        start=item.get("start", -1),
-        end=item.get("end", -1),
-        gid=item.get("gid", ""),
-        case_flag=item.get("caseFlag", ""),
-        court=item.get("court", ""),
-        title=item.get("title", ""),
-        last_instance_date=item.get("lastInstanceDate"),
-        url=item.get("url"),
+        text=str(_first_value(item, "text", "matched_text", "anhao") or ""),
+        start=int(_first_value(item, "start", "startIndex") or -1),
+        end=int(_first_value(item, "end", "endIndex") or -1),
+        gid=str(_first_value(item, "gid", "Gid", "GID") or ""),
+        case_flag=str(_first_value(
+            item, "caseFlag", "CaseFlag", "case_number", "caseNumber", "CaseNO", "CaseNo"
+        ) or ""),
+        court=str(_first_value(item, "court", "Court") or ""),
+        title=str(_first_value(item, "title", "Title", "CaseName", "case_name") or ""),
+        last_instance_date=_optional_text(_first_value(
+            item, "lastInstanceDate", "LastInstanceDate", "judgment_date"
+        )),
+        url=_optional_text(_first_value(item, "url", "Url", "URL")),
     )
+
+
+def _compact_case_number(value: str) -> str:
+    return "".join(str(value).translate(str.maketrans({"（": "(", "）": ")", "〔": "(", "〕": ")"})).split())
 
 
 def _parse_law_list_response(data: Any) -> list[PkulawLawRecord]:

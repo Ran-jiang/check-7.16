@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -102,7 +104,11 @@ class QwenSemanticChecker:
         data = self._post_response(payload)
         output_text = _extract_output_text(data)
         try:
-            return SemanticComparison.model_validate_json(output_text)
+            raw_comparison = json.loads(output_text)
+            for issue in raw_comparison.get("issues", []):
+                if isinstance(issue, dict) and isinstance(issue.get("diff_summary"), str):
+                    issue["diff_summary"] = issue["diff_summary"][:80]
+            return SemanticComparison.model_validate(raw_comparison)
         except ValueError as exc:
             raise SemanticCheckError(f"Qwen returned invalid semantic JSON: {exc}") from exc
 
@@ -151,14 +157,22 @@ class QwenSemanticChecker:
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPSHandler(context=default_ssl_context()),
         )
-        try:
-            with opener.open(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise SemanticCheckError(f"Qwen API HTTP {exc.code}: {detail[:300]}") from exc
-        except urllib.error.URLError as exc:
-            raise SemanticCheckError(f"Qwen API request failed: {exc.reason}") from exc
+        last_error: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                time.sleep(0.5 * (2 ** (attempt - 1)))
+            try:
+                with opener.open(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                last_error = SemanticCheckError(f"Qwen API HTTP {exc.code}: {detail[:300]}")
+                if exc.code < 500:
+                    raise last_error from exc
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+                reason = getattr(exc, "reason", exc)
+                last_error = SemanticCheckError(f"Qwen API request failed: {reason}")
+        raise last_error or SemanticCheckError("Qwen API request failed")
 
 
 def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:

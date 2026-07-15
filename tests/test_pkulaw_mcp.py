@@ -5,8 +5,20 @@ import pytest
 from verification.pkulaw_mcp import (
     MCP_ENDPOINTS,
     PkulawMcpClient,
+    _parse_anhao_response,
     article_no_to_number,
 )
+
+
+def test_anhao_response_accepts_nested_results_and_deduplicates():
+    item = {
+        "caseNumber": "（2023）浙民终1113号",
+        "gid": "case-1",
+        "title": "甲公司诉乙公司案",
+    }
+    parsed = _parse_anhao_response({"Message": "成功", "Data": {"results": [item, item]}})
+    assert len(parsed) == 1
+    assert parsed[0].case_flag == "（2023）浙民终1113号"
 
 
 class FakePkulawClient(PkulawMcpClient):

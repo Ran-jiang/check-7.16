@@ -375,11 +375,24 @@ def verify_case_claims(
     locations: dict[str, tuple[str, int]] | None = None,
 ) -> list[CaseCheck]:
     locations = locations or _claim_locations(claim_doc)
-    refs = [
+    raw_refs = [
         (claim, ref)
         for claim in claim_doc.claims
         for ref in getattr(claim.entities, "case_refs", [])
     ]
+    refs = []
+    seen_refs: set[tuple[str, str]] = set()
+    for claim, ref in raw_refs:
+        identity = (
+            _normalize_case_number(ref.case_number)
+            if ref.case_number
+            else _normalize_case_name(ref.case_name or "")
+        )
+        key = (claim.claim_id, identity)
+        if key in seen_refs:
+            continue
+        seen_refs.add(key)
+        refs.append((claim, ref))
     if not refs:
         return []
 
@@ -891,7 +904,7 @@ def _claim_locations(claim_doc: ClaimDocument) -> dict[str, tuple[str, int]]:
         identity = tuple(claim.anchor_ids)
         location = identities.get(identity)
         if location is None:
-            location_text = claim.text
+            location_text = claim.location_text or claim.text
             occurrence = counters.get(location_text, 0)
             counters[location_text] = occurrence + 1
             location = (location_text, occurrence)

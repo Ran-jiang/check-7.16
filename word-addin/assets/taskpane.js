@@ -1,5 +1,5 @@
 import { checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
-import { readDecisions, readHistory, recordHistory, saveDecision } from "./history.js"
+import { readDecisions, saveDecision } from "./history.js"
 import {
   connectToWord,
   getDocumentBase64,
@@ -37,7 +37,6 @@ ui.setHandlers({
 initialize()
 
 async function initialize() {
-  ui.renderHistory(readHistory())
   await connect()
 }
 
@@ -128,8 +127,6 @@ function finishCheck(result) {
   lastResult = result
   ui.setStage("stage-check", "complete", `已识别 ${result.summary.total} 处法律引用`)
   ui.setStage("stage-report", "complete", "核查完成，可导出报告")
-  recordHistory(result)
-  ui.renderHistory(readHistory())
   ui.renderResults(result, readDecisions(result.document_key))
 }
 
