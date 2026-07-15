@@ -76,10 +76,10 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
         raise HTTPException(status_code=400, detail="文件不是有效的 DOCX 文档")
 
     try:
-        with tempfile.NamedTemporaryFile(suffix=".docx") as temporary_file:
-            temporary_file.write(document_bytes)
-            temporary_file.flush()
-            parsed_document = parse_and_validate_document(temporary_file.name)
+        with tempfile.TemporaryDirectory(prefix="ccitecheck-document-") as temporary_dir:
+            document_path = Path(temporary_dir) / "document.docx"
+            document_path.write_bytes(document_bytes)
+            parsed_document = parse_and_validate_document(document_path)
             claim_document = extract_document_claims(
                 parsed_document,
                 include_statutes=request.include_statutes,
@@ -115,12 +115,13 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
     from docx import Document as DocxDocument
 
     try:
-        with tempfile.NamedTemporaryFile(suffix=".docx") as temporary_file:
+        with tempfile.TemporaryDirectory(prefix="ccitecheck-selection-") as temporary_dir:
+            selection_path = Path(temporary_dir) / "selection.docx"
             selection_doc = DocxDocument()
             for line in lines:
                 selection_doc.add_paragraph(line)
-            selection_doc.save(temporary_file.name)
-            parsed_document = parse_and_validate_document(temporary_file.name)
+            selection_doc.save(selection_path)
+            parsed_document = parse_and_validate_document(selection_path)
             claim_document = extract_document_claims(
                 parsed_document,
                 include_statutes=request.include_statutes,

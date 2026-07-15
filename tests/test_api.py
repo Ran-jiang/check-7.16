@@ -8,6 +8,10 @@ from fastapi.testclient import TestClient
 from laws.sqlite_store import connect, init_db, upsert_article, upsert_law
 
 
+def _reject_named_temporary_file(*args, **kwargs):
+    raise AssertionError("API must use a closed, reopenable temporary DOCX path")
+
+
 def test_word_addin_document_check_api(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
@@ -32,6 +36,7 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
 
     api_module = importlib.import_module("api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module.tempfile, "NamedTemporaryFile", _reject_named_temporary_file)
     client = TestClient(api_module.app)
     response = client.post(
         "/api/checks",
@@ -71,6 +76,7 @@ def test_selection_check_api(tmp_path, monkeypatch):
 
     api_module = importlib.import_module("api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module.tempfile, "NamedTemporaryFile", _reject_named_temporary_file)
     client = TestClient(api_module.app)
     response = client.post(
         "/api/checks/selection",
