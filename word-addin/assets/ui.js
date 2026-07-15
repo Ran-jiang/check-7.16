@@ -91,15 +91,15 @@ export class CheckUi {
     ))
     const title = document.getElementById("results-title")
     title.replaceChildren(
-      element("span", "title-main", "核查完成！共发现法律引用"),
+      element("span", "title-main", "核查完成！共发现法律引用 "),
       element("em", "title-count", String(summary.total)),
-      element("span", "title-main", "处，"),
+      element("span", "title-main", " 处， "),
       element("em", "title-count", String(summary.passed)),
-      element("span", "title-main", "处已通过，"),
+      element("span", "title-main", " 处已通过， "),
       element("em", "title-count", String(summary.issues)),
-      element("span", "title-main", "处待核实，"),
+      element("span", "title-main", " 处待核实， "),
       element("em", "title-count", String(summary.bugs)),
-      element("span", "title-main", "处无法判断")
+      element("span", "title-main", " 处无法判断")
     )
     document.getElementById("results-subtitle").textContent = result.file_name
     this.statusFilter = "all"

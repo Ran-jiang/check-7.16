@@ -252,8 +252,8 @@ body {
 .title-main { font-size: 16px; font-weight: 600; }
 .title-count {
   display: inline-block;
-  padding: 0 2px;
-  font-size: 26px;
+  padding: 0;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
   color: var(--blue);
@@ -263,28 +263,29 @@ body {
 .results-filters { margin: 22px 0 14px; }
 .status-filter {
   display: flex;
-  align-items: stretch;
-  justify-content: center;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   overflow-x: auto;
   scrollbar-width: none;
 }
 .status-filter::-webkit-scrollbar { display: none; }
 .status-tab {
   position: relative;
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: max-content;
   border: 0;
-  border-radius: 8px;
-  padding: 9px 5px;
-  background: #e9ebef;
-  color: #4e5969;
-  font-size: 14px;
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: transparent;
+  color: #646a73;
+  font-size: 13px;
   text-align: center;
   cursor: pointer;
 }
-.status-tab:hover { background: #e1e6ef; }
-.status-tab.is-active { background: #e5edff; color: var(--blue-dark); font-weight: 600; }
+.status-tab:hover { background: #f1f3f5; }
+.status-tab.is-active { background: var(--blue); color: #fff; font-weight: 600; }
+.status-tab.is-active .status-count { color: #fff; }
 .status-count {
   margin-left: 4px;
   color: var(--blue);
