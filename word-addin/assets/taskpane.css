@@ -10,7 +10,9 @@
   --danger: #a8443b;
   --warning-bg: #fff6ed;
   --danger-bg: #fff1ef;
-  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Segoe UI", "Microsoft YaHei UI", "Hiragino Sans GB",
+               "Noto Sans CJK SC", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -42,7 +44,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .home-screen { padding: 38px 20px 104px; }
 .hero {
   margin: 62px auto 10px; text-align: center;
-  font-family: "Songti SC", "STSong", SimSun, serif;
+  font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(42px, 13vw, 58px); font-weight: 700; letter-spacing: -.045em;
   color: var(--ink);
 }
@@ -199,7 +201,9 @@ label.scope-row { cursor: pointer; }
 
 /* ---- v4 终版微调：字体渲染 / 一行混排标题 / 建议分行 / 原文两行 ---- */
 :root {
-  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Segoe UI", "Microsoft YaHei UI", "Hiragino Sans GB",
+               "Noto Sans CJK SC", sans-serif;
 }
 body {
   -webkit-font-smoothing: antialiased;
@@ -234,20 +238,22 @@ body {
 .results-screen,
 .results-screen button,
 .results-screen select {
-  font-family: "Songti SC", "STSong", SimSun, "Noto Serif CJK SC", serif;
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Segoe UI", "Microsoft YaHei UI", "Hiragino Sans GB",
+               "Noto Sans CJK SC", sans-serif;
 }
 .results-heading h1 {
   display: block;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.9;
   color: #1f2329;
 }
-.title-main { font-size: 15px; font-weight: 600; }
+.title-main { font-size: 16px; font-weight: 600; }
 .title-count {
   display: inline-block;
   padding: 0 2px;
-  font-size: 19px;
+  font-size: 26px;
   font-weight: 700;
   line-height: 1;
   color: var(--blue);
@@ -257,34 +263,28 @@ body {
 .results-filters { margin: 22px 0 14px; }
 .status-filter {
   display: flex;
-  align-items: flex-end;
-  gap: 18px;
+  align-items: stretch;
+  justify-content: center;
+  gap: 6px;
   overflow-x: auto;
-  border-bottom: 1px solid #dfe1e6;
   scrollbar-width: none;
 }
 .status-filter::-webkit-scrollbar { display: none; }
 .status-tab {
   position: relative;
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-width: max-content;
   border: 0;
-  padding: 0 0 10px;
-  background: transparent;
-  color: #646a73;
-  font-size: 13px;
+  border-radius: 8px;
+  padding: 9px 5px;
+  background: #e9ebef;
+  color: #4e5969;
+  font-size: 14px;
+  text-align: center;
   cursor: pointer;
 }
-.status-tab::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: transparent;
-}
-.status-tab.is-active { color: #1f2329; font-weight: 600; }
-.status-tab.is-active::after { background: var(--blue); }
+.status-tab:hover { background: #e1e6ef; }
+.status-tab.is-active { background: #e5edff; color: var(--blue-dark); font-weight: 600; }
 .status-count {
   margin-left: 4px;
   color: var(--blue);
@@ -311,8 +311,8 @@ body {
 }
 .filter-tools .text-button { margin-left: auto; font-size: 13px; }
 .status-pill {
-  border-radius: 8px;
-  padding: 6px 14px;
-  font-size: 13px;
-  font-weight: 600;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
 }
