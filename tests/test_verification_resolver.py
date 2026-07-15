@@ -274,7 +274,6 @@ def test_pkulaw_unnumbered_lookup_uses_semantic_article_service_first():
 
 def test_pkulaw_unnumbered_lookup_without_credentials_is_nonfatal(monkeypatch):
     monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "")
-    monkeypatch.setenv("PKULAW_MCP_HEADERS", "")
 
     result = PkulawFallbackSource().lookup(
         LookupRequest(

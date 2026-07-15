@@ -28,7 +28,7 @@ QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 `.env` 已被 Git 忽略，不应提交到代码库。
 
-`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：精准法条、法规关键词、法规语义、案号识别、案例关键词和案例语义检索。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。旧版 `PKULAW_MCP_URL` + `PKULAW_MCP_HEADERS` 配置仍可读取，但建议迁移到 `.env.example` 中的统一 token + gateway 配置。
+`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：精准法条（`/mcp-fatiao`）、法规关键词（`/mcp-law`）、法规语义（`/mcp-law-search-service`）、案号识别（`/case_number_recognition`）、案例关键词（`/mcp-case`）和案例语义检索（`/mcp-case-search-service`）。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。配置只使用 `PKULAW_ACCESS_TOKEN` 与 `PKULAW_MCP_GATEWAY`，不再读取旧版 URL/Headers 字段。
 
 ## 快速检查
 

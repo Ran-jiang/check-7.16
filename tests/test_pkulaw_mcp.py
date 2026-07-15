@@ -217,19 +217,11 @@ def test_semantic_tools_parse_law_and_case_records():
     )
 
 
-def test_legacy_url_and_headers_configuration_is_supported(monkeypatch):
-    monkeypatch.delenv("PKULAW_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("PKULAW_MCP_GATEWAY", raising=False)
-    monkeypatch.setenv(
-        "PKULAW_MCP_URL", "https://apim-gateway.pkulaw.com/mcp-fatiao"
-    )
-    monkeypatch.setenv(
-        "PKULAW_MCP_HEADERS",
-        json.dumps({"Authorization": "Bearer legacy-token", "X-Test": "value"}),
-    )
+def test_current_access_token_and_gateway_configuration(monkeypatch):
+    monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "current-token")
+    monkeypatch.setenv("PKULAW_MCP_GATEWAY", "https://apim-gateway.pkulaw.com")
 
     client = PkulawMcpClient()
 
-    assert client.access_token == "legacy-token"
+    assert client.access_token == "current-token"
     assert client.gateway == "https://apim-gateway.pkulaw.com"
-    assert client.headers == {"X-Test": "value"}

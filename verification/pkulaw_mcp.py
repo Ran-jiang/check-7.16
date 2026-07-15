@@ -12,7 +12,6 @@ import socket
 import ssl
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,12 +22,12 @@ from legal_numbers import chinese_number_to_int
 
 DEFAULT_GATEWAY = "https://apim-gateway.pkulaw.com"
 MCP_ENDPOINTS = {
-    "law_keyword": "/mcp-law/mcp",
-    "law_semantic": "/mcp-law-search-service/mcp",
-    "case_keyword": "/mcp-case/mcp",
-    "case_semantic": "/mcp-case-search-service/mcp",
-    "case_number": "/case_number_recognition/mcp",
-    "fatiao": "/mcp-fatiao/mcp",
+    "law_keyword": "/mcp-law",
+    "law_semantic": "/mcp-law-search-service",
+    "case_keyword": "/mcp-case",
+    "case_semantic": "/mcp-case-search-service",
+    "case_number": "/case_number_recognition",
+    "fatiao": "/mcp-fatiao",
 }
 
 
@@ -105,23 +104,15 @@ class PkulawMcpClient:
         timeout: int = 20,
     ):
         _load_dotenv()
-        legacy_headers = _legacy_headers()
         self.access_token = _clean_token(
             access_token
             or os.getenv("PKULAW_ACCESS_TOKEN")
-            or _header_value(legacy_headers, "authorization")
         )
         self.gateway = (
             gateway
             or os.getenv("PKULAW_MCP_GATEWAY")
-            or _legacy_gateway()
             or DEFAULT_GATEWAY
         ).rstrip("/")
-        self.headers = {
-            key: value
-            for key, value in legacy_headers.items()
-            if key.lower() != "authorization"
-        }
         self.timeout = timeout
         if not self.access_token:
             raise PkulawNotConfiguredError("Pkulaw MCP credentials are not configured")
@@ -205,7 +196,6 @@ class PkulawMcpClient:
             url,
             data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
             headers={
-                **self.headers,
                 "Authorization": f"Bearer {self.access_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
@@ -556,34 +546,6 @@ def _clean_token(token: Optional[str]) -> Optional[str]:
     if value.lower().startswith("bearer "):
         return value[7:].strip()
     return value
-
-
-def _legacy_headers() -> dict[str, str]:
-    raw = os.getenv("PKULAW_MCP_HEADERS", "").strip()
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise PkulawMcpError("PKULAW_MCP_HEADERS must be valid JSON") from exc
-    if not isinstance(parsed, dict):
-        raise PkulawMcpError("PKULAW_MCP_HEADERS must be a JSON object")
-    return {str(key): str(value) for key, value in parsed.items()}
-
-
-def _header_value(headers: dict[str, str], name: str) -> Optional[str]:
-    target = name.lower()
-    return next((value for key, value in headers.items() if key.lower() == target), None)
-
-
-def _legacy_gateway() -> Optional[str]:
-    value = os.getenv("PKULAW_MCP_URL", "").strip()
-    if not value:
-        return None
-    parsed = urllib.parse.urlparse(value)
-    if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
-    return None
 
 
 def _load_dotenv() -> None:
