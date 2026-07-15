@@ -108,3 +108,50 @@ def test_qwen_overlong_diff_summary_is_safely_truncated(monkeypatch):
     )
     result = checker.compare("文书表述", "上下文", "《网络数据安全管理条例》第十八条", evidence)
     assert len(result.issues[0].diff_summary) == 80
+
+
+def test_qwen_malformed_json_is_repaired_once(monkeypatch):
+    responses = iter([
+        '{"verdict":"issue","issues":[{"error_type":"条款编号或引用定位错误" "risk_level":"HIGH"}]}',
+        json.dumps({
+            "verdict": "issue",
+            "issues": [{
+                "error_type": "条款编号或引用定位错误",
+                "risk_level": "HIGH",
+                "diff_summary": "文书所述内容与现行第二十七条不对应",
+                "suggestion": "核对现行法条编号。",
+                "auto_fixable": False,
+            }],
+            "notes": "",
+        }, ensure_ascii=False),
+    ])
+
+    class SequencedResponse(FakeResponse):
+        def read(self):
+            text = next(responses)
+            return json.dumps({
+                "output": [{"content": [{"type": "output_text", "text": text}]}]
+            }, ensure_ascii=False).encode()
+
+    calls = []
+    monkeypatch.setattr(
+        "urllib.request.OpenerDirector.open",
+        lambda *args, **kwargs: calls.append(args) or SequencedResponse(),
+    )
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="中华人民共和国网络安全法",
+        source_type="law",
+        article_no="第二十七条",
+        article_text="网络运营者应当制定网络安全事件应急预案。",
+        data_source=SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="test",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+
+    result = checker.compare("任何个人不得非法侵入网络。", "上下文", "《网络安全法》第二十七条", evidence)
+
+    assert result.verdict == ComparisonVerdict.ISSUE
+    assert len(calls) == 2

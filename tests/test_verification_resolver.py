@@ -34,6 +34,7 @@ from verification.pkulaw_mcp import (
     PkulawCaseNumber,
     PkulawCaseRecord,
     PkulawLawRecord,
+    PkulawNotFoundError,
 )
 from verification.sources import LocalSQLiteSource, LookupRequest, LookupResult, PkulawFallbackSource
 
@@ -230,6 +231,41 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
 class FakeLawListClient:
     def get_law_list(self, title="", fulltext=""):
         return [PkulawLawRecord(title="中华人民共和国国家安全法", timeliness=["现行有效"])]
+
+
+class FakeCanonicalTitleRetryClient:
+    canonical_title = "最高人民法院、最高人民检察院关于办理危害计算机信息系统安全刑事案件应用法律若干问题的解释"
+
+    def __init__(self):
+        self.article_titles = []
+
+    def get_law_item_content(self, title, article_no):
+        self.article_titles.append(title)
+        if title != self.canonical_title:
+            raise PkulawNotFoundError("未找到数据")
+        return PkulawArticle(
+            title=self.canonical_title,
+            article_no=article_no,
+            article_text="非法获取计算机信息系统数据，具有法定情形的，应当认定为情节严重。",
+            url="https://www.pkulaw.com/lar/example.html",
+        )
+
+    def get_law_list(self, title="", fulltext=""):
+        return [PkulawLawRecord(title=self.canonical_title)]
+
+
+def test_pkulaw_article_retries_with_canonical_title_after_law_list_match():
+    client = FakeCanonicalTitleRetryClient()
+    result = PkulawFallbackSource(client).lookup(LookupRequest(
+        law_title="关于办理危害计算机信息系统安全刑事案件应用法律若干问题的解释",
+        source_type="judicial_interpretation",
+        article_no="第一条",
+    ))
+
+    assert result.status == LookupStatus.ARTICLE_FOUND
+    assert result.evidence.article_text.startswith("非法获取")
+    assert client.article_titles[-1] == client.canonical_title
+    assert result.trace.metadata["route_attempts"][-1]["service"] == "fatiao_canonical_title"
 
 
 def test_pkulaw_unnumbered_lookup_reports_tool_text_limit():

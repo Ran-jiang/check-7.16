@@ -104,7 +104,29 @@ class QwenSemanticChecker:
         data = self._post_response(payload)
         output_text = _extract_output_text(data)
         try:
-            raw_comparison = json.loads(output_text)
+            raw_comparison = _load_json_object(output_text)
+        except (json.JSONDecodeError, ValueError):
+            repair_payload = {
+                "model": self.model,
+                "input": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "将用户提供的内容修复为一个语义等价、可由 JSON.parse() 直接解析的"
+                            "合法 JSON 对象。不得增删事实，不得输出 Markdown 或解释。"
+                        ),
+                    },
+                    {"role": "user", "content": output_text},
+                ],
+                "enable_thinking": False,
+            }
+            repaired = _extract_output_text(self._post_response(repair_payload))
+            try:
+                raw_comparison = _load_json_object(repaired)
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise SemanticCheckError(f"Qwen returned invalid semantic JSON: {exc}") from exc
+
+        try:
             for issue in raw_comparison.get("issues", []):
                 if isinstance(issue, dict) and isinstance(issue.get("diff_summary"), str):
                     issue["diff_summary"] = issue["diff_summary"][:80]
@@ -188,6 +210,16 @@ def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:
         ],
         **evidence.source_metadata,
     }
+
+
+def _load_json_object(text: str) -> dict[str, Any]:
+    value = text.strip()
+    if value.startswith("```"):
+        value = value.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("semantic response must be a JSON object")
+    return parsed
 
 
 def _extract_output_text(data: dict[str, Any]) -> str:

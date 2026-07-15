@@ -133,7 +133,7 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["law_keyword"],
             tool_name="get_law_list",
-            arguments={"title": title, "fulltext": fulltext},
+            arguments={"lawInput": {"Title": title, "FullText": fulltext}},
         )
         data = _extract_payload_data(payload)
         return _parse_law_list_response(data)

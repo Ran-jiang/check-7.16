@@ -299,6 +299,46 @@ class PkulawFallbackSource:
             }
             return LookupResult(trace.status, None, trace)
 
+        # 用户引用常省略制定机关，而精准查条对长司法解释标题较敏感。
+        # 法规列表确认规范全名后，用规范标题再查一次具体条文。
+        try:
+            article = self._client().get_law_item_content(
+                matched.title, request.article_no or ""
+            )
+            route_attempts.append(
+                {"service": "fatiao_canonical_title", "status": "completed"}
+            )
+        except PkulawNotFoundError:
+            article = None
+            route_attempts.append(
+                {"service": "fatiao_canonical_title", "status": "not_found"}
+            )
+        except PkulawMcpError as exc:
+            article = None
+            route_attempts.append({
+                "service": "fatiao_canonical_title",
+                "status": "error",
+                "message": str(exc),
+            })
+
+        if article is not None and _match_law_record(matched.title, [article]) is not None:
+            trace.status = LookupStatus.ARTICLE_FOUND
+            trace.message = "法规规范全名复查后已取得法条原文"
+            trace.source_url = article.url
+            trace.metadata = {**_article_metadata(article), "route_attempts": route_attempts}
+            evidence = ArticleEvidence(
+                law_title=article.title,
+                source_type=request.source_type,
+                article_no=article.article_no,
+                article_text=article.article_text,
+                version_label=_first(article.timeliness),
+                version_status=_first(article.timeliness),
+                effective_from=article.implement_date,
+                source_metadata=trace.metadata,
+                data_source=trace,
+            )
+            return LookupResult(trace.status, evidence, trace)
+
         trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
         trace.message = f"北大法宝已收录该法规，但未返回{request.article_no}"
         trace.source_url = matched.url
@@ -516,7 +556,8 @@ def _match_law_record(
     )
     for record in records:
         candidate = strip_version_annotation(normalize_title(record.title))
-        if candidate in (target, target_full):
+        candidate_without_issuer = _strip_issuing_authority_prefix(candidate)
+        if candidate in (target, target_full) or candidate_without_issuer in (target, target_full):
             return record
     # 部门规范性文件常以《关于印发〈XXX〉的通知》为载体发布，本身没有独立同名条目；
     # 标题内嵌目标法名且为印发/发布类通知的，视为该文件存在的证据。
@@ -525,6 +566,16 @@ def _match_law_record(
         if f"《{target}》" in title and ("印发" in title or "发布" in title):
             return record
     return None
+
+
+def _strip_issuing_authority_prefix(title: str) -> str:
+    prefixes = (
+        "最高人民法院、最高人民检察院",
+        "最高人民法院最高人民检察院",
+        "最高人民法院",
+        "最高人民检察院",
+    )
+    return next((title.removeprefix(item) for item in prefixes if title.startswith(item)), title)
 
 
 def _article_metadata(article: PkulawArticle) -> dict:
