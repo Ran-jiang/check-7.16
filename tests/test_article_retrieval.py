@@ -1,4 +1,4 @@
-from verification.article_retrieval import retrieve_relevant_articles
+from ccitecheck.tracing.retrieval import retrieve_relevant_articles
 
 
 def test_retrieval_ranks_substantively_matching_article_first():

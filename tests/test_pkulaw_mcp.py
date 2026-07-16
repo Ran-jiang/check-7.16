@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from verification.pkulaw_mcp import (
+from ccitecheck.tracing.sources.pkulaw.client import (
     MCP_ENDPOINTS,
     PkulawMcpClient,
     _parse_anhao_response,

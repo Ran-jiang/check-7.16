@@ -1,23 +1,21 @@
 from pathlib import Path
 
-from claims.schema import (
+from ccitecheck.domain.citation import (
     ArticleRef,
     CaseCitationEntities,
     CaseRef,
     CaseReferenceType,
     Claim,
-    ClaimDebug,
     ClaimDocument,
     ClaimMeta,
     ClaimType,
     LegalSource,
     LegalSourceClaimEntities,
     LegalSourceType,
-    VerificationRoute,
 )
-from laws.sqlite_store import connect, init_db, upsert_article, upsert_law
-from verification.resolver import verify_claim_document_for_frontend
-from verification.schema import (
+from ccitecheck.infrastructure.database import connect, init_db, upsert_article, upsert_law
+from ccitecheck.application.verify_claims import verify_claim_document
+from ccitecheck.domain.result import (
     ArticleEvidence,
     CaseLookupStatus,
     ComparisonVerdict,
@@ -29,14 +27,14 @@ from verification.schema import (
     SourceTier,
     SourceTrace,
 )
-from verification.pkulaw_mcp import (
+from ccitecheck.tracing.sources.pkulaw.client import (
     PkulawArticle,
     PkulawCaseNumber,
     PkulawCaseRecord,
     PkulawLawRecord,
     PkulawNotFoundError,
 )
-from verification.sources import LocalSQLiteSource, LookupRequest, LookupResult, PkulawFallbackSource
+from ccitecheck.tracing.sources import LocalSQLiteSource, LookupRequest, LookupResult, PkulawFallbackSource
 
 
 def test_frontend_verification_json_includes_local_article(tmp_path: Path):
@@ -77,8 +75,6 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
                 claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
                 text="依据《劳动合同法》第三十七条，劳动者可以解除劳动合同。",
                 anchor_ids=["line00001"],
-                block_ids=["b_00001"],
-                verification_route=VerificationRoute.STATUTE_DATABASE,
                 entities=LegalSourceClaimEntities(
                     legal_sources=[
                         LegalSource(
@@ -88,12 +84,11 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
                         )
                     ]
                 ),
-                debug=ClaimDebug(methods=["rule"], candidate_count=1),
             )
         ],
     )
 
-    frontend_doc = verify_claim_document_for_frontend(claim_doc, db_path)
+    frontend_doc = verify_claim_document(claim_doc, db_path)
 
     assert len(frontend_doc.legal_checks) == 1
     check = frontend_doc.legal_checks[0]
@@ -142,8 +137,6 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
                 claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
                 text="依据《民法典》第五百七十七条，被告应当承担违约责任。",
                 anchor_ids=["line00001"],
-                block_ids=["b_00001"],
-                verification_route=VerificationRoute.STATUTE_DATABASE,
                 entities=LegalSourceClaimEntities(
                     legal_sources=[
                         LegalSource(
@@ -153,12 +146,11 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
                         )
                     ]
                 ),
-                debug=ClaimDebug(methods=["rule"], candidate_count=1),
             )
         ],
     )
 
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         semantic_checker=FakeSemanticChecker(),
@@ -200,8 +192,6 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
                 claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
                 text="根据《网络安全法》，保障公民、法人合法权益，维护国家安全和公共利益。",
                 anchor_ids=["line00001"],
-                block_ids=["b_00001"],
-                verification_route=VerificationRoute.STATUTE_DATABASE,
                 entities=LegalSourceClaimEntities(
                     legal_sources=[
                         LegalSource(
@@ -210,12 +200,11 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
                         )
                     ]
                 ),
-                debug=ClaimDebug(methods=["rule"], candidate_count=1),
             )
         ],
     )
 
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         semantic_checker=FakeSemanticChecker(),
@@ -343,7 +332,7 @@ class FakeArticleSource:
 
 
 def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
-    from laws.sqlite_store import seed_common_laws
+    from ccitecheck.infrastructure.database import seed_common_laws
 
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
@@ -360,8 +349,6 @@ def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
                 claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
                 text="依据《民法典》第五百七十七条，被告应当承担违约责任。",
                 anchor_ids=["line00001"],
-                block_ids=["b_00001"],
-                verification_route=VerificationRoute.STATUTE_DATABASE,
                 entities=LegalSourceClaimEntities(
                     legal_sources=[
                         LegalSource(
@@ -371,12 +358,11 @@ def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
                         )
                     ]
                 ),
-                debug=ClaimDebug(methods=["rule"], candidate_count=1),
             )
         ],
     )
 
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         sources=[
@@ -405,8 +391,6 @@ def _case_claim(claim_id: str, case_number: str) -> Claim:
         claim_type=ClaimType.CASE_CITATION,
         text=f"参见{case_number}民事判决。",
         anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.CASE_DATABASE_EXACT,
         entities=CaseCitationEntities(
             case_refs=[
                 CaseRef(
@@ -415,7 +399,6 @@ def _case_claim(claim_id: str, case_number: str) -> Claim:
                 )
             ]
         ),
-        debug=ClaimDebug(methods=["rule"], candidate_count=1),
     )
 
 
@@ -445,7 +428,7 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
         ]
     )
 
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         case_recognizer=recognizer,
@@ -497,8 +480,6 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
                 text="最高人民法院在指导案例262号中明确了平台责任。",
                 context_text="最高人民法院在指导案例262号中明确了平台责任。",
                 anchor_ids=["line00001"],
-                block_ids=["b_00001"],
-                verification_route=VerificationRoute.CASE_DATABASE_SEARCH,
                 entities=CaseCitationEntities(
                     case_refs=[
                         CaseRef(
@@ -508,13 +489,12 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
                         )
                     ]
                 ),
-                debug=ClaimDebug(methods=["rule"], candidate_count=1),
             )
         ],
     )
     searcher = FakeCaseSearcher()
 
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         case_recognizer=searcher,
@@ -529,8 +509,8 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
 
 
 def test_match_law_record_accepts_promulgation_notice_title():
-    from verification.pkulaw_mcp import PkulawLawRecord
-    from verification.sources import _match_law_record
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawLawRecord
+    from ccitecheck.tracing.sources.pkulaw.statutes import _match_law_record
 
     records = [
         PkulawLawRecord(title="中国互联网金融协会关于举办“《常见类型移动互联网应用程序必要个人信息范围规定》政策解读”培训班的通知"),
@@ -549,8 +529,6 @@ def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=text,
         anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(
             legal_sources=[
                 LegalSource(
@@ -560,7 +538,6 @@ def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
                 )
             ]
         ),
-        debug=ClaimDebug(methods=["rule"], candidate_count=1),
     )
 
 
@@ -604,7 +581,7 @@ def test_duplicate_citations_share_one_lookup(tmp_path: Path):
         ],
     )
     source = CountingSource()
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc, db_path, sources=[source]
     )
     # 3 条 check 全部产出，但底层只发生 2 次查询（第五条去重）
@@ -644,13 +621,10 @@ def test_case_claims_batched_into_single_recognition(tmp_path: Path):
             claim_type=ClaimType.CASE_CITATION,
             text=f"参见{number}判决。",
             anchor_ids=["line00001"],
-            block_ids=["b_00001"],
-            verification_route=VerificationRoute.CASE_DATABASE_SEARCH,
             entities=CaseCitationEntities(
                 reference_type=CaseReferenceType.WITH_CASE_NUMBER,
                 case_refs=[CaseRef(reference_type=CaseReferenceType.WITH_CASE_NUMBER, case_number=number)],
             ),
-            debug=ClaimDebug(methods=["rule"], candidate_count=1),
         )
 
     claim_doc = ClaimDocument(
@@ -665,7 +639,7 @@ def test_case_claims_batched_into_single_recognition(tmp_path: Path):
         ],
     )
     recognizer = CountingRecognizer()
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc, db_path, case_recognizer=recognizer, include_statutes=False
     )
     assert recognizer.calls == 1
@@ -709,7 +683,7 @@ def test_rule_findings_skip_semantic_llm(tmp_path: Path):
             _simple_claim("cl_00001", "依据《合同法》第五十二条。", "合同法", "第五十二条"),
         ],
     )
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
         sources=[RepealedSource()],
@@ -723,7 +697,7 @@ def test_rule_findings_skip_semantic_llm(tmp_path: Path):
 
 def test_extraction_respects_scope_selection():
     """未勾选的核查范围在提取阶段即跳过。"""
-    from claims.extractor import extract_claims
+    from ccitecheck.recognition.service import extract_claims
     from tests.test_rule_engine import _make_parsed_doc
 
     doc = _make_parsed_doc([
@@ -788,7 +762,7 @@ def test_llm_issue_appends_alternative_article_suggestion(tmp_path: Path):
             )
         ],
     )
-    frontend_doc = verify_claim_document_for_frontend(
+    frontend_doc = verify_claim_document(
         claim_doc, db_path, semantic_checker=MismatchChecker()
     )
     check = frontend_doc.legal_checks[0]

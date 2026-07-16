@@ -18,11 +18,11 @@ import tempfile
 
 from docx import Document as DocxDocument
 
-from parser.docx_parser import (
+from ccitecheck.parsing.docx import (
     parse_docx,
 )
-from parser.schema import BlockType
-from parser.utils import is_empty_text
+from ccitecheck.domain.document import BlockType
+from ccitecheck.parsing.utils import is_empty_text
 
 
 # ---- 辅助函数 ----
@@ -121,6 +121,31 @@ class TestTableOrder:
             all_orders = [b.block_order for b in parsed.blocks]
             assert all_orders == sorted(all_orders)
             assert len(set(all_orders)) == len(all_orders)
+        finally:
+            os.unlink(path)
+
+    def test_merged_cell_ranges_are_preserved(self):
+        """横向和纵向合并单元格保存完整逻辑网格范围。"""
+        doc = DocxDocument()
+        table = doc.add_table(rows=3, cols=3)
+        horizontal = table.cell(0, 0).merge(table.cell(0, 1))
+        horizontal.text = "横向合并"
+        vertical = table.cell(1, 0).merge(table.cell(2, 0))
+        vertical.text = "《中华人民共和国民法典》"
+        table.cell(1, 1).text = "第一条"
+        table.cell(2, 1).text = "第二条"
+
+        path = _tmp_docx_path()
+        _write_docx(doc, path)
+        try:
+            parsed = parse_docx(path)
+            by_text = {block.text: block for block in parsed.blocks}
+            h = by_text["横向合并"]
+            assert (h.row_start, h.row_end, h.col_start, h.col_end) == (0, 0, 0, 1)
+            assert (h.row_span, h.col_span) == (1, 2)
+            v = by_text["《中华人民共和国民法典》"]
+            assert (v.row_start, v.row_end, v.col_start, v.col_end) == (1, 2, 0, 0)
+            assert (v.row_span, v.col_span) == (2, 1)
         finally:
             os.unlink(path)
 
@@ -256,7 +281,7 @@ class TestNormalization:
 
     def test_whitespace_normalization(self):
         """空白字符归一化。"""
-        from parser.utils import normalize_whitespace as norm
+        from ccitecheck.parsing.utils import normalize_whitespace as norm
 
         assert norm("hello  world") == "hello world"
         assert norm("  leading") == "leading"

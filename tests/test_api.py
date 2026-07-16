@@ -5,7 +5,7 @@ from io import BytesIO
 from docx import Document
 from fastapi.testclient import TestClient
 
-from laws.sqlite_store import connect, init_db, upsert_article, upsert_law
+from ccitecheck.infrastructure.database import connect, init_db, upsert_article, upsert_law
 
 
 def _reject_named_temporary_file(*args, **kwargs):
@@ -34,7 +34,7 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
     buffer = BytesIO()
     document.save(buffer)
 
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
     monkeypatch.setattr(api_module.tempfile, "NamedTemporaryFile", _reject_named_temporary_file)
     client = TestClient(api_module.app)
@@ -74,7 +74,7 @@ def test_selection_check_api(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
     _seed_law_db(db_path)
 
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
     monkeypatch.setattr(api_module.tempfile, "NamedTemporaryFile", _reject_named_temporary_file)
     client = TestClient(api_module.app)
@@ -83,6 +83,7 @@ def test_selection_check_api(tmp_path, monkeypatch):
         json={
             "file_name": "test.docx",
             "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
+            "source_blocks": [{"block_id": "word:p:7", "char_start": 12}],
             "semantic_check": False,
         },
     )
@@ -92,10 +93,13 @@ def test_selection_check_api(tmp_path, monkeypatch):
     assert payload["file_name"] == "test.docx（选中片段）"
     assert payload["summary"]["total"] == 1
     assert payload["verification"]["legal_checks"][0]["lookup_status"] == "article_found"
+    location = payload["verification"]["legal_checks"][0]["source_locations"][0]
+    assert location["block_id"] == "word:p:7"
+    assert location["char_start"] == 12
 
 
 def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     client = TestClient(api_module.app)
     response = client.post(
         "/api/checks/selection",
@@ -105,7 +109,7 @@ def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
 
 
 def test_case_only_selection_reports_unconfigured_case_source(tmp_path, monkeypatch):
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     monkeypatch.setattr(api_module, "LAW_DB", tmp_path / "laws.sqlite")
     client = TestClient(api_module.app)
     response = client.post(
@@ -131,7 +135,7 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
     _seed_law_db(db_path)
 
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
     monkeypatch.setattr(api_module, "REPORTS_DIR", tmp_path / "reports")
     client = TestClient(api_module.app)
@@ -169,7 +173,7 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
 
 
 def test_scope_validation_requires_at_least_one(tmp_path, monkeypatch):
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     client = TestClient(api_module.app)
     response = client.post(
         "/api/checks/selection",
@@ -187,7 +191,7 @@ def test_scope_validation_requires_at_least_one(tmp_path, monkeypatch):
 def test_statutes_can_be_excluded(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
     _seed_law_db(db_path)
-    api_module = importlib.import_module("api.app")
+    api_module = importlib.import_module("apps.api.app")
     monkeypatch.setattr(api_module, "LAW_DB", db_path)
     client = TestClient(api_module.app)
     response = client.post(

@@ -12,6 +12,30 @@
 1. 法规溯源：本地法条库 + 北大法宝回退，确认法规、条文存在并取回原文。
 2. 语义对比：默认调用千问，核查法源、定位、时效以及引用表述是否忠实于权威原文；不评价法律论证或结论是否成立。
 
+## 项目结构
+
+核心代码按“解析、识别、溯源、判定、输出”组织，Word 和飞书只作为外围应用调用同一条流水线：
+
+```text
+src/ccitecheck/
+├── domain/          # 平台无关的数据模型
+├── parsing/         # DOCX、飞书快照解析与结构校验
+├── recognition/     # 法规、条款和案例引用识别
+├── tracing/         # 本地法规库与北大法宝溯源
+├── judgment/        # 确定性、语义和案例判定
+├── output/          # 摘要与 HTML 报告输出
+├── application/     # 文档核查用例编排
+└── infrastructure/  # 配置、数据库与运行检查
+
+apps/
+├── api/             # FastAPI 服务
+├── cli/             # 命令行应用
+├── word_addin/      # Microsoft Word 插件
+└── feishu/          # 飞书文档插件
+```
+
+核心代码统一从 `ccitecheck` 导入，各运行入口统一位于 `apps`。
+
 ## 运行条件
 
 - Python 3.12
@@ -28,12 +52,12 @@ QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 `.env` 已被 Git 忽略，不应提交到代码库。
 
-`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：精准法条（`/mcp-fatiao`）、法规关键词（`/mcp-law`）、法规语义（`/mcp-law-search-service`）、案号识别（`/case_number_recognition`）、案例关键词（`/mcp-case`）和案例语义检索（`/mcp-case-search-service`）。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。配置只使用 `PKULAW_ACCESS_TOKEN` 与 `PKULAW_MCP_GATEWAY`，不再读取旧版 URL/Headers 字段。
+`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：精准法条（`/mcp-fatiao`）、法规关键词（`/mcp-law`）、法规语义（`/mcp-law-search-service`）、案号识别（`/case_number_recognition`）、案例关键词（`/mcp-case`）和案例语义检索（`/mcp-case-search-service`）。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。北大法宝配置只读取 `PKULAW_ACCESS_TOKEN` 与 `PKULAW_MCP_GATEWAY`。
 
 ## 快速检查
 
 ```bash
-python3 main.py doctor --law-db data/laws.sqlite
+PYTHONPATH=src python3 -m apps.cli.main doctor --law-db data/laws.sqlite
 ```
 
 ## Word for Mac 插件
@@ -57,7 +81,7 @@ npm run certs
 npm start
 ```
 
-开发证书安装完成后，将 [word-addin/manifest.xml](word-addin/manifest.xml) 复制到：
+开发证书安装完成后，将 [apps/word_addin/manifest.xml](apps/word_addin/manifest.xml) 复制到：
 
 ```text
 ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/
@@ -76,7 +100,7 @@ npm run validate:manifest
 ## 使用
 
 ```bash
-python3 main.py parse input.docx \
+PYTHONPATH=src python3 -m apps.cli.main parse input.docx \
   --claims-out outputs/claims.json \
   --verify-out outputs/verification.json \
   --law-db data/laws.sqlite
@@ -85,7 +109,7 @@ python3 main.py parse input.docx \
 开启引用忠实度核查（默认已开启）：
 
 ```bash
-python3 main.py parse input.docx \
+PYTHONPATH=src python3 -m apps.cli.main parse input.docx \
   --verify-out outputs/verification.json \
   --law-db data/laws.sqlite \
   --semantic-check

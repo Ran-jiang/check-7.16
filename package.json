@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "certs": "office-addin-dev-certs install",
-    "start": "python3 server.py --cert ~/.office-addin-dev-certs/localhost.crt --key ~/.office-addin-dev-certs/localhost.key",
-    "start:http": "python3 server.py",
-    "validate:manifest": "office-addin-manifest validate word-addin/manifest.xml",
-    "test:js": "node --test word-addin/tests/*.test.mjs"
+    "start": "PYTHONPATH=src python3 -m apps.api.server --cert ~/.office-addin-dev-certs/localhost.crt --key ~/.office-addin-dev-certs/localhost.key",
+    "start:http": "PYTHONPATH=src python3 -m apps.api.server",
+    "validate:manifest": "office-addin-manifest validate apps/word_addin/manifest.xml",
+    "test:js": "node --test apps/word_addin/tests/*.test.mjs apps/feishu/tests/*.test.mjs"
   },
   "devDependencies": {
     "office-addin-dev-certs": "^2.0.10",
     "office-addin-manifest": "^2.1.6"
+  },
+  "dependencies": {
+    "@lark-opdev/block-docs-addon-api": "^0.0.11"
   }
 }

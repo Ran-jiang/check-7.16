@@ -1,4 +1,4 @@
-from verification.query_builder import (
+from ccitecheck.tracing.queries import (
     build_case_keyword_query,
     build_case_semantic_query,
     build_law_fulltext_query,

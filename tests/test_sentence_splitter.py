@@ -8,7 +8,7 @@
   - 无损不变量
 """
 
-from parser.sentence_splitter import split_sentences
+from ccitecheck.parsing.sentences import split_sentences
 
 
 class TestBasicSplitting:
@@ -61,28 +61,28 @@ class TestBasicSplitting:
         assert sentences[0].char_end == len(text)
 
 
-class TestButRegession:
+class TestButRegression:
     """Test 2：但书回归"""
 
-    def test_semicolon_split_with_but(self):
-        """分号处切为两句，第二句包含完整但书，不被逗号拆开。"""
+    def test_semicolon_preserves_complete_legal_expression(self):
+        """分号不切分，前提、义务和但书保持在同一句中。"""
         text = "劳动者提前三十日以书面形式通知用人单位，可以解除劳动合同；任何一方不得擅自解除合同，但法律另有规定的除外。"
 
         sentences = split_sentences(text)
 
-        assert len(sentences) == 2
-        assert "但法律另有规定的除外" in sentences[1].text
+        assert len(sentences) == 1
+        assert sentences[0].text == text
+        assert "但法律另有规定的除外" in sentences[0].text
         # 确保 join 无损
         assert "".join(s.text for s in sentences) == text
 
-    def test_semicolon_strong_break(self):
-        """分号作为强切分符。"""
+    def test_semicolon_is_not_a_strong_break(self):
+        """分号不属于强切分符。"""
         text = "第一条规则；第二条规则。"
         sentences = split_sentences(text)
 
-        assert len(sentences) == 2
-        assert sentences[0].text == "第一条规则；"
-        assert sentences[1].text == "第二条规则。"
+        assert len(sentences) == 1
+        assert sentences[0].text == text
 
 
 class TestBookmarksAndQuotes:

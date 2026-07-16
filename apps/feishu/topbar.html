@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCiteheck 法条核查</title>
+  <link rel="stylesheet" href="./assets/addon.css">
+</head>
+<body>
+  <main class="checker" aria-live="polite">
+    <header class="checker-header">
+      <div class="brand-mark" aria-hidden="true">§</div>
+      <div class="brand-copy">
+        <strong>法条核查</strong>
+        <span>由 CCiteheck 提供</span>
+      </div>
+      <button id="minimize-button" class="icon-button" type="button" aria-label="最小化">—</button>
+    </header>
+
+    <section id="start-view" class="view start-view">
+      <div class="intro-rule" aria-hidden="true"><span></span><i></i><span></span></div>
+      <h1>复核当前文档的法律引用</h1>
+      <p>检查法规名称、条号、时效、引用内容与司法案例。核查不会自动修改正文。</p>
+      <button id="start-button" class="primary-button" type="button">开始核查全文</button>
+      <small>核查过程中可以继续编辑文档</small>
+    </section>
+
+    <section id="progress-view" class="view is-hidden">
+      <div class="progress-summary">
+        <span class="progress-kicker">正在核查当前文档</span>
+        <strong id="progress-count">0 / 24</strong>
+        <div class="progress-track"><span id="progress-bar"></span></div>
+      </div>
+      <ol class="stages">
+        <li data-stage="structure"><span></span><div><b>识别法律引用</b><small>法规、条款与司法案例</small></div></li>
+        <li data-stage="source"><span></span><div><b>核验法源与时效</b><small>本地法规库优先</small></div></li>
+        <li data-stage="meaning"><span></span><div><b>核验内容一致性</b><small>对照权威条文原文</small></div></li>
+      </ol>
+      <button id="background-button" class="quiet-button" type="button">转到后台继续核查</button>
+    </section>
+
+    <section id="results-view" class="view results-view is-hidden">
+      <div class="result-summary">
+        <div><span>本文档存在需要复核的法律引用</span><strong><em id="issue-total">5</em> 处</strong></div>
+        <button id="rerun-button" type="button">重新核查</button>
+      </div>
+      <div id="category-list" class="category-list"></div>
+    </section>
+
+    <div id="toast" class="toast is-hidden"></div>
+  </main>
+  <script type="module" src="./assets/sdk-entry.js"></script>
+</body>
+</html>

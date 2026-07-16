@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from laws.sqlite_store import connect, init_db, upsert_article, upsert_law
-from runtime_checks import check_runtime
+from ccitecheck.infrastructure.database import connect, init_db, upsert_article, upsert_law
+from ccitecheck.infrastructure.runtime_checks import check_runtime
 
 
 def test_check_runtime_reports_ready_law_db(tmp_path: Path, monkeypatch):

@@ -7,21 +7,20 @@ from pathlib import Path
 
 from docx import Document as DocxDocument
 
-from claims.arbiter import arbitrate_claim_candidates, build_claim_document
-from claims.case_citation import extract_case_refs
-from claims.extractor import build_indexes
-from claims.legal_citation import extract_legal_sources
-from claims.rule_engine import extract_rule_candidates
-from claims.schema import (
+from ccitecheck.recognition.arbitration import arbitrate_claim_candidates, build_claim_document
+from ccitecheck.recognition.cases import extract_case_refs
+from ccitecheck.recognition.service import build_indexes
+from ccitecheck.recognition.statutes import extract_legal_sources
+from ccitecheck.recognition.rules import extract_rule_candidates
+from ccitecheck.domain.citation import (
     CaseCitationEntities,
     CaseRef,
     CaseReferenceType,
     ClaimCandidate,
     ClaimDocument,
     ClaimType,
-    ExtractionMethod,
 )
-from laws.sqlite_store import (
+from ccitecheck.infrastructure.database import (
     connect,
     find_current_article,
     init_db,
@@ -29,10 +28,10 @@ from laws.sqlite_store import (
     upsert_article,
     upsert_law,
 )
-from parser.docx_parser import parse_docx
-from parser.schema import Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument
-from verification.resolver import verify_case_claims
-from verification.schema import CaseLookupStatus
+from ccitecheck.parsing.docx import parse_docx
+from ccitecheck.domain.document import Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument
+from ccitecheck.judgment.cases import verify_case_claims
+from ccitecheck.domain.result import CaseLookupStatus
 
 
 def _parsed(*texts: str) -> ParsedDocument:
@@ -84,7 +83,7 @@ def test_article_key_normalizes_chinese_arabic_and_zhi_suffix():
     assert normalize_article_key("第一百八十四条之一") == "184-1"
 
 
-def test_legacy_chinese_article_key_is_still_found_by_arabic_citation(tmp_path: Path):
+def test_chinese_article_key_is_found_by_arabic_citation(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
     with connect(db_path) as conn:
@@ -126,10 +125,14 @@ def test_adjacent_table_law_name_and_article_cells_merge_into_one_claim():
     source = candidates[0].entities.legal_sources[0]
     assert source.title == "中华人民共和国民法典"
     assert source.articles[0].article == "第127条"
-    assert source.resolution == "explicit"
+    assert source.resolution == "inherited"
+    assert source.inherited_from_anchor == "line00001"
 
     claims = arbitrate_claim_candidates(candidates, doc)
-    assert claims[0].location_text == "第127条规定数据权益。"
+    assert claims[0].source_locations[-1].cell_index == 1
+    inherited_location = claims[0].entities.legal_sources[0].inherited_from_location
+    assert inherited_location is not None
+    assert inherited_location.cell_index == 0
 
 
 def test_article_paragraphs_and_items_stop_at_next_article():
@@ -215,9 +218,9 @@ def test_case_without_number_is_preserved_as_manual_review():
                 )
             ]
         ),
-        method=ExtractionMethod.RULE,
     )
     claim_doc = build_claim_document(doc, arbitrate_claim_candidates([candidate], doc))
+    claim = claim_doc.claims[0]
     checks = verify_case_claims(claim_doc, _RecognizerMustNotRun())
     assert len(checks) == 1
     assert checks[0].lookup_status == CaseLookupStatus.MANUAL_REVIEW

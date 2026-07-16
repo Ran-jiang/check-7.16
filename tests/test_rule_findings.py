@@ -1,14 +1,14 @@
 """确定性规则判定与识别质量修复的单元测试（不依赖网络）。"""
 
-from claims.case_citation import NAMED_CASE_PATTERN
-from claims.legal_citation import _extract_articles_from_text
-from laws.sqlite_store import strip_version_annotation
-from verification.resolver import (
-    _build_rule_findings,
-    _classify_not_verifiable,
-    _suggest_similar_title,
+from ccitecheck.recognition.cases import NAMED_CASE_PATTERN
+from ccitecheck.recognition.statutes import _extract_articles_from_text
+from ccitecheck.infrastructure.database import strip_version_annotation
+from ccitecheck.judgment.deterministic import (
+    build_rule_findings,
+    classify_not_verifiable,
+    suggest_similar_title,
 )
-from verification.schema import (
+from ccitecheck.domain.result import (
     ArticleEvidence,
     LookupStatus,
     RiskLevel,
@@ -16,7 +16,7 @@ from verification.schema import (
     SourceTier,
     SourceTrace,
 )
-from verification.sources import LookupResult
+from ccitecheck.tracing.sources import LookupResult
 
 
 # ---------- D1 案例正则 ----------
@@ -60,11 +60,11 @@ def test_article_range_expansion_fills_middle_articles():
 
 # ---------- D4 不可核验文件分类 ----------
 
-def test_classify_not_verifiable():
-    assert _classify_not_verifiable("互联网应用程序个人信息收集使用规定（征求意见稿）")
-    assert _classify_not_verifiable("信息安全技术 个人信息安全规范（GB/T 35273-2020）")
-    assert _classify_not_verifiable("中华人民共和国民法典") is None
-    assert _classify_not_verifiable("App违法违规收集使用个人信息行为认定方法") is None
+def testclassify_not_verifiable():
+    assert classify_not_verifiable("互联网应用程序个人信息收集使用规定（征求意见稿）")
+    assert classify_not_verifiable("信息安全技术 个人信息安全规范（GB/T 35273-2020）")
+    assert classify_not_verifiable("中华人民共和国民法典") is None
+    assert classify_not_verifiable("App违法违规收集使用个人信息行为认定方法") is None
 
 
 # ---------- A1 条文不存在 ----------
@@ -87,7 +87,7 @@ def _local_partial_result(law_title: str, article_no: str, article_count: int):
 
 def test_article_not_exist_produces_high_finding():
     result, attempts = _local_partial_result("中华人民共和国民法典", "第一千三百条", 1260)
-    findings = _build_rule_findings(
+    findings = build_rule_findings(
         "中华人民共和国民法典", "第一千三百条", result, attempts, []
     )
     assert any(
@@ -112,7 +112,7 @@ def test_repealed_law_produces_outdated_finding():
         data_source=trace,
     )
     result = LookupResult(trace.status, evidence, trace)
-    findings = _build_rule_findings(
+    findings = build_rule_findings(
         "中华人民共和国合同法", "第五十二条", result, [trace], []
     )
     assert any(
@@ -136,7 +136,7 @@ def test_law_not_found_after_completed_search_produces_high_finding():
         metadata={"search_completed": True},
     )
     result = LookupResult(LookupStatus.LAW_NOT_FOUND, None, trace)
-    findings = _build_rule_findings(
+    findings = build_rule_findings(
         "中华人民共和国印章管理办法", "第五条", result, [trace], []
     )
     assert any(
@@ -146,15 +146,15 @@ def test_law_not_found_after_completed_search_produces_high_finding():
     )
 
 
-def test_suggest_similar_title_catches_one_char_typo():
-    suggestion = _suggest_similar_title(
+def testsuggest_similar_title_catches_one_char_typo():
+    suggestion = suggest_similar_title(
         "消费者召回管理暂行规定", ["消费品召回管理暂行规定", "中华人民共和国民法典"]
     )
     assert suggestion == "消费品召回管理暂行规定"
 
 
-def test_suggest_similar_title_rejects_weak_matches():
-    suggestion = _suggest_similar_title(
+def testsuggest_similar_title_rejects_weak_matches():
+    suggestion = suggest_similar_title(
         "中华人民共和国印章管理办法", ["中华人民共和国税收征收管理法"]
     )
     assert suggestion is None

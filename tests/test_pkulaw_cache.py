@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import pytest
 
-from verification.pkulaw_cache import (
+from ccitecheck.tracing.sources.pkulaw.cache import (
     CachedPkulawClient,
     TTL_SECONDS,
     cache_clear,
     cache_status,
     connect_cache,
 )
-from verification.pkulaw_mcp import (
+from ccitecheck.tracing.sources.pkulaw.client import (
     PkulawArticle,
     PkulawLawRecord,
     PkulawNotFoundError,

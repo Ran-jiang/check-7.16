@@ -1,21 +1,33 @@
 """
-CCitecheck v0.2 Claim 校验器测试。
+CCiteheck 引用校验测试。
 
 测试 validate_claim_document：
   19. 正常文档返回空列表；构造异常场景能检测
 """
 
-from parser.schema import (
+from ccitecheck.domain.document import (
     Anchor, Block, BlockType, DocMeta, ParsedDocument,
 )
-from claims.arbiter import build_claim_document
-from claims.schema import (
-    Claim, ClaimDebug, ClaimType,
-    ExtractionMethod, LegalSourceClaimEntities,
+from ccitecheck.recognition.arbitration import build_claim_document
+import pytest
+from pydantic import ValidationError
+
+from ccitecheck.domain.citation import (
+    CaseCitationEntities, Claim, ClaimCandidate, ClaimType,
+    LegalSourceClaimEntities,
     LegalSource, LegalSourceType,
-    VerificationRoute,
 )
-from claims.validators import validate_claim_document
+from ccitecheck.recognition.validators import validate_claim_document
+
+
+def test_claim_type_rejects_wrong_entity_model():
+    """claim_type 与 entities 必须是同一类核查任务。"""
+    with pytest.raises(ValidationError, match="LegalSourceClaimEntities"):
+        ClaimCandidate(
+            claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
+            anchor_ids=["line00001"],
+            entities=CaseCitationEntities(),
+        )
 
 
 # ============================================================
@@ -76,15 +88,13 @@ def _make_parsed_doc(texts: list[str]) -> ParsedDocument:
     )
 
 
-def _make_valid_claim(anchor_ids: list[str], text: str, block_ids: list[str]) -> Claim:
+def _make_valid_claim(anchor_ids: list[str], text: str) -> Claim:
     """构建合法的 Claim"""
     return Claim(
         claim_id="cl_00001",
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=text,
         anchor_ids=anchor_ids,
-        block_ids=block_ids,
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(
             legal_sources=[
                 LegalSource(
@@ -93,11 +103,6 @@ def _make_valid_claim(anchor_ids: list[str], text: str, block_ids: list[str]) ->
                     articles=[],
                 )
             ]
-        ),
-        debug=ClaimDebug(
-            methods=[ExtractionMethod.RULE],
-            candidate_count=1,
-            text_mismatch=False,
         ),
     )
 
@@ -116,8 +121,6 @@ def test_valid_claim_document_passes():
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=text,
         anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(
             legal_sources=[
                 LegalSource(
@@ -127,14 +130,9 @@ def test_valid_claim_document_passes():
                 )
             ]
         ),
-        debug=ClaimDebug(
-            methods=[ExtractionMethod.RULE],
-            candidate_count=1,
-            text_mismatch=False,
-        ),
     )
 
-    from claims.arbiter import build_claim_document
+    from ccitecheck.recognition.arbitration import build_claim_document
     claim_doc = build_claim_document(doc, [claim])
 
     violations = validate_claim_document(doc, claim_doc)
@@ -155,10 +153,7 @@ def test_detect_nonexistent_anchor():
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=text,
         anchor_ids=["line99999"],  # 不存在
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(legal_sources=[]),
-        debug=ClaimDebug(),
     )
 
     claim_doc = build_claim_document(doc, [claim])
@@ -171,7 +166,7 @@ def test_detect_nonexistent_anchor():
 # Test 19c: text 与拼接不符 → 检测到
 # ============================================================
 
-def test_detect_text_mismatch():
+def test_detect_anchor_text_mismatch():
     """claim.text 与 anchor 拼接不一致 → 校验发现"""
     original_text = "原文内容。"
     doc = _make_parsed_doc([original_text])
@@ -181,10 +176,7 @@ def test_detect_text_mismatch():
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text="被篡改的文本",  # 与原文不一致
         anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(legal_sources=[]),
-        debug=ClaimDebug(),
     )
 
     claim_doc = build_claim_document(doc, [claim])
@@ -207,10 +199,7 @@ def test_detect_non_contiguous_anchors():
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=texts[0] + texts[2],  # 跳过了第二句
         anchor_ids=["line00001", "line00003"],  # 不连续
-        block_ids=["b_00001", "b_00003"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
         entities=LegalSourceClaimEntities(legal_sources=[]),
-        debug=ClaimDebug(),
     )
 
     claim_doc = build_claim_document(doc, [claim])
@@ -234,10 +223,7 @@ def test_detect_duplicate_claim_id():
             claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
             text=text,
             anchor_ids=["line00001"],
-            block_ids=["b_00001"],
-            verification_route=VerificationRoute.STATUTE_DATABASE,
             entities=LegalSourceClaimEntities(legal_sources=[]),
-            debug=ClaimDebug(),
         )
 
     claim_doc = build_claim_document(doc, [
@@ -247,67 +233,3 @@ def test_detect_duplicate_claim_id():
     violations = validate_claim_document(doc, claim_doc)
     assert len(violations) > 0
     assert any("重复" in v for v in violations)
-
-
-# ============================================================
-# Test 19f: verification_route 不匹配 → 检测到
-# ============================================================
-
-def test_detect_wrong_verification_route():
-    """verification_route 与对应表不符 → 校验发现"""
-    text = "依据《民法典》第五百七十七条。"
-    doc = _make_parsed_doc([text])
-
-    claim = Claim(
-        claim_id="cl_00001",
-        claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
-        text=text,
-        anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.CASE_DATABASE_EXACT,  # 错误！
-        entities=LegalSourceClaimEntities(
-            legal_sources=[
-                LegalSource(
-                    title="民法典",
-                    source_type=LegalSourceType.LAW,
-                    articles=[],
-                )
-            ]
-        ),
-        debug=ClaimDebug(),
-    )
-
-    claim_doc = build_claim_document(doc, [claim])
-    violations = validate_claim_document(doc, claim_doc)
-    assert len(violations) > 0
-    assert any("verification_route" in v.lower() for v in violations)
-
-
-# ============================================================
-# Test 19h: debug.methods 非法值 → 检测到
-# ============================================================
-
-def test_detect_invalid_debug_methods():
-    """debug.methods 含非法值 → 校验发现"""
-    text = "测试。"
-    doc = _make_parsed_doc([text])
-
-    claim = Claim(
-        claim_id="cl_00001",
-        claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
-        text=text,
-        anchor_ids=["line00001"],
-        block_ids=["b_00001"],
-        verification_route=VerificationRoute.STATUTE_DATABASE,
-        entities=LegalSourceClaimEntities(legal_sources=[]),
-        debug=ClaimDebug(
-            methods=["invalid_method"],  # 非法
-            candidate_count=1,
-            text_mismatch=False,
-        ),
-    )
-
-    claim_doc = build_claim_document(doc, [claim])
-    violations = validate_claim_document(doc, claim_doc)
-    assert len(violations) > 0
-    assert any("methods" in v.lower() or "debug" in v.lower() for v in violations)

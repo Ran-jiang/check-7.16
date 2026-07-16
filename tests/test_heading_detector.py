@@ -9,7 +9,7 @@
   - 层级动态对齐
 """
 
-from parser.heading_detector import (
+from ccitecheck.parsing.headings import (
     detect_heading,
     detect_heading_level_from_style,
     is_pseudo_heading,

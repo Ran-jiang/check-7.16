@@ -1,13 +1,13 @@
 import json
 
-from verification.schema import (
+from ccitecheck.domain.result import (
     ArticleEvidence,
     ComparisonVerdict,
     LookupStatus,
     SourceTier,
     SourceTrace,
 )
-from verification.semantic import DEFAULT_BASE_URL, PROMPT_PATH, QwenSemanticChecker
+from ccitecheck.judgment.semantic import DEFAULT_BASE_URL, PROMPT_PATH, QwenSemanticChecker
 
 
 def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():

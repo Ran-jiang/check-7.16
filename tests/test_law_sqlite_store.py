@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from laws.sqlite_store import (
+from ccitecheck.infrastructure.database import (
     find_current_article,
     init_db,
     seed_common_laws,

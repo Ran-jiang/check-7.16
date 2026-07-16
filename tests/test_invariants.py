@@ -13,10 +13,10 @@ import tempfile
 
 from docx import Document as DocxDocument
 
-from parser.docx_parser import parse_docx
-from parser.chunk_builder import build_chunks
-from parser.validators import validate_parsed_document
-from parser.schema import (
+from ccitecheck.parsing.docx import parse_docx
+from ccitecheck.parsing.chunks import build_chunks
+from ccitecheck.parsing.validators import validate_parsed_document
+from ccitecheck.domain.document import (
     ParsedDocument,
     DocMeta,
     Block,

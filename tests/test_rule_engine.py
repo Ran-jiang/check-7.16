@@ -1,5 +1,5 @@
 """
-CCitecheck v0.2 Rule Engine 测试。
+CCiteheck 规则识别测试。
 
 测试规则抽取器的核心功能：
   1. 单法源完整主张 → legal_source_claim
@@ -16,16 +16,16 @@ CCitecheck v0.2 Rule Engine 测试。
 """
 
 import pytest
-from parser.schema import (
+from ccitecheck.domain.document import (
     Anchor, Block, BlockType, DocMeta, ParsedDocument,
 )
-from claims.rule_engine import extract_rule_candidates
-from claims.schema import (
-    ClaimType, ExtractionMethod, LegalSourceType,
+from ccitecheck.recognition.rules import extract_rule_candidates
+from ccitecheck.domain.citation import (
+    ClaimType, LegalSourceType,
     CaseReferenceType,
 )
-from claims.extractor import build_indexes
-from claims.legal_citation import (
+from ccitecheck.recognition.service import build_indexes
+from ccitecheck.recognition.statutes import (
     extract_legal_sources, infer_source_type,
 )
 
@@ -109,7 +109,6 @@ def test_single_legal_source_claim():
     c = candidates[0]
     assert c.claim_type == ClaimType.LEGAL_SOURCE_CLAIM
     assert c.anchor_ids == ["line00001"]
-    assert c.method == ExtractionMethod.RULE
     # 验证法源内容
     legal_sources = c.entities.legal_sources
     assert len(legal_sources) == 1
@@ -356,7 +355,7 @@ def test_source_type_inference():
     # 此测试只验证 infer_source_type 对白名单内标题的分类
 
     # 验证白名单过滤：无后缀标题不会被识别为法源
-    from claims.legal_citation import _is_legal_source
+    from ccitecheck.recognition.statutes import _is_legal_source
     assert not _is_legal_source("某公司内部管理制度汇编")
     assert not _is_legal_source("※※收藏")
     assert not _is_legal_source("x环线·地图")
@@ -415,7 +414,7 @@ def test_carry_forward_resets_on_section_change():
     """
     跨 section 场景：标题切换后出现裸"第X条" → 不继承，不产出。
     """
-    from parser.schema import Block, BlockType
+    from ccitecheck.domain.document import Block, BlockType
     # 构建带不同 section_path 的 anchor
     texts = [
         ("2.1 商标侵权", "《中华人民共和国商标法》第五十七条规定了侵权情形。"),
@@ -440,7 +439,7 @@ def test_carry_forward_resets_on_section_change():
                        para_index=i, char_start=0, char_end=len(text))
         anchors.append(anchor)
 
-    from parser.schema import DocMeta
+    from ccitecheck.domain.document import DocMeta
     doc = ParsedDocument(doc_meta=DocMeta(schema_version="0.1", source_file="test", doc_hash="test"),
                          blocks=blocks, anchors=anchors, chunks=[])
     indexes = _make_indexes(doc)
@@ -453,6 +452,37 @@ def test_carry_forward_resets_on_section_change():
     # line00002 在不同 section 下，只有裸"第六十三条"，不应产出
     c2 = [c for c in candidates if "line00002" in c.anchor_ids]
     assert len(c2) == 0, "跨 section 的裸条款号不应继承，应留给 LLM"
+
+
+def test_carry_forward_stops_at_empty_paragraph_gap():
+    doc = _make_parsed_doc([
+        "《中华人民共和国民法典》是基础性法律。",
+        "第一条规定了立法目的。",
+    ])
+    # 模拟两个非空 block 之间有一个被解析器过滤的空段。
+    doc.blocks[1].body_order = 2
+    doc.blocks[1].para_index = 2
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
+    assert not any(c.anchor_ids == ["line00002"] for c in candidates)
+
+
+def test_carry_forward_stops_at_explanatory_paragraph():
+    doc = _make_parsed_doc([
+        "《中华人民共和国民法典》是基础性法律。",
+        "下文仅对合同履行的一般背景作说明。",
+        "第一条规定了立法目的。",
+    ])
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
+    assert not any(c.anchor_ids == ["line00003"] for c in candidates)
+
+
+def test_carry_forward_rejects_multiple_source_ambiguity():
+    doc = _make_parsed_doc([
+        "《中华人民共和国民法典》与《中华人民共和国公司法》均为相关依据。",
+        "第一条规定了立法目的。",
+    ])
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
+    assert not any(c.anchor_ids == ["line00002"] for c in candidates)
 
 
 # ============================================================

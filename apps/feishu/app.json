@@ -1,0 +1,19 @@
+{
+  "manifestVersion": 1,
+  "appID": "cli_REPLACE_IN_FEISHU_CONSOLE",
+  "appType": "docs-addon",
+  "blockTypeID": "blk_REPLACE_IN_FEISHU_CONSOLE",
+  "projectName": "CCiteheck 法条核查",
+  "contributes": {
+    "topbar": {
+      "view": "topbar.html",
+      "minify": true,
+      "initialWidth": 360,
+      "initialHeight": 620,
+      "backgroundColor": {
+        "light": "#F7F8FA",
+        "dark": "#202124"
+      }
+    }
+  }
+}
