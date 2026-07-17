@@ -209,9 +209,9 @@ label.scope-row { cursor: pointer; }
 .results-heading h1 { display: block; margin: 0; font-size: 16px; line-height: 28px; font-weight: 600; color: var(--fg-1); }
 .title-main { font-size: 16px; font-weight: 600; }
 .title-count {
-  display: inline-block; padding: 0 2px; font-style: normal;
-  font-size: 20px; font-weight: 600; line-height: 1;
-  color: var(--brand-fg); vertical-align: -1px;
+  display: inline; padding: 0; font-style: normal;
+  font-size: inherit; font-weight: inherit; line-height: inherit;
+  color: var(--brand-fg); vertical-align: baseline;
   font-variant-numeric: tabular-nums;
 }
 .title-sub { font-size: 12px; font-weight: 400; color: var(--fg-3); margin-left: 8px; }
