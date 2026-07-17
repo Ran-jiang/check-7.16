@@ -1,5 +1,5 @@
 import { captureDebugEvent, checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
-import { readDecisions, saveDecision } from "./history.js"
+import { readDecisions, readHistory, readResultSnapshot, recordHistory, saveDecision } from "./history.js"
 import {
   connectToWord,
   getDocumentBase64,
@@ -10,7 +10,6 @@ import { clearSourceBookmarks, jumpToSource, seedSourceBookmarks } from "./word-
 import { CheckUi } from "./ui.js"
 
 const ui = new CheckUi()
-const CAPTURE_SELECTION_DEBUG_DOCX = false
 let documentName = "未命名文档.docx"
 let lastResult = null
 let lastCheckMode = "full"
@@ -38,11 +37,13 @@ ui.setHandlers({
     if (!lastResult) return {}
     return saveDecision(lastResult.document_key, checkId, decision)
   },
+  onHistoryOpen: openHistorySnapshot,
 })
 
 initialize()
 
 async function initialize() {
+  ui.renderHistory(readHistory())
   await connect()
 }
 
@@ -118,9 +119,6 @@ async function runSelectionCheck() {
       file_name: documentName,
       text: selection.text,
       source_blocks: selection.source_blocks,
-      ...(CAPTURE_SELECTION_DEBUG_DOCX
-        ? { debug_docx_base64: await getDocumentBase64() }
-        : {}),
       semantic_check: true,
       ...scope,
     })
@@ -147,12 +145,7 @@ async function saveWordDebug(event, check, details, error = null) {
     await captureDebugEvent({
       run_id: lastResult.debug_run_id,
       event,
-      payload: {
-        document_name: documentName,
-        check,
-        details,
-        error: officeError,
-      },
+      payload: { document_name: documentName, check, details, error: officeError },
     })
   } catch (_) {
     // 调试留档不能影响正常定位操作。
@@ -162,6 +155,10 @@ async function saveWordDebug(event, check, details, error = null) {
 async function finishCheck(result, mode) {
   lastResult = result
   lastCheckMode = mode
+  if (mode === "full") {
+    recordHistory(result)
+    ui.renderHistory(readHistory())
+  }
   document.getElementById("rerun-button").textContent = mode === "selection" ? "继续核查" : "重新核查"
   ui.setStage("stage-check", "complete", `已识别 ${result.summary.card_total} 个引用句、${result.summary.reference_total} 条引用`)
   const debugLabel = result.debug_run_id ? ` · 调试 ${result.debug_run_id}` : ""
@@ -178,7 +175,7 @@ async function finishCheck(result, mode) {
   ui.renderResults(result, readDecisions(result.document_key))
   ui.setLocateFailures(anchors?.failed || [])
   if (bookmarkError) ui.showMessage(bookmarkError.message || "原文定位标记创建失败")
-  else if (anchors.failed.length) ui.showMessage(`${anchors.failed.length} 处原文未能创建定位标记`)
+  else if (anchors?.failed?.length) ui.showMessage(`${anchors.failed.length} 处原文未能创建定位标记`)
 }
 
 function rerunCurrentCheck() {
@@ -206,6 +203,18 @@ async function exportCurrentReport() {
   } finally {
     ui.setBusy(false)
   }
+}
+
+function openHistorySnapshot(entry) {
+  const snapshot = readResultSnapshot(entry.documentKey)
+  if (!snapshot) {
+    ui.showMessage("这条记录没有保存结果快照，请重新核查该文档")
+    return
+  }
+  lastResult = snapshot
+  lastCheckMode = "full"
+  document.getElementById("rerun-button").textContent = "重新核查"
+  ui.renderResults(snapshot, readDecisions(snapshot.document_key), { snapshotAt: entry.checkedAt })
 }
 
 async function clearBookmarkMarkers() {

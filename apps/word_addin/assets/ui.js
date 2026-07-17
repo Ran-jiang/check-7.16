@@ -27,7 +27,7 @@ const CASE_STATUS_LABELS = {
 export class CheckUi {
   constructor() {
     this.messageTimer = null
-    this.handlers = { onJump: null, onDecide: null }
+    this.handlers = { onJump: null, onDecide: null, onHistoryOpen: null }
     this.decisions = {}
     this.checks = []
     this.cards = []
@@ -90,7 +90,29 @@ export class CheckUi {
     this.setStage("stage-report", "", "等待执行")
   }
 
-  renderResults(result, decisions = {}) {
+  renderHistory(history) {
+    const section = document.getElementById("history-section")
+    const list = document.getElementById("history-list")
+    if (!section || !list) return
+    section.classList.toggle("is-hidden", !history.length)
+    list.replaceChildren(...history.map(entry => {
+      const row = element("button", "history-row")
+      row.type = "button"
+      row.addEventListener("click", () => this.handlers.onHistoryOpen?.(entry))
+      const copy = element("div", "history-copy")
+      copy.append(
+        element("div", "history-name", entry.fileName || "未命名文档"),
+        element("div", "history-meta", `${formatCheckedAt(entry.checkedAt)} · 共 ${entry.total} 处引用`)
+      )
+      const badge = entry.issues > 0
+        ? element("span", "history-badge is-issue", `${entry.issues} 处待核实`)
+        : element("span", "history-badge is-pass", "全部通过")
+      row.append(copy, badge)
+      return row
+    }))
+  }
+
+  renderResults(result, decisions = {}, options = {}) {
     const { summary, verification } = result
     this.decisions = decisions
     this.cards = orderChecksByCitation([
@@ -116,7 +138,9 @@ export class CheckUi {
       element("em", "title-count", String(summary.bugs)),
       element("span", "title-main", " 处无法判断")
     )
-    document.getElementById("results-subtitle").textContent = result.file_name
+    document.getElementById("results-subtitle").textContent = options.snapshotAt
+      ? `${result.file_name} · ${formatCheckedAt(options.snapshotAt)} 的核查快照`
+      : result.file_name
     this.statusFilter = "all"
     this.typeFilter = ""
     this.renderStatusFilter(summary)
@@ -457,4 +481,16 @@ function element(tag, className = "", text = "") {
   if (className) node.className = className
   if (text) node.textContent = text
   return node
+}
+
+function formatCheckedAt(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  const now = new Date()
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+  if (date.toDateString() === now.toDateString()) return `今天 ${time}`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${time}`
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`
 }

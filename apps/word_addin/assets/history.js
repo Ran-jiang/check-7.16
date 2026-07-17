@@ -22,7 +22,41 @@ export function recordHistory(result) {
     issues: result.summary.issues,
   }
   const history = readHistory().filter(item => item.documentKey !== entry.documentKey)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([entry, ...history].slice(0, HISTORY_LIMIT)))
+  const nextHistory = [entry, ...history].slice(0, HISTORY_LIMIT)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextHistory))
+  saveSnapshot(nextHistory, result)
+}
+
+// ---- 完整核查结果快照，跟随最近核查列表保留，供“点击回看”使用 ----
+
+const SNAPSHOTS_KEY = "ccitecheck.resultSnapshots"
+
+function readSnapshotStore() {
+  try {
+    const store = JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || "{}")
+    return store && typeof store === "object" && !Array.isArray(store) ? store : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveSnapshot(history, result) {
+  const keys = new Set(history.map(item => item.documentKey))
+  const store = readSnapshotStore()
+  store[result.document_key] = result
+  for (const key of Object.keys(store)) {
+    if (!keys.has(key)) delete store[key]
+  }
+  try {
+    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(store))
+  } catch {
+    // localStorage 配额不足时放弃快照，摘要列表仍然可用
+    localStorage.removeItem(SNAPSHOTS_KEY)
+  }
+}
+
+export function readResultSnapshot(documentKey) {
+  return readSnapshotStore()[documentKey] || null
 }
 
 // ---- 每条核查项的人工处理标记（接受/忽略），按文档内容哈希持久化 ----
