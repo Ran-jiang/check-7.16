@@ -1,4 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
-  <rect width="160" height="160" rx="34" fill="#171717"/>
-  <text x="80" y="82" font-family="Georgia, 'Times New Roman', serif" font-size="102" font-weight="700" fill="#fff" text-anchor="middle" dominant-baseline="central">C</text>
+  <!-- CCiteheck：品牌蓝 #0F6CBD（token: brand-bg）正圆 + 白色文档 + 对勾，与 docs/design-spec.md 一致 -->
+  <circle cx="80" cy="80" r="80" fill="#0F6CBD"/>
+  <path d="M48 40h45l19 19v61H48z" fill="#FFFFFF"/>
+  <path d="M93 40v19h19z" fill="#B4D2EC"/>
+  <path d="M60 66h29M60 78h41" stroke="#B4D2EC" stroke-width="5" stroke-linecap="round"/>
+  <path d="M63 99l12 11 23-21" fill="none" stroke="#0F6CBD" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

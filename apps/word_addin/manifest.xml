@@ -10,8 +10,8 @@
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="CCiteheck 法律引用核查"/>
   <Description DefaultValue="在 Word 中进行法规溯源与语义核查。"/>
-  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png"/>
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png?v=2"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png?v=2"/>
   <SupportUrl DefaultValue="https://localhost:3000/help.html"/>
   <AppDomains>
     <AppDomain>https://localhost:3000</AppDomain>
@@ -73,9 +73,9 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png"/>
-        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png"/>
-        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png"/>
+        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png?v=2"/>
+        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png?v=2"/>
+        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png?v=2"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
@@ -83,7 +83,7 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Group.Label" DefaultValue="CCiteheck"/>
-        <bt:String id="Button.Label" DefaultValue="开始核查"/>
+        <bt:String id="Button.Label" DefaultValue="CCiteheck"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Button.Tooltip" DefaultValue="对当前 Word 文档执行法律引用核查"/>

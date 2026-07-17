@@ -41,24 +41,31 @@
 
       <section class="scope-section" aria-labelledby="scope-title">
         <div class="section-label" id="scope-title">核查范围</div>
-        <label class="scope-row" for="statute-toggle">
-          <div class="scope-copy">
-            <strong>法律法规引用</strong>
-          </div>
-          <input id="statute-toggle" class="toggle" type="checkbox" checked>
-        </label>
-        <label class="scope-row" for="case-toggle">
-          <div class="scope-copy">
-            <strong>司法案例引用</strong>
-          </div>
-          <input id="case-toggle" class="toggle" type="checkbox" checked>
-        </label>
+        <div class="card scope-card">
+          <label class="scope-row" for="statute-toggle">
+            <div class="scope-copy">
+              <strong>法律法规引用</strong>
+            </div>
+            <input id="statute-toggle" class="toggle" type="checkbox" checked>
+          </label>
+          <label class="scope-row" for="case-toggle">
+            <div class="scope-copy">
+              <strong>司法案例引用</strong>
+            </div>
+            <input id="case-toggle" class="toggle" type="checkbox" checked>
+          </label>
+        </div>
+      </section>
+
+      <section id="history-section" class="history-section is-hidden" aria-labelledby="history-title">
+        <div class="section-label" id="history-title">最近核查</div>
+        <div id="history-list" class="card history-list"></div>
       </section>
 
       <div class="bottom-action">
         <button id="start-button" class="primary-button" type="button" disabled>核查全文</button>
+        <button id="selection-button" class="secondary-button" type="button" disabled>核查选中内容</button>
       </div>
-      <button id="selection-button" class="secondary-button" type="button" disabled>核查选中内容</button>
     </section>
 
     <section id="progress-screen" class="screen progress-screen is-hidden" aria-labelledby="progress-title">

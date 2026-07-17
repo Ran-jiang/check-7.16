@@ -1,5 +1,5 @@
 import { checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
-import { readDecisions, saveDecision } from "./history.js"
+import { readDecisions, readHistory, readResultSnapshot, recordHistory, saveDecision } from "./history.js"
 import {
   connectToWord,
   getDocumentBase64,
@@ -29,11 +29,13 @@ ui.setHandlers({
     if (!lastResult) return {}
     return saveDecision(lastResult.document_key, checkId, decision)
   },
+  onHistoryOpen: openHistorySnapshot,
 })
 
 initialize()
 
 async function initialize() {
+  ui.renderHistory(readHistory())
   await connect()
 }
 
@@ -124,6 +126,10 @@ async function runSelectionCheck() {
 function finishCheck(result, mode) {
   lastResult = result
   lastCheckMode = mode
+  if (mode === "full") {
+    recordHistory(result)
+    ui.renderHistory(readHistory())
+  }
   document.getElementById("rerun-button").textContent = mode === "selection" ? "继续核查" : "重新核查"
   ui.setStage("stage-check", "complete", `已识别 ${result.summary.total} 处法律引用`)
   ui.setStage("stage-report", "complete", "核查完成，可导出报告")
@@ -155,6 +161,18 @@ async function exportCurrentReport() {
   } finally {
     ui.setBusy(false)
   }
+}
+
+function openHistorySnapshot(entry) {
+  const snapshot = readResultSnapshot(entry.documentKey)
+  if (!snapshot) {
+    ui.showMessage("这条记录没有保存结果快照，请重新核查该文档")
+    return
+  }
+  lastResult = snapshot
+  lastCheckMode = "full"
+  document.getElementById("rerun-button").textContent = "重新核查"
+  ui.renderResults(snapshot, readDecisions(snapshot.document_key), { snapshotAt: entry.checkedAt })
 }
 
 function showHome() {
