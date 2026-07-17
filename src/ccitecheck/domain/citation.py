@@ -244,6 +244,11 @@ class SourceLocation(BaseModel):
     char_start: int = Field(ge=0)
     char_end: int = Field(ge=0)
     anchor_text: str = Field(default="", description="用于来源平台按文本自愈定位的 Anchor 原文")
+    occurrence: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="anchor_text 在所属块内从零开始的出现序号，用于多命中消歧",
+    )
     table_index: Optional[int] = None
     row_index: Optional[int] = None
     cell_index: Optional[int] = None

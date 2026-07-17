@@ -143,6 +143,7 @@ def _derive_source_locations(
             char_start=anchor.char_start,
             char_end=anchor.char_end,
             anchor_text=anchor.text,
+            occurrence=block.text[:anchor.char_start].count(anchor.text),
             table_index=block.table_index,
             row_index=block.row_index,
             cell_index=block.cell_index,

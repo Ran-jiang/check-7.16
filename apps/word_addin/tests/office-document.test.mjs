@@ -5,7 +5,14 @@ import {
   getDocumentName,
   getSelectedContent,
 } from "../assets/office-document.js"
-import { clearSourceBookmarks, jumpToSource, seedSourceBookmarks } from "../assets/word-bookmarks.js"
+import {
+  clearSourceBookmarks,
+  escapeSearchText,
+  jumpToSource,
+  planSearchPieces,
+  seedSourceBookmarks,
+  validateSearchSpan,
+} from "../assets/word-bookmarks.js"
 
 
 test("getDocumentName reads the real filename from the Word URL", async () => {
@@ -66,25 +73,25 @@ test("seedSourceBookmarks replaces old markers and jumpToSource selects the book
   globalThis.Office = { context: { requirements: { isSetSupported() { return false } } } }
   const calls = []
   const sentence = {
-    text: "裁判理由完整一句。",
     insertBookmark(name) { calls.push(["insert", name]) },
   }
   const paragraphRange = {
-    text: "裁判理由完整一句。\r",
-    load() {},
-    getTextRanges(endings, trimSpacing) {
-      assert.deepEqual(endings, ["。", "！", "？"])
-      assert.equal(trimSpacing, false)
+    search(text, options) {
+      assert.equal(text, "裁判理由完整一句。")
+      assert.equal(options.matchWildcards, false)
       return { items: [sentence], load() {} }
     },
   }
+  const bodyRange = { getBookmarks() { return { value: ["_CCOLD_0", "_Toc42"] } }, search() { return { items: [], load() {} } } }
   const body = {
     paragraphs: {
       items: [{ tableNestingLevel: 0, getRange() { return paragraphRange } }],
       load() {},
     },
     tables: { items: [], load() {} },
-    getRange() { return { getBookmarks() { return { value: ["_CCOLD_0", "_Toc42"] } } } },
+    footnotes: { items: [], load() {} },
+    endnotes: { items: [], load() {} },
+    getRange() { return bodyRange },
   }
   const bookmark = {
     isNullObject: false,
@@ -115,7 +122,11 @@ test("seedSourceBookmarks replaces old markers and jumpToSource selects the book
       case_checks: [],
     },
   })
-  assert.deepEqual(details, { requested: 1, seeded: 1, failed: [] })
+  assert.equal(details.requested, 1)
+  assert.equal(details.seeded, 1)
+  assert.deepEqual(details.failed, [])
+  assert.deepEqual(details.methods, [{ check_id: "card_1", location_index: 0, method: "block_search" }])
+  assert.deepEqual(details.table_inventory, { status: "ok", count: 0, tables: [] })
   const insertedName = calls.find(call => call[0] === "insert")[1]
   assert.match(insertedName, /^_cc[a-z0-9]+_[a-z0-9_]+_0$/)
   assert.deepEqual(calls, [["delete", "_CCOLD_0"], ["insert", insertedName]])
@@ -127,32 +138,43 @@ test("seedSourceBookmarks replaces old markers and jumpToSource selects the book
   assert.deepEqual(calls.at(-1), ["select", "bookmark"])
 })
 
-test("seedSourceBookmarks matches nested quoted sentences and removes footnote marks", async () => {
+test("search planner keeps short anchors whole, splits long and multiline anchors, and escapes carets", () => {
+  assert.deepEqual(planSearchPieces("第一段。\n第二段。"), ["第一段。", "第二段。"])
+  const long = `${"甲".repeat(160)}${"乙".repeat(160)}`
+  assert.deepEqual(planSearchPieces(long), ["甲".repeat(100), "乙".repeat(100)])
+  assert.equal(escapeSearchText("依据^p标记"), "依据^^p标记")
+  assert.equal(validateSearchSpan("第一段。\r第二段。", ["第一段。", "第二段。"], "第一段。\n第二段。"), true)
+  assert.equal(validateSearchSpan(`第一段。${"无关文字".repeat(20)}第二段。`, ["第一段。", "第二段。"], "第一段。\n第二段。"), false)
+})
+
+test("seedSourceBookmarks uses body search and table-cell coordinates for table anchors", async () => {
   globalThis.Office = { context: { requirements: { isSetSupported() { return false } } } }
   const calls = []
-  const pieces = [
-    { text: "前文\u0002他说：“第一句。", expandTo(last) {
-      calls.push(["expand", last.text])
-      return bookmarkRange
-    } },
-    { text: "第二句。" },
-    { text: "”随后离开。" },
-  ]
-  const bookmarkRange = {
+  const matchedRange = {
+    parentTableCellOrNullObject: {
+      isNullObject: false,
+      rowIndex: 2,
+      cellIndex: 1,
+      load(properties) {
+        assert.equal(properties, "isNullObject,rowIndex,cellIndex")
+      },
+    },
     insertBookmark(name) { calls.push(["insert", name]) },
   }
-  const paragraphRange = {
-    text: pieces.map(piece => piece.text).join("") + "\r",
-    load() {},
-    getTextRanges() { return { items: pieces, load() {} } },
+  const bodyRange = {
+    getBookmarks() { return { value: [] } },
+    search(text, options) {
+      assert.equal(text, "表格中的完整引用句。")
+      assert.equal(options.matchWildcards, false)
+      return { items: [matchedRange], load() {} }
+    },
   }
   const body = {
-    paragraphs: {
-      items: [{ tableNestingLevel: 0, getRange() { return paragraphRange } }],
-      load() {},
-    },
-    tables: { items: [], load() {} },
-    getRange() { return { getBookmarks() { return { value: [] } } } },
+    paragraphs: { items: [], load() {} },
+    tables: { items: [{ rowCount: 3, columnCount: 2 }], load() {} },
+    footnotes: { items: [], load() {} },
+    endnotes: { items: [], load() {} },
+    getRange() { return bodyRange },
   }
   const Word = { async run(callback) { return callback({
     document: { body, deleteBookmark() {} },
@@ -161,14 +183,17 @@ test("seedSourceBookmarks matches nested quoted sentences and removes footnote m
   globalThis.Word = Word
   globalThis.window = { Word }
   const details = await seedSourceBookmarks({
-    document_key: "sha256:quoted",
+    document_key: "sha256:table",
     verification: {
       citation_cards: [{
-        card_id: "card_quoted",
+        card_id: "card_table",
         source_locations: [{
           platform: "docx",
-          block_id: "word:p:0",
-          anchor_text: "他说：“第一句。第二句。”",
+          block_id: "word:t:9:2:1",
+          table_index: 9,
+          row_index: 2,
+          cell_index: 1,
+          anchor_text: "表格中的完整引用句。",
         }],
       }],
       case_checks: [],
@@ -176,7 +201,13 @@ test("seedSourceBookmarks matches nested quoted sentences and removes footnote m
   })
   assert.equal(details.seeded, 1)
   assert.deepEqual(details.failed, [])
-  assert.deepEqual(calls[0], ["expand", "”随后离开。"])
+  assert.equal(details.methods[0].method, "full_search")
+  assert.deepEqual(details.table_inventory, {
+    status: "ok",
+    count: 1,
+    tables: [{ index: 0, rows: 3, columns: 2 }],
+  })
+  assert.equal(calls[0][0], "insert")
 })
 
 test("clearSourceBookmarks is case-insensitive and disables automatic repair", async () => {
@@ -213,6 +244,57 @@ test("clearSourceBookmarks is case-insensitive and disables automatic repair", a
     }, "sha256:test"),
     /定位标记已清除/,
   )
+})
+
+test("jumpToSource repairs a missing bookmark with search and occurrence", async () => {
+  globalThis.Office = { context: { requirements: { isSetSupported() { return false } } } }
+  const calls = []
+  const first = { insertBookmark() { calls.push("wrong-insert") }, select() { calls.push("wrong-select") } }
+  const second = {
+    insertBookmark() { calls.push("insert") },
+    select() { calls.push("select") },
+  }
+  const paragraphRange = {
+    search() { return { items: [first, second], load() {} } },
+  }
+  const body = {
+    paragraphs: {
+      items: [{ tableNestingLevel: 0, getRange() { return paragraphRange } }],
+      load() {},
+    },
+    footnotes: { items: [], load() {} },
+    endnotes: { items: [], load() {} },
+    tables: { items: [], load() {} },
+    getRange() { return {
+      getBookmarks() { return { value: [] } },
+      search() { return { items: [], load() {} } },
+    } },
+  }
+  const Word = { async run(callback) { return callback({
+    document: {
+      body,
+      getBookmarkRangeOrNullObject() { return { isNullObject: true, load() {} } },
+    },
+    async sync() {},
+  }) } }
+  globalThis.Word = Word
+  globalThis.window = { Word }
+  await seedSourceBookmarks({
+    document_key: "sha256:repair",
+    verification: { citation_cards: [], case_checks: [] },
+  })
+  const result = await jumpToSource({
+    card_id: "card_repair",
+    source_locations: [{
+      platform: "docx",
+      block_id: "word:p:0",
+      anchor_text: "重复出现的法条引用。",
+      occurrence: 1,
+    }],
+  }, "sha256:repair")
+  assert.equal(result.method, "text_repair")
+  assert.equal(result.search_method, "block_search")
+  assert.deepEqual(calls, ["insert", "select"])
 })
 
 test("jumpToSource requires structured Word coordinates", async () => {

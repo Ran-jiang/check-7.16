@@ -165,6 +165,75 @@ def test_next_sentence_in_same_paragraph_inherits_unique_law_source(tmp_path: Pa
     assert second_source.resolution == "inherited"
 
 
+def test_same_paragraph_partial_paragraph_and_item_inherit_unique_article(tmp_path: Path):
+    text = (
+        "《广告法》第二十八条第一款规定，虚假内容构成虚假广告。"
+        "第二款第二项规定，商品性能等信息与实际情况不符的，为虚假广告。"
+    )
+    path = tmp_path / "partial-paragraph-item.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    assert len(candidates) == 2
+    second_source = candidates[1].entities.legal_sources[0]
+    second_article = second_source.articles[0]
+    assert second_source.title == "广告法"
+    assert second_source.resolution == "inherited"
+    assert second_article.article == "第二十八条"
+    assert second_article.paragraphs == ["第二款"]
+    assert second_article.items == ["第二项"]
+
+
+def test_partial_item_only_inherits_unique_parent_paragraph(tmp_path: Path):
+    text = "《广告法》第二十八条第二款规定了五种情形。第二项规定，商品性能信息不得失实。"
+    path = tmp_path / "partial-item.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    second_article = candidates[1].entities.legal_sources[0].articles[0]
+    assert second_article.article == "第二十八条"
+    assert second_article.paragraphs == ["第二款"]
+    assert second_article.items == ["第二项"]
+
+
+def test_partial_ref_does_not_inherit_ambiguous_parent_articles(tmp_path: Path):
+    text = "《广告法》第二十八条、第二十九条规定了不同规则。第二款规定了具体条件。"
+    path = tmp_path / "ambiguous-parent-articles.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    assert len(candidates) == 1
+
+
+def test_partial_ref_rejects_ordinary_product_and_task_wording(tmp_path: Path):
+    text = "《广告法》第二十八条规定了虚假广告。公司发布第二款产品，随后完成第三项任务。"
+    path = tmp_path / "ordinary-ordinal-wording.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    assert len(candidates) == 1
+
+
+def test_source_location_occurrence_counts_repeated_anchor_in_same_block(tmp_path: Path):
+    sentence = "《广告法》第二十八条规定了虚假广告。"
+    path = tmp_path / "repeated-anchor.docx"
+    document = DocxDocument()
+    document.add_paragraph(sentence + sentence)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    claims = arbitrate_claim_candidates(candidates, parsed)
+    assert [claim.source_locations[0].occurrence for claim in claims] == [0, 1]
+
+
 def test_same_paragraph_inheritance_stops_after_intervening_sentence(tmp_path: Path):
     text = "《中华人民共和国商标法》第九条规定了有关规则。本案另有事实争议。第十条规定了其他规则。"
     path = tmp_path / "intervening-sentence.docx"

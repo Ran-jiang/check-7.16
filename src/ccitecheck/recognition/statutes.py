@@ -15,6 +15,7 @@ CCiteheck 法源与条款号识别。
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import re
 
 from ..domain.legal_numbers import chinese_number_to_int
@@ -67,6 +68,16 @@ ITEM_PATTERN = re.compile(
 
 # 法源引导词：用于辅助判断句子是否含法律依据
 LEGAL_BASIS_WORDS = {"依据", "根据", "依照", "按照", "参照", "适用"}
+
+_PARTIAL_REFERENCE_PREDICATE = re.compile(r"(?:之规定|规定|所称|明确)")
+
+
+@dataclass(frozen=True)
+class PartialArticleRef:
+    """尚需从上文补齐条号的款、项引用。"""
+
+    paragraphs: list[str] = field(default_factory=list)
+    items: list[str] = field(default_factory=list)
 
 
 # ============================================================
@@ -702,6 +713,27 @@ def extract_articles_only(text: str) -> list:
         ArticleRef 列表
     """
     return _extract_articles_from_text(text)
+
+
+def extract_partial_refs(text: str) -> PartialArticleRef | None:
+    """保守提取省略条号的款、项；结果不能脱离承前法源独立使用。"""
+    if ARTICLE_PATTERN.search(text):
+        return None
+    paragraph_matches = list(PARAGRAPH_PATTERN.finditer(text))
+    item_matches = list(ITEM_PATTERN.finditer(text))
+    if not paragraph_matches and not item_matches:
+        return None
+
+    last_end = max(match.end() for match in [*paragraph_matches, *item_matches])
+    predicate_window = text[last_end:last_end + 8]
+    has_legal_predicate = bool(_PARTIAL_REFERENCE_PREDICATE.search(predicate_window))
+    if not has_legal_predicate and not any(word in text for word in LEGAL_BASIS_WORDS):
+        return None
+
+    return PartialArticleRef(
+        paragraphs=[f"第{match.group(1)}款" for match in paragraph_matches],
+        items=[f"第{match.group(1)}项" for match in item_matches],
+    )
 
 
 def has_legal_basis_words(text: str) -> bool:

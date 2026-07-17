@@ -26,8 +26,16 @@ from ccitecheck.domain.citation import (
 )
 from ccitecheck.recognition.service import build_indexes
 from ccitecheck.recognition.statutes import (
-    extract_legal_sources, infer_source_type,
+    extract_legal_sources, extract_partial_refs, infer_source_type,
 )
+
+
+def test_partial_refs_require_legal_predicate():
+    partial = extract_partial_refs("第二款第二项规定，商品信息与实际情况不符。")
+    assert partial is not None
+    assert partial.paragraphs == ["第二款"]
+    assert partial.items == ["第二项"]
+    assert extract_partial_refs("公司发布的第二款产品完成了第三项任务。") is None
 
 
 # ============================================================

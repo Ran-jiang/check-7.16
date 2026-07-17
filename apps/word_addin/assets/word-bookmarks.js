@@ -1,5 +1,6 @@
 const BOOKMARK_PREFIX = "_cc"
-const SENTENCE_ENDINGS = ["。", "！", "？"]
+const SHORT_ANCHOR_LIMIT = 250
+const LONG_ANCHOR_PIECE_LENGTH = 100
 
 let repairEnabled = true
 
@@ -9,11 +10,8 @@ export async function seedSourceBookmarks(result) {
   const targets = bookmarkTargets(result)
   const includeNotes = supportsWordApi15()
 
-  return Word.run(async context => {
-    const inventory = await buildRangeInventory(context, includeNotes)
-    await loadSentenceRanges(context, inventory, targets)
+  const details = await Word.run(async context => {
     const bookmarkNames = await getBookmarkNames(context, includeNotes)
-
     for (const name of bookmarkNames) {
       if (name.toLowerCase().startsWith(BOOKMARK_PREFIX)) {
         context.document.deleteBookmark(name)
@@ -21,24 +19,37 @@ export async function seedSourceBookmarks(result) {
     }
     await context.sync()
 
+    const searchable = []
     const failed = []
-    let seeded = 0
+    const methods = []
     for (const target of targets) {
       if (!includeNotes && isNoteBlock(target.location.block_id)) {
         failed.push(failureOf(target, "WordApi 1.4 不支持脚注或尾注定位"))
-        continue
+        methods.push(methodOf(target, "failed"))
+      } else {
+        searchable.push(target)
       }
-      const range = findAnchorRange(inventory, target.location)
-      if (!range) {
+    }
+
+    const located = await locateTargets(context, searchable, includeNotes)
+    let seeded = 0
+    for (const target of searchable) {
+      const match = located.get(target)
+      if (!match) {
         failed.push(failureOf(target, "未找到 Anchor 原文"))
+        methods.push(methodOf(target, "failed"))
         continue
       }
-      range.insertBookmark(target.bookmarkName)
+      match.range.insertBookmark(target.bookmarkName)
       seeded += 1
+      methods.push(methodOf(target, match.method))
     }
     await context.sync()
-    return { requested: targets.length, seeded, failed }
+    return { requested: targets.length, seeded, failed, methods }
   })
+
+  details.table_inventory = await collectTableInventory()
+  return details
 }
 
 export async function clearSourceBookmarks() {
@@ -72,26 +83,278 @@ export async function jumpToSource(check, documentKey) {
     }
     if (!repairEnabled) throw new Error("定位标记已清除，请重新核查")
 
-    const inventory = await buildRangeInventory(context, includeNotes)
-    await loadSentenceRanges(context, inventory, [target])
-    const repaired = findAnchorRange(inventory, target.location)
+    const located = await locateTargets(context, [target], includeNotes)
+    const repaired = located.get(target)
     if (repaired) {
-      repaired.insertBookmark(target.bookmarkName)
-      repaired.select()
+      repaired.range.insertBookmark(target.bookmarkName)
+      repaired.range.select()
       await context.sync()
-      return { location: target.location, method: "text_repair" }
+      return { location: target.location, method: "text_repair", search_method: repaired.method }
     }
 
-    const block = inventory.find(item => item.blockId === target.location.block_id)
-    if (!block) throw new Error("原文已删除，请重新核查")
-    block.range.select()
+    return selectBlockFallback(context, target.location, includeNotes)
+  })
+}
+
+export function planSearchPieces(anchorText) {
+  return rawSearchPieces(anchorText).map(escapeSearchText)
+}
+
+function rawSearchPieces(anchorText) {
+  const segments = String(anchorText || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(segment => segment.trim())
+    .filter(Boolean)
+  const pieces = []
+  for (const segment of segments) {
+    if (segment.length <= SHORT_ANCHOR_LIMIT) {
+      pieces.push(segment)
+    } else {
+      pieces.push(
+        segment.slice(0, LONG_ANCHOR_PIECE_LENGTH),
+        segment.slice(-LONG_ANCHOR_PIECE_LENGTH),
+      )
+    }
+  }
+  return pieces
+}
+
+export function escapeSearchText(text) {
+  return String(text).replaceAll("^", "^^")
+}
+
+async function locateTargets(context, targets, includeNotes) {
+  const scopes = await prepareSearchScopes(context, includeNotes)
+  const primary = queueSearchPass(scopes, targets, false)
+  await loadSearchResults(context, primary)
+  const located = resolveSearchPass(primary)
+  await validateExpandedMatches(context, located)
+
+  const fallbackTargets = targets.filter(target => {
+    if (located.has(target) || isTableBlock(target.location.block_id)) return false
+    const queued = primary.find(item => item.target === target)
+    return queued?.scopeKind === "block"
+  })
+  if (fallbackTargets.length) {
+    const fallback = queueSearchPass(scopes, fallbackTargets, true)
+    await loadSearchResults(context, fallback)
+    const fallbackLocated = resolveSearchPass(fallback)
+    await validateExpandedMatches(context, fallbackLocated)
+    for (const [target, match] of fallbackLocated) located.set(target, match)
+  }
+  return located
+}
+
+async function validateExpandedMatches(context, located) {
+  const pending = []
+  for (const [target, match] of located) {
+    const pieces = rawSearchPieces(target.location.anchor_text)
+    if (pieces.length <= 1) continue
+    match.range.load("text")
+    pending.push({ target, match, pieces })
+  }
+  if (!pending.length) return
+  await context.sync()
+  for (const { target, match, pieces } of pending) {
+    if (!validateSearchSpan(match.range.text, pieces, target.location.anchor_text)) {
+      located.delete(target)
+    }
+  }
+}
+
+export function validateSearchSpan(rangeText, pieces, anchorText) {
+  const haystack = String(rangeText || "").replace(/\r\n?/g, "\n")
+  let cursor = 0
+  let firstPosition = null
+  for (const piece of pieces) {
+    const index = haystack.indexOf(piece, cursor)
+    if (index < 0) return false
+    if (firstPosition === null) firstPosition = index
+    cursor = index + piece.length
+  }
+  const anchorLength = String(anchorText || "").replace(/\r\n?/g, "\n").length
+  return cursor - firstPosition <= anchorLength + 32
+}
+
+async function prepareSearchScopes(context, includeNotes) {
+  const body = context.document.body
+  const paragraphs = body.paragraphs
+  paragraphs.load("items/tableNestingLevel")
+  const noteCollections = includeNotes
+    ? [["footnote", body.footnotes], ["endnote", body.endnotes]]
+    : []
+  for (const [, collection] of noteCollections) collection.load("items")
+  await context.sync()
+
+  const ranges = new Map()
+  let paragraphIndex = 0
+  for (const paragraph of paragraphs.items) {
+    if (paragraph.tableNestingLevel !== 0) continue
+    ranges.set(`word:p:${paragraphIndex}`, paragraph.getRange())
+    paragraphIndex += 1
+  }
+  for (const [type, collection] of noteCollections) {
+    for (const note of collection.items) note.body.paragraphs.load("items")
+    await context.sync()
+    collection.items.forEach((note, noteIndex) => {
+      note.body.paragraphs.items.forEach((paragraph, paragraphIndexInNote) => {
+        ranges.set(`word:${type}:${noteIndex}:${paragraphIndexInNote}`, paragraph.getRange())
+      })
+    })
+  }
+  return { bodyRange: body.getRange(), ranges }
+}
+
+function queueSearchPass(scopes, targets, forceBody) {
+  const queued = []
+  for (const target of targets) {
+    const location = target.location
+    const blockRange = scopes.ranges.get(location.block_id)
+    const useBody = forceBody || isTableBlock(location.block_id) || !blockRange
+    const scope = useBody ? scopes.bodyRange : blockRange
+    const scopeKind = useBody ? "full" : "block"
+    const collections = planSearchPieces(location.anchor_text).map(piece => {
+      const collection = scope.search(piece, searchOptions())
+      collection.load("items")
+      return collection
+    })
+    queued.push({ target, collections, scopeKind, candidates: [] })
+  }
+  return queued
+}
+
+async function loadSearchResults(context, queued) {
+  if (!queued.length) return
+  await context.sync()
+  for (const item of queued) {
+    item.candidates = item.collections.map(collection => collection.items.map(range => {
+      if (!isTableBlock(item.target.location.block_id)) return { range, cell: null }
+      const cell = range.parentTableCellOrNullObject
+      cell.load("isNullObject,rowIndex,cellIndex")
+      return { range, cell }
+    }))
+  }
+  if (queued.some(item => item.candidates.some(group => group.some(candidate => candidate.cell)))) {
+    await context.sync()
+  }
+}
+
+function resolveSearchPass(queued) {
+  const result = new Map()
+  for (const item of queued) {
+    if (!item.collections.length || item.candidates.some(group => !group.length)) continue
+    const occurrence = Number.isInteger(item.target.location.occurrence)
+      ? item.target.location.occurrence
+      : 0
+    const chosen = item.candidates.map(group => chooseCandidate(
+      group,
+      item.target.location,
+      occurrence,
+      item.scopeKind,
+    ))
+    if (chosen.some(candidate => !candidate)) continue
+    const first = chosen[0].range
+    const last = chosen.at(-1).range
+    const range = chosen.length === 1 ? first : first.expandTo(last)
+    result.set(item.target, {
+      range,
+      method: item.scopeKind === "block" ? "block_search" : "full_search",
+    })
+  }
+  return result
+}
+
+function chooseCandidate(group, location, occurrence, scopeKind) {
+  let valid = group
+  if (isTableBlock(location.block_id)) {
+    valid = group.filter(({ cell }) => cell
+      && !cell.isNullObject
+      && cell.rowIndex === location.row_index
+      && cell.cellIndex === location.cell_index)
+    // Word Range 无法直接给出所属表格序号；同一行列出现多个候选时可能跨表，宁可降级。
+    if (valid.length !== 1) return null
+  } else if (scopeKind === "full" && group.length > 1) {
+    // 段落索引已经漂移时无法可靠证明全文多命中的哪一个属于原块，宁可降级。
+    return null
+  }
+  return valid[occurrence] || null
+}
+
+async function selectBlockFallback(context, location, includeNotes) {
+  const paragraphMatch = /^word:p:(\d+)$/.exec(location.block_id)
+  if (paragraphMatch) {
+    const paragraphs = context.document.body.paragraphs
+    paragraphs.load("items/tableNestingLevel")
+    await context.sync()
+    const topLevel = paragraphs.items.filter(item => item.tableNestingLevel === 0)
+    const paragraph = topLevel[Number(paragraphMatch[1])]
+    if (!paragraph) throw new Error("原文已删除，请重新核查")
+    paragraph.getRange().select()
     await context.sync()
     return {
-      location: target.location,
+      location,
       method: "block_fallback",
       warning: "原句可能已被修改，已定位到所在段落",
     }
-  })
+  }
+
+  const tableMatch = /^word:t:(\d+):(\d+):(\d+)$/.exec(location.block_id)
+  if (tableMatch) {
+    try {
+      const tables = context.document.body.tables
+      tables.load("items")
+      await context.sync()
+      const table = tables.items[Number(tableMatch[1])]
+      if (!table) throw new Error("table_missing")
+      const range = table.getCell(Number(tableMatch[2]), Number(tableMatch[3])).body.getRange()
+      range.select()
+      await context.sync()
+      return {
+        location,
+        method: "block_fallback",
+        warning: "原句可能已被修改，已定位到所在单元格",
+      }
+    } catch {
+      throw new Error("未能自动定位到原句，请手动查找")
+    }
+  }
+
+  if (includeNotes && isNoteBlock(location.block_id)) {
+    throw new Error("未能自动定位到原句，请手动查找")
+  }
+  throw new Error("原文已删除，请重新核查")
+}
+
+async function collectTableInventory() {
+  try {
+    return await Word.run(async context => {
+      const tables = context.document.body.tables
+      tables.load("items/rowCount,items/columnCount")
+      await context.sync()
+      return {
+        status: "ok",
+        count: tables.items.length,
+        tables: tables.items.map((table, index) => ({
+          index,
+          rows: table.rowCount,
+          columns: table.columnCount,
+        })),
+      }
+    })
+  } catch (error) {
+    return { status: "error", message: error?.message || String(error) }
+  }
+}
+
+function searchOptions() {
+  return {
+    matchCase: false,
+    matchWholeWord: false,
+    matchWildcards: false,
+    ignoreSpace: false,
+    ignorePunct: false,
+  }
 }
 
 function assertWordApi() {
@@ -151,57 +414,16 @@ function failureOf(target, reason) {
   return { check_id: target.checkId, location_index: target.index, reason }
 }
 
+function methodOf(target, method) {
+  return { check_id: target.checkId, location_index: target.index, method }
+}
+
 function isNoteBlock(blockId) {
   return /^word:(footnote|endnote):/.test(blockId)
 }
 
-function canonicalText(text) {
-  return String(text)
-    .replace(/\u0002/g, "")
-    .replace(/[\t\n\r\u0007\u00a0\u3000]/g, " ")
-    .replace(/ +/g, " ")
-    .trim()
-}
-
-function findAnchorRange(inventory, location) {
-  const anchor = canonicalText(location.anchor_text)
-  const candidates = inventory
-    .filter(item => item.sentences && item.normalizedText.includes(anchor))
-    .sort((left, right) => Number(right.blockId === location.block_id)
-      - Number(left.blockId === location.block_id))
-
-  for (const item of candidates) {
-    const pieces = item.sentences.items
-    const normalizedPieces = normalizePieces(pieces)
-    const prefix = [""]
-    for (const piece of normalizedPieces) prefix.push(prefix.at(-1) + piece)
-    let best = null
-    for (let start = 0; start < pieces.length; start += 1) {
-      for (let end = start; end < pieces.length; end += 1) {
-        const combined = prefix[end + 1].slice(prefix[start].length)
-        if (!combined.includes(anchor)) continue
-        if (!best || end - start < best.end - best.start) best = { start, end }
-        break
-      }
-    }
-    if (best) {
-      return best.start === best.end
-        ? pieces[best.start]
-        : pieces[best.start].expandTo(pieces[best.end])
-    }
-  }
-  return null
-}
-
-function normalizePieces(pieces) {
-  let previousEndedWithSpace = false
-  return pieces.map((piece, index) => {
-    const text = String(piece.text).replace(/\u0002/g, "")
-    const beginsWithSpace = /^[\t\n\r\u0007\u00a0\u3000 ]/.test(text)
-    const prefix = index && (previousEndedWithSpace || beginsWithSpace) ? " " : ""
-    previousEndedWithSpace = /[\t\n\r\u0007\u00a0\u3000 ]$/.test(text)
-    return prefix + canonicalText(text)
-  })
+function isTableBlock(blockId) {
+  return /^word:t:/.test(blockId)
 }
 
 async function getBookmarkNames(context, includeNotes) {
@@ -217,72 +439,4 @@ async function getBookmarkNames(context, includeNotes) {
   const results = scopes.map(scope => scope.getBookmarks(true, false))
   await context.sync()
   return [...new Set(results.flatMap(result => result.value))]
-}
-
-async function loadSentenceRanges(context, inventory, targets) {
-  const anchors = targets.map(target => canonicalText(target.location.anchor_text))
-  const candidates = inventory.filter(item => anchors.some(anchor => item.normalizedText.includes(anchor)))
-  for (const item of candidates) {
-    if (!SENTENCE_ENDINGS.some(ending => item.normalizedText.includes(ending))) {
-      item.sentences = { items: [item.range] }
-      continue
-    }
-    try {
-      item.sentences = item.range.getTextRanges(SENTENCE_ENDINGS, false)
-      item.sentences.load("items/text")
-      await context.sync()
-    } catch {
-      item.sentences = null
-    }
-  }
-}
-
-async function buildRangeInventory(context, includeNotes) {
-  const paragraphs = context.document.body.paragraphs
-  const tables = context.document.body.tables
-  paragraphs.load("items/tableNestingLevel")
-  tables.load("items/rowCount,items/columnCount")
-  const noteCollections = includeNotes
-    ? [["footnote", context.document.body.footnotes], ["endnote", context.document.body.endnotes]]
-    : []
-  for (const [, collection] of noteCollections) collection.load("items")
-  await context.sync()
-
-  const inventory = []
-  let paragraphIndex = 0
-  for (const paragraph of paragraphs.items) {
-    if (paragraph.tableNestingLevel !== 0) continue
-    inventory.push({ blockId: `word:p:${paragraphIndex}`, range: paragraph.getRange() })
-    paragraphIndex += 1
-  }
-  tables.items.forEach((table, tableIndex) => {
-    for (let row = 0; row < table.rowCount; row += 1) {
-      for (let cell = 0; cell < table.columnCount; cell += 1) {
-        inventory.push({
-          blockId: `word:t:${tableIndex}:${row}:${cell}`,
-          range: table.getCell(row, cell).body.getRange(),
-        })
-      }
-    }
-  })
-  for (const [type, collection] of noteCollections) {
-    collection.items.forEach((note, noteIndex) => {
-      note.body.paragraphs.load("items")
-      inventory.push({ type, note, noteIndex })
-    })
-  }
-  await context.sync()
-
-  for (const pending of inventory.filter(item => item.note)) {
-    const index = inventory.indexOf(pending)
-    const ranges = pending.note.body.paragraphs.items.map((paragraph, paragraphIndex) => ({
-      blockId: `word:${pending.type}:${pending.noteIndex}:${paragraphIndex}`,
-      range: paragraph.getRange(),
-    }))
-    inventory.splice(index, 1, ...ranges)
-  }
-  for (const item of inventory) item.range.load("text")
-  await context.sync()
-  for (const item of inventory) item.normalizedText = canonicalText(item.range.text)
-  return inventory
 }

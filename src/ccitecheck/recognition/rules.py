@@ -12,7 +12,12 @@ from ..domain.citation import (
 from ..domain.document import BlockRelationType, BlockType, ParsedDocument
 from ..parsing.relations import build_block_relations
 from .cases import extract_case_refs, find_holding_trigger_position, has_holding_trigger
-from .statutes import extract_articles_only, extract_legal_sources, has_article_reference
+from .statutes import (
+    extract_articles_only,
+    extract_legal_sources,
+    extract_partial_refs,
+    has_article_reference,
+)
 
 
 _RELATION_PRIORITY = {
@@ -68,6 +73,10 @@ def extract_rule_candidates(
             resolved = _resolve_block_source(
                 current_block, block_map, records, current_anchor_id=anchor.anchor
             )
+            if not articles and resolved:
+                articles = _merge_partial_with_inherited_article(
+                    extract_partial_refs(text), resolved[2]
+                )
             if articles and resolved:
                 source_anchor_id, source_block, sources = resolved
                 inherited_sources = _build_inherited_sources(
@@ -149,6 +158,28 @@ def _resolve_block_source(
         if relation.relation_type != BlockRelationType.TABLE_ABOVE:
             return None
     return None
+
+
+def _merge_partial_with_inherited_article(partial, source_list: list) -> list:
+    """用唯一承前条号补齐仅款/项引用；歧义时放弃。"""
+    from ..domain.citation import ArticleRef
+
+    if partial is None or len(source_list) != 1:
+        return []
+    parent_articles = source_list[0].articles
+    if len(parent_articles) != 1:
+        return []
+    parent = parent_articles[0]
+    paragraphs = list(partial.paragraphs)
+    if not paragraphs and partial.items:
+        if len(parent.paragraphs) != 1:
+            return []
+        paragraphs = list(parent.paragraphs)
+    return [ArticleRef(
+        article=parent.article,
+        paragraphs=paragraphs,
+        items=list(partial.items),
+    )]
 
 
 def _build_inherited_sources(
