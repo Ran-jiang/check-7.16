@@ -25,6 +25,7 @@ from ccitecheck.parsing.feishu import parse_feishu_snapshot
 from ccitecheck.output import render_report_html, summarize_verification
 
 from .schema import (
+    DebugEventRequest,
     DocumentCheckRequest,
     DocumentCheckResponse,
     FeishuDocumentCheckRequest,
@@ -32,6 +33,7 @@ from .schema import (
     ReportResponse,
     SelectionCheckRequest,
 )
+from .debug_capture import append_event, create_run, write_json
 
 ADDIN_ROOT = PROJECT_ROOT / "apps" / "word_addin"
 FEISHU_ADDIN_ROOT = PROJECT_ROOT / "apps" / "feishu"
@@ -77,6 +79,11 @@ def _validate_scope(request) -> None:
 def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
     _validate_scope(request)
     document_bytes = _decode_document(request.docx_base64)
+    debug_run_id = create_run("document", document_bytes)
+    write_json(debug_run_id, "request.json", {
+        **request.model_dump(exclude={"docx_base64"}),
+        "docx_base64_length": len(request.docx_base64),
+    })
     if len(document_bytes) > MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="文档超过 25 MB 限制")
     if not document_bytes.startswith(b"PK"):
@@ -87,11 +94,13 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
             document_path = Path(temporary_dir) / "document.docx"
             document_path.write_bytes(document_bytes)
             parsed_document = parse_and_validate_document(document_path)
+            write_json(debug_run_id, "parsed-document.json", parsed_document)
             claim_document = extract_document_claims(
                 parsed_document,
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
+            write_json(debug_run_id, "claim-document.json", claim_document)
             verification = verify_document_claims(
                 claim_document,
                 LAW_DB,
@@ -100,15 +109,22 @@ def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
                 include_cases=request.include_cases,
             )
     except DocumentPipelineError as exc:
+        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+        raise
 
-    return DocumentCheckResponse(
+    response = DocumentCheckResponse(
         file_name=Path(request.file_name).name,
         document_key="sha256:" + hashlib.sha256(document_bytes).hexdigest(),
         semantic_check=request.semantic_check,
         summary=summarize_verification(verification),
         verification=verification,
+        debug_run_id=debug_run_id,
     )
+    write_json(debug_run_id, "response.json", response)
+    return response
 
 
 @app.post("/api/checks/selection", response_model=DocumentCheckResponse)
@@ -121,6 +137,17 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
 
     from docx import Document as DocxDocument
 
+    debug_document = (
+        _decode_document(request.debug_docx_base64)
+        if request.debug_docx_base64
+        else None
+    )
+    debug_run_id = create_run("selection", debug_document)
+    write_json(debug_run_id, "request.json", {
+        **request.model_dump(exclude={"debug_docx_base64"}),
+        "debug_docx_base64_length": len(request.debug_docx_base64 or ""),
+    })
+
     try:
         with tempfile.TemporaryDirectory(prefix="ccitecheck-selection-") as temporary_dir:
             selection_path = Path(temporary_dir) / "selection.docx"
@@ -129,11 +156,13 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 selection_doc.add_paragraph(line)
             selection_doc.save(selection_path)
             parsed_document = parse_and_validate_document(selection_path)
+            write_json(debug_run_id, "parsed-selection.json", parsed_document)
             claim_document = extract_document_claims(
                 parsed_document,
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
+            write_json(debug_run_id, "claim-document.json", claim_document)
             verification = verify_document_claims(
                 claim_document,
                 LAW_DB,
@@ -143,9 +172,13 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
             )
             _rebase_selection_locations(verification, request.source_blocks)
     except DocumentPipelineError as exc:
+        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+        raise
 
-    return DocumentCheckResponse(
+    response = DocumentCheckResponse(
         file_name=f"{Path(request.file_name).name}（选中片段）",
         document_key="sha256:" + hashlib.sha256(
             (Path(request.file_name).name + "\0" + request.text).encode("utf-8")
@@ -153,12 +186,16 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
         semantic_check=request.semantic_check,
         summary=summarize_verification(verification),
         verification=verification,
+        debug_run_id=debug_run_id,
     )
+    write_json(debug_run_id, "response.json", response)
+    return response
 
 
 def _rebase_selection_locations(verification, source_blocks) -> None:
     """把临时选区 DOCX 的段落坐标映射回当前 Word 文档。"""
-    for check in [*verification.legal_checks, *verification.case_checks]:
+    located_items = [*verification.citation_cards, *verification.case_checks]
+    for check in located_items:
         rebased = []
         for location in check.source_locations:
             parts = location.block_id.split(":")
@@ -173,6 +210,17 @@ def _rebase_selection_locations(verification, source_blocks) -> None:
             location.char_end += source.char_start
             rebased.append(location)
         check.source_locations = rebased
+
+
+@app.post("/api/debug-events", status_code=204)
+def capture_debug_event(request: DebugEventRequest) -> None:
+    try:
+        append_event(request.run_id, {
+            "event": request.event,
+            "payload": request.payload,
+        })
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/feishu/checks", response_model=DocumentCheckResponse)

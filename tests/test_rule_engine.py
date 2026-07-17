@@ -141,6 +141,39 @@ def test_multiple_legal_sources():
     assert "民事诉讼法" in titles
 
 
+def test_multiple_articles_keep_law_ownership_and_paragraph_grouping():
+    text = (
+        "综上所述，依照《中华人民共和国商标法》第十三条第一款、第三款，"
+        "《最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释》"
+        "第九条、第十条，《最高人民法院关于审理商标民事纠纷案件适用法律若干问题的解释》"
+        "第八条规定，判决如下："
+    )
+    sources = extract_legal_sources(text)
+    assert [source.title for source in sources] == [
+        "中华人民共和国商标法",
+        "最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释",
+        "最高人民法院关于审理商标民事纠纷案件适用法律若干问题的解释",
+    ]
+    assert [(article.article, article.paragraphs) for article in sources[0].articles] == [
+        ("第十三条", ["第一款", "第三款"]),
+    ]
+    assert [article.article for article in sources[1].articles] == ["第九条", "第十条"]
+    assert [article.article for article in sources[2].articles] == ["第八条"]
+
+
+def test_nested_bare_law_does_not_attach_to_explicit_source():
+    text = (
+        "《最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释》"
+        "第九条规定，属于商标法第十三条第二款规定的容易导致混淆。"
+    )
+    sources = extract_legal_sources(text)
+    assert [(source.title, [article.article for article in source.articles]) for source in sources] == [
+        ("最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释", ["第九条"]),
+        ("商标法", ["第十三条"]),
+    ]
+    assert sources[1].articles[0].paragraphs == ["第二款"]
+
+
 # ============================================================
 # Test 3: 法条转述并入 legal_source_claim（不再区分逐字/转述）
 # ============================================================

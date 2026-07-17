@@ -23,12 +23,16 @@ from pathlib import Path
 from typing import Optional
 
 from ....infrastructure.paths import PROJECT_ROOT
+from ...queries import build_article_semantic_fallback_query
 from .client import (
     PkulawArticle,
     PkulawLawRecord,
     PkulawMcpClient,
     PkulawNotFoundError,
+    PkulawMcpError,
 )
+from .matching import match_law_record
+from .urls import usable_mcp_url
 
 DEFAULT_CACHE_DB = PROJECT_ROOT / "data" / "pkulaw_cache.sqlite"
 
@@ -87,7 +91,7 @@ class CachedPkulawClient:
 
     # ---- 条文全文 ----
 
-    def get_law_item_content(self, title: str, article_no: str) -> PkulawArticle:
+    def get_article(self, title: str, article_no: str) -> PkulawArticle:
         key = f"{title}|{article_no}"
         with connect_cache(self.db_path) as conn:
             entry = self._fresh_entry(conn, "article", key)
@@ -95,20 +99,50 @@ class CachedPkulawClient:
                 if entry["status"] == "not_found":
                     raise PkulawNotFoundError("未找到数据（缓存）")
                 return _article_from_payload(json.loads(entry["payload"]))
-
             try:
-                article = self.client.get_law_item_content(title, article_no)
+                article = self.client.get_article(title, article_no)
             except PkulawNotFoundError:
                 _upsert(conn, "article", key, "not_found", {"title": title})
                 raise
-            # 只有现行有效的条文才缓存全文；废止法规按约定不存全文
             if not _is_repealed(article.timeliness):
                 _upsert(conn, "article", key, "effective", _article_payload(article))
             return article
 
+    def search_law_articles_for_article(
+        self, title: str, article_no: str
+    ) -> list[PkulawArticle]:
+        key = f"{title}|{article_no}"
+        with connect_cache(self.db_path) as conn:
+            entry = self._fresh_entry(conn, "article_semantic", key)
+            if entry is not None:
+                if entry["status"] == "not_found":
+                    return []
+                return [
+                    _article_from_payload(item) for item in json.loads(entry["payload"])
+                ]
+            query = build_article_semantic_fallback_query(title, article_no)
+            try:
+                articles = self.client.search_law_articles(query)
+            except PkulawNotFoundError:
+                _upsert(conn, "article_semantic", key, "not_found", [])
+                raise
+            if articles:
+                _upsert(
+                    conn,
+                    "article_semantic",
+                    key,
+                    "effective",
+                    [_article_payload(article) for article in articles],
+                )
+            else:
+                _upsert(conn, "article_semantic", key, "not_found", [])
+            return articles
+
     # ---- 法规列表（含时效元数据） ----
 
-    def get_law_list(self, title: str = "", fulltext: str = "") -> list[PkulawLawRecord]:
+    def get_law_list(
+        self, title: str = "", fulltext: str = ""
+    ) -> list[PkulawLawRecord]:
         if fulltext or not title:
             return self.client.get_law_list(title=title, fulltext=fulltext)
         with connect_cache(self.db_path) as conn:
@@ -117,8 +151,7 @@ class CachedPkulawClient:
                 if entry["status"] == "not_found":
                     raise PkulawNotFoundError("未找到数据（缓存）")
                 return [
-                    _record_from_payload(item)
-                    for item in json.loads(entry["payload"])
+                    _record_from_payload(item) for item in json.loads(entry["payload"])
                 ]
 
             try:
@@ -126,15 +159,17 @@ class CachedPkulawClient:
             except PkulawNotFoundError:
                 _upsert(conn, "law", title, "not_found", {"title": title})
                 raise
-            repealed = bool(records) and _is_repealed(records[0].timeliness)
+            matched = match_law_record(title, records)
+            repealed = matched is not None and _is_repealed(matched.timeliness)
             payload = [
-                # 废止条目只保留法名+时效；有效条目保留完整元数据（含链接）
-                {"title": r.title, "timeliness": r.timeliness}
+                {"title": record.title, "timeliness": record.timeliness}
                 if repealed
-                else _record_payload(r)
-                for r in records
+                else _record_payload(record)
+                for record in records
             ]
-            _upsert(conn, "law", title, "repealed" if repealed else "effective", payload)
+            _upsert(
+                conn, "law", title, "repealed" if repealed else "effective", payload
+            )
             return records
 
     # ---- 案号识别不缓存（输入是动态文书文本） ----
@@ -179,15 +214,21 @@ class CachedPkulawClient:
         title = row["key"].split("|", 1)[0]
         try:
             records = self.client.get_law_list(title=title)
-        except Exception:
-            # 验证失败时保守续期一天，避免把网络抖动放大成缓存雪崩
+        except PkulawMcpError:
+            # 明确的法宝服务故障只短期续用旧数据，避免网络抖动触发缓存雪崩；
+            # 其他异常不捕获，确保编程和解析错误及时暴露。
             conn.execute(
                 "UPDATE cache_entries SET verified_at = ? WHERE kind = ? AND key = ?",
-                (_now() - TTL_SECONDS["effective"] + 86400, row["kind"], row["key"]),
+                (
+                    _now() - TTL_SECONDS["effective"] + 86400,
+                    row["kind"],
+                    row["key"],
+                ),
             )
             conn.commit()
             return True
-        if records and not _is_repealed(records[0].timeliness):
+        matched = match_law_record(title, records)
+        if matched is not None and not _is_repealed(matched.timeliness):
             conn.execute(
                 "UPDATE cache_entries SET verified_at = ? WHERE kind = ? AND key = ?",
                 (_now(), row["kind"], row["key"]),
@@ -209,7 +250,12 @@ def cache_status(db_path: Optional[Path] = None) -> dict:
         expired = conn.execute(
             "SELECT COUNT(*) FROM cache_entries WHERE (? - verified_at) > "
             "CASE status WHEN 'effective' THEN ? WHEN 'repealed' THEN ? ELSE ? END",
-            (now, TTL_SECONDS["effective"], TTL_SECONDS["repealed"], TTL_SECONDS["not_found"]),
+            (
+                now,
+                TTL_SECONDS["effective"],
+                TTL_SECONDS["repealed"],
+                TTL_SECONDS["not_found"],
+            ),
         ).fetchone()[0]
         return {
             "path": str(db_path or cache_db_path()),
@@ -218,7 +264,9 @@ def cache_status(db_path: Optional[Path] = None) -> dict:
         }
 
 
-def cache_refresh(client: Optional[PkulawMcpClient] = None, db_path: Optional[Path] = None) -> dict:
+def cache_refresh(
+    client: Optional[PkulawMcpClient] = None, db_path: Optional[Path] = None
+) -> dict:
     """再验证所有过期的现行有效条目；清除过期的否定/废止条目。"""
     real_client = client or PkulawMcpClient()
     cached = CachedPkulawClient(real_client, db_path)
@@ -250,7 +298,9 @@ def cache_clear(db_path: Optional[Path] = None) -> int:
         return count
 
 
-def _upsert(conn: sqlite3.Connection, kind: str, key: str, status: str, payload) -> None:
+def _upsert(
+    conn: sqlite3.Connection, kind: str, key: str, status: str, payload
+) -> None:
     now = _now()
     conn.execute(
         "INSERT OR REPLACE INTO cache_entries (kind, key, status, payload, fetched_at, verified_at)"
@@ -277,7 +327,7 @@ def _record_payload(record: PkulawLawRecord) -> dict:
 def _record_from_payload(payload: dict) -> PkulawLawRecord:
     return PkulawLawRecord(
         title=payload.get("title", ""),
-        url=payload.get("url"),
+        url=usable_mcp_url(payload.get("url")),
         category=payload.get("category", []),
         document_no=payload.get("document_no"),
         issue_department=payload.get("issue_department", []),
@@ -289,7 +339,11 @@ def _record_from_payload(payload: dict) -> PkulawLawRecord:
 
 
 def _article_payload(article: PkulawArticle) -> dict:
-    return {**_record_payload(article), "article_no": article.article_no, "article_text": article.article_text}
+    return {
+        **_record_payload(article),
+        "article_no": article.article_no,
+        "article_text": article.article_text,
+    }
 
 
 def _article_from_payload(payload: dict) -> PkulawArticle:

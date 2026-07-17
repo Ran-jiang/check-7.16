@@ -109,7 +109,9 @@ def _split_sentences_state_machine(text: str) -> list[SentenceSpan]:
         elif ch == ")":
             paren_depth = max(0, paren_depth - 1)
         elif ch == "“":  # 左中文引号
-            quote_depth = 1 - quote_depth
+            quote_depth += 1
+        elif ch == "”":  # 右中文引号
+            quote_depth = max(0, quote_depth - 1)
         elif ch == "\"":
             # 英文引号简单切换
             quote_depth = 1 - quote_depth

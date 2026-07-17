@@ -33,6 +33,7 @@ class SelectionCheckRequest(BaseModel):
     include_statutes: bool = True
     include_cases: bool = True
     source_blocks: list[SelectionSourceBlock] = Field(default_factory=list)
+    debug_docx_base64: str | None = None
 
 
 class FeishuDocumentCheckRequest(BaseModel):
@@ -53,6 +54,13 @@ class DocumentCheckResponse(BaseModel):
     semantic_check: bool
     summary: CheckSummary
     verification: FrontendVerificationDocument
+    debug_run_id: str | None = None
+
+
+class DebugEventRequest(BaseModel):
+    run_id: str = Field(min_length=1, max_length=64)
+    event: str = Field(min_length=1, max_length=64)
+    payload: dict = Field(default_factory=dict)
 
 
 class ReportRequest(BaseModel):

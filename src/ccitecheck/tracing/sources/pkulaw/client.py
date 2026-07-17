@@ -9,17 +9,32 @@ import json
 import os
 import re
 import socket
-import ssl
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
-from ....domain.legal_numbers import chinese_number_to_int
+from ....domain.legal_numbers import int_to_chinese_number
 
-from ....infrastructure.paths import PROJECT_ROOT
+from ....infrastructure.config import load_project_env
+from ....infrastructure.http import default_ssl_context
+from ...queries import build_article_semantic_fallback_query
+from .models import (
+    PkulawArticle,
+    PkulawCaseNumber,
+    PkulawCaseRecord,
+    PkulawLawRecord,
+    PkulawMcpError,
+    PkulawNotConfiguredError,
+    PkulawNotFoundError,
+)
+from .parsing import (
+    parse_article_records as _parse_article_search_response,
+    parse_case_numbers as _parse_anhao_response,
+    parse_case_records as _parse_case_list_response,
+    parse_exact_article as _parse_get_article_response,
+    parse_law_records as _parse_law_list_response,
+)
 
 
 DEFAULT_GATEWAY = "https://apim-gateway.pkulaw.com"
@@ -29,73 +44,7 @@ MCP_ENDPOINTS = {
     "case_keyword": "/mcp-case",
     "case_semantic": "/mcp-case-search-service",
     "case_number": "/case_number_recognition",
-    "fatiao": "/mcp-fatiao",
 }
-
-
-def default_ssl_context() -> ssl.SSLContext:
-    """python.org 版 Python 不读系统钥匙串，显式使用 certifi 的 CA 库。"""
-    try:
-        import certifi
-
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        return ssl.create_default_context()
-
-
-@dataclass(frozen=True)
-class PkulawLawRecord:
-    title: str
-    url: Optional[str] = None
-    category: list[str] = field(default_factory=list)
-    document_no: Optional[str] = None
-    issue_department: list[str] = field(default_factory=list)
-    issue_date: Optional[str] = None
-    implement_date: Optional[str] = None
-    timeliness: list[str] = field(default_factory=list)
-    effectiveness: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class PkulawArticle(PkulawLawRecord):
-    article_no: str = ""
-    article_text: str = ""
-
-
-@dataclass(frozen=True)
-class PkulawCaseNumber:
-    text: str
-    start: int
-    end: int
-    gid: str
-    case_flag: str
-    court: str
-    title: str
-    last_instance_date: Optional[str] = None
-    url: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class PkulawCaseRecord:
-    title: str
-    case_number: str = ""
-    gid: str = ""
-    court: str = ""
-    last_instance_date: Optional[str] = None
-    url: Optional[str] = None
-    fulltext: Optional[str] = None
-
-
-class PkulawMcpError(RuntimeError):
-    pass
-
-
-class PkulawNotConfiguredError(PkulawMcpError):
-    """本地没有配置可用的 MCP 凭证。"""
-
-
-class PkulawNotFoundError(PkulawMcpError):
-    """法宝检索已完成但未命中任何数据（区别于配置/网络错误）。"""
 
 
 class PkulawMcpClient:
@@ -105,30 +54,30 @@ class PkulawMcpClient:
         gateway: Optional[str] = None,
         timeout: int = 20,
     ):
-        _load_dotenv()
+        load_project_env()
         self.access_token = _clean_token(
-            access_token
-            or os.getenv("PKULAW_ACCESS_TOKEN")
+            access_token or os.getenv("PKULAW_ACCESS_TOKEN")
         )
         self.gateway = (
-            gateway
-            or os.getenv("PKULAW_MCP_GATEWAY")
-            or DEFAULT_GATEWAY
+            gateway or os.getenv("PKULAW_MCP_GATEWAY") or DEFAULT_GATEWAY
         ).rstrip("/")
         self.timeout = timeout
         if not self.access_token:
             raise PkulawNotConfiguredError("Pkulaw MCP credentials are not configured")
 
-    def get_law_item_content(self, title: str, article_no: str) -> PkulawArticle:
+    def get_article(self, title: str, article_no: str) -> PkulawArticle:
+        normalized = normalize_article_no(article_no)
         payload = self._call_tool(
-            endpoint=MCP_ENDPOINTS["fatiao"],
-            tool_name="get_law_item_content",
-            arguments={"title": title, "tiao_num": article_no_to_number(article_no)},
+            endpoint=MCP_ENDPOINTS["law_semantic"],
+            tool_name="get_article",
+            arguments={"title": title, "number": normalized},
         )
         data = _extract_payload_data(payload)
-        return _parse_law_item_response(data, article_no)
+        return _parse_get_article_response(data, normalized)
 
-    def get_law_list(self, title: str = "", fulltext: str = "") -> list[PkulawLawRecord]:
+    def get_law_list(
+        self, title: str = "", fulltext: str = ""
+    ) -> list[PkulawLawRecord]:
         if not title and not fulltext:
             raise PkulawMcpError("title or fulltext is required")
         payload = self._call_tool(
@@ -149,6 +98,13 @@ class PkulawMcpClient:
         )
         data = _extract_payload_data(payload)
         return _parse_article_search_response(data)
+
+    def search_law_articles_for_article(
+        self, title: str, article_no: str
+    ) -> list[PkulawArticle]:
+        return self.search_law_articles(
+            build_article_semantic_fallback_query(title, article_no)
+        )
 
     def recognize_case_numbers(self, text: str) -> list[PkulawCaseNumber]:
         payload = self._call_tool(
@@ -183,7 +139,9 @@ class PkulawMcpClient:
         data = _extract_payload_data(payload)
         return _parse_case_list_response(data)
 
-    def _call_tool(self, endpoint: str, tool_name: str, arguments: dict[str, Any]) -> Any:
+    def _call_tool(
+        self, endpoint: str, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
         url = f"{self.gateway}{endpoint}"
         request_body = {
             "jsonrpc": "2.0",
@@ -230,25 +188,22 @@ class PkulawMcpClient:
         raise last_error
 
 
-def article_no_to_number(article_no: str) -> int | float:
-    text = article_no.strip().replace("第", "").replace("条", "")
-    if text.isdigit():
-        return int(text)
-    if "之" in text:
-        base, suffix = text.split("之", 1)
-        base_number = chinese_number_to_int(base)
-        suffix_number = chinese_number_to_int(suffix)
-        if (
-            base_number is not None
-            and suffix_number is not None
-            and base_number > 0
-            and 0 < suffix_number < 10
-        ):
-            return float(f"{base_number}.{suffix_number}")
-    value = chinese_number_to_int(text)
-    if value is None or value <= 0:
-        raise PkulawMcpError(f"Unsupported article number: {article_no}")
-    return value
+_ARTICLE_NO = re.compile(r"^第(?P<base>\d+)条(?:之(?P<suffix>\d+))?$")
+
+
+def normalize_article_no(article_no: str) -> str:
+    text = article_no.strip()
+    match = _ARTICLE_NO.fullmatch(text)
+    if not match:
+        return text
+    try:
+        base = int_to_chinese_number(int(match.group("base")))
+        suffix = match.group("suffix")
+        return f"第{base}条" + (
+            f"之{int_to_chinese_number(int(suffix))}" if suffix else ""
+        )
+    except ValueError:
+        return text
 
 
 def _parse_mcp_response(raw: str) -> Any:
@@ -292,281 +247,8 @@ def _extract_payload_data(payload: Any) -> Any:
     return result
 
 
-def _parse_law_item_response(data: Any, requested_article_no: str) -> PkulawArticle:
-    item = _response_data(data)
-    if not isinstance(item, dict):
-        raise PkulawMcpError("Unexpected get_law_item_content response shape")
-    title = item.get("Title") or item.get("title")
-    text = item.get("FullText") or item.get("fulltext") or item.get("article") or item.get("original_text")
-    if not title or not text:
-        raise PkulawMcpError("Pkulaw response is missing title or article text")
-    base = _parse_law_record(item)
-    return PkulawArticle(
-        title=base.title,
-        url=base.url,
-        category=base.category,
-        document_no=base.document_no,
-        issue_department=base.issue_department,
-        issue_date=base.issue_date,
-        implement_date=base.implement_date,
-        timeliness=base.timeliness,
-        effectiveness=base.effectiveness,
-        article_no=requested_article_no,
-        article_text=_strip_article_heading(str(text)),
-    )
-
-
-def _strip_article_heading(text: str) -> str:
-    """法宝 FullText 有时自带“第X条”，证据字段只保存条文内容。"""
-    return re.sub(
-        r"^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*",
-        "",
-        text,
-        count=1,
-    )
-
-
-def _parse_anhao_response(data: Any) -> list[PkulawCaseNumber]:
-    value = _response_data(data)
-    items: Any = None
-    if isinstance(value, list):
-        items = value
-    elif isinstance(value, dict):
-        for key in (
-            "anhaoname", "anhaoName", "AnhaoName", "items", "records",
-            "results", "list", "cases", "case_numbers", "caseNumbers",
-        ):
-            candidate = value.get(key)
-            if isinstance(candidate, list):
-                items = candidate
-                break
-        # 部分网关在仅识别到一个案号时直接返回记录对象。
-        if items is None and any(
-            key in value for key in ("caseFlag", "case_number", "CaseNO", "text")
-        ):
-            items = [value]
-    if items is None and value in (None, {}):
-        return []
-    if not isinstance(items, list):
-        raise PkulawMcpError("Unexpected anhao_recognition response shape")
-    parsed = [_parse_case_number(item) for item in items if isinstance(item, dict)]
-    # 网关偶尔会在不同包装层重复返回同一案号，以规范化案号/GID 去重。
-    unique: dict[tuple[str, str], PkulawCaseNumber] = {}
-    for item in parsed:
-        key = (_compact_case_number(item.case_flag or item.text), item.gid)
-        unique.setdefault(key, item)
-    return list(unique.values())
-
-
-def _parse_case_list_response(data: Any) -> list[PkulawCaseRecord]:
-    records = _response_records(data)
-    return [
-        parsed
-        for item in records
-        if isinstance(item, dict)
-        if (parsed := _parse_case_record(item)) is not None
-    ]
-
-
-def _parse_case_record(item: dict[str, Any]) -> PkulawCaseRecord | None:
-    record = _flatten_metadata(item)
-    title = _first_value(record, "Title", "title", "CaseName", "case_name")
-    case_number = _first_value(
-        record,
-        "CaseFlag",
-        "caseFlag",
-        "CaseNO",
-        "CaseNo",
-        "case_number",
-        "caseNumber",
-    )
-    if not title and not case_number:
-        return None
-    return PkulawCaseRecord(
-        title=str(title or case_number),
-        case_number=str(case_number or ""),
-        gid=str(_first_value(record, "Gid", "gid", "GID") or ""),
-        court=str(_first_value(record, "Court", "court") or ""),
-        last_instance_date=_optional_text(
-            _first_value(record, "LastInstanceDate", "lastInstanceDate", "judgment_date")
-        ),
-        url=_optional_text(_first_value(record, "Url", "url", "URL")),
-        fulltext=_optional_text(
-            _first_value(
-                record,
-                "FullText",
-                "fulltext",
-                "full_text",
-                "Content",
-                "content",
-                "excerpt",
-            )
-        ),
-    )
-
-
-def _parse_case_number(item: dict[str, Any]) -> PkulawCaseNumber:
-    item = _flatten_metadata(item)
-    return PkulawCaseNumber(
-        text=str(_first_value(item, "text", "matched_text", "anhao") or ""),
-        start=int(_first_value(item, "start", "startIndex") or -1),
-        end=int(_first_value(item, "end", "endIndex") or -1),
-        gid=str(_first_value(item, "gid", "Gid", "GID") or ""),
-        case_flag=str(_first_value(
-            item, "caseFlag", "CaseFlag", "case_number", "caseNumber", "CaseNO", "CaseNo"
-        ) or ""),
-        court=str(_first_value(item, "court", "Court") or ""),
-        title=str(_first_value(item, "title", "Title", "CaseName", "case_name") or ""),
-        last_instance_date=_optional_text(_first_value(
-            item, "lastInstanceDate", "LastInstanceDate", "judgment_date"
-        )),
-        url=_optional_text(_first_value(item, "url", "Url", "URL")),
-    )
-
-
-def _compact_case_number(value: str) -> str:
-    return "".join(str(value).translate(str.maketrans({"（": "(", "）": ")", "〔": "(", "〕": ")"})).split())
-
-
-def _parse_law_list_response(data: Any) -> list[PkulawLawRecord]:
-    records = _response_records(data)
-    return [_parse_law_record(record) for record in records if isinstance(record, dict)]
-
-
-def _parse_article_search_response(data: Any) -> list[PkulawArticle]:
-    records = _response_records(data)
-    articles: list[PkulawArticle] = []
-    for raw in records:
-        if not isinstance(raw, dict):
-            continue
-        record = _flatten_metadata(raw)
-        title = _first_value(record, "Title", "title", "LawTitle", "law_title")
-        article_text = _first_value(
-            record,
-            "FullText",
-            "fulltext",
-            "article_text",
-            "ArticleText",
-            "Content",
-            "content",
-            "text",
-        )
-        if not title or not article_text:
-            continue
-        base = _parse_law_record(record)
-        article_no = _first_value(
-            record,
-            "ArticleNO",
-            "ArticleNo",
-            "article_no",
-            "TiaoNum",
-            "tiao_num",
-        )
-        articles.append(
-            PkulawArticle(
-                title=base.title,
-                url=base.url,
-                category=base.category,
-                document_no=base.document_no,
-                issue_department=base.issue_department,
-                issue_date=base.issue_date,
-                implement_date=base.implement_date,
-                timeliness=base.timeliness,
-                effectiveness=base.effectiveness,
-                article_no=str(article_no or "相关条款"),
-                article_text=str(article_text),
-            )
-        )
-    return articles
-
-
-def _parse_law_record(record: dict[str, Any]) -> PkulawLawRecord:
-    return PkulawLawRecord(
-        title=record.get("Title") or record.get("title") or "",
-        url=record.get("Url") or record.get("url"),
-        category=_as_list(record.get("Category")),
-        document_no=record.get("DocumentNO") or record.get("document_no"),
-        issue_department=_as_list(record.get("IssueDepartment")),
-        issue_date=record.get("IssueDate") or record.get("issue_date"),
-        implement_date=record.get("ImplementDate") or record.get("implement_date"),
-        timeliness=_as_list(record.get("TimelinessDic") or record.get("timeliness")),
-        effectiveness=_as_list(record.get("EffectivenessDic") or record.get("effectiveness")),
-    )
-
-
-def _response_data(data: Any) -> Any:
-    if isinstance(data, dict):
-        if data.get("Message") not in (None, "成功", "success"):
-            message = str(data.get("Message"))
-            if "未找到" in message or "无数据" in message:
-                raise PkulawNotFoundError(message)
-            raise PkulawMcpError(message)
-        if "Data" in data:
-            return data["Data"]
-        if "data" in data:
-            return data["data"]
-    return data
-
-
-def _response_records(data: Any) -> list[Any]:
-    value = _response_data(data)
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict):
-        for key in ("items", "records", "results", "list", "articles", "cases"):
-            nested = value.get(key)
-            if isinstance(nested, list):
-                return nested
-    if value in (None, {}):
-        return []
-    raise PkulawMcpError("Unexpected Pkulaw list response shape")
-
-
-def _flatten_metadata(record: dict[str, Any]) -> dict[str, Any]:
-    metadata = record.get("metadata")
-    if isinstance(metadata, dict):
-        return {**record, **metadata}
-    return record
-
-
-def _first_value(record: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def _optional_text(value: Any) -> Optional[str]:
-    return str(value) if value not in (None, "") else None
-
-
-def _as_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item is not None]
-    if isinstance(value, dict):
-        return [str(item) for item in value.values() if item is not None]
-    return [str(value)]
-
-
 def _clean_token(token: Optional[str]) -> Optional[str]:
     if token is None:
         return None
     value = token.strip().strip('"').strip("'")
-    if value.lower().startswith("bearer "):
-        return value[7:].strip()
-    return value
-
-
-def _load_dotenv() -> None:
-    for path in (Path.cwd() / ".env", PROJECT_ROOT / ".env"):
-        if not path.exists():
-            continue
-        for line in path.read_text(encoding="utf-8-sig").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, value = stripped.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    return value[7:].strip() if value.lower().startswith("bearer ") else value

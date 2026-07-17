@@ -1,15 +1,16 @@
-import { checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
+import { captureDebugEvent, checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
 import { readDecisions, saveDecision } from "./history.js"
 import {
   connectToWord,
   getDocumentBase64,
   getDocumentName,
   getSelectedContent,
-  jumpToSource,
 } from "./office-document.js"
+import { clearSourceBookmarks, jumpToSource, seedSourceBookmarks } from "./word-bookmarks.js"
 import { CheckUi } from "./ui.js"
 
 const ui = new CheckUi()
+const CAPTURE_SELECTION_DEBUG_DOCX = false
 let documentName = "未命名文档.docx"
 let lastResult = null
 let lastCheckMode = "full"
@@ -18,12 +19,20 @@ document.getElementById("start-button").addEventListener("click", runCheck)
 document.getElementById("selection-button").addEventListener("click", runSelectionCheck)
 document.getElementById("rerun-button").addEventListener("click", rerunCurrentCheck)
 document.getElementById("export-button").addEventListener("click", exportCurrentReport)
+document.getElementById("clear-bookmarks-button").addEventListener("click", clearBookmarkMarkers)
 document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
 
 ui.setHandlers({
-  onJump: check => {
-    jumpToSource(check.source_locations).catch(error => ui.showMessage(error.message))
+  onJump: async check => {
+    try {
+      const details = await jumpToSource(check, lastResult.document_key)
+      await saveWordDebug("locate_success", check, details)
+      if (details.warning) ui.showMessage(details.warning)
+    } catch (error) {
+      await saveWordDebug("locate_error", check, null, error)
+      ui.showMessage(error.message)
+    }
   },
   onDecide: (checkId, decision) => {
     if (!lastResult) return {}
@@ -80,7 +89,7 @@ async function runCheck() {
       semantic_check: true,
       ...scope,
     })
-    finishCheck(result, "full")
+    await finishCheck(result, "full")
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "核查失败")
@@ -109,10 +118,13 @@ async function runSelectionCheck() {
       file_name: documentName,
       text: selection.text,
       source_blocks: selection.source_blocks,
+      ...(CAPTURE_SELECTION_DEBUG_DOCX
+        ? { debug_docx_base64: await getDocumentBase64() }
+        : {}),
       semantic_check: true,
       ...scope,
     })
-    finishCheck(result, "selection")
+    await finishCheck(result, "selection")
   } catch (error) {
     showHome()
     ui.showMessage(error.message || "选中内容核查失败")
@@ -121,13 +133,52 @@ async function runSelectionCheck() {
   }
 }
 
-function finishCheck(result, mode) {
+async function saveWordDebug(event, check, details, error = null) {
+  if (!lastResult?.debug_run_id) return
+  const officeError = error ? {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    stack: error.stack,
+    debugInfo: error.debugInfo,
+    innerError: error.innerError,
+  } : null
+  try {
+    await captureDebugEvent({
+      run_id: lastResult.debug_run_id,
+      event,
+      payload: {
+        document_name: documentName,
+        check,
+        details,
+        error: officeError,
+      },
+    })
+  } catch (_) {
+    // 调试留档不能影响正常定位操作。
+  }
+}
+
+async function finishCheck(result, mode) {
   lastResult = result
   lastCheckMode = mode
   document.getElementById("rerun-button").textContent = mode === "selection" ? "继续核查" : "重新核查"
-  ui.setStage("stage-check", "complete", `已识别 ${result.summary.total} 处法律引用`)
-  ui.setStage("stage-report", "complete", "核查完成，可导出报告")
+  ui.setStage("stage-check", "complete", `已识别 ${result.summary.card_total} 个引用句、${result.summary.reference_total} 条引用`)
+  const debugLabel = result.debug_run_id ? ` · 调试 ${result.debug_run_id}` : ""
+  ui.setStage("stage-report", "complete", `核查完成，可导出报告${debugLabel}`)
+  let bookmarkError = null
+  let anchors = null
+  try {
+    anchors = await seedSourceBookmarks(result)
+    await saveWordDebug("bookmark_seeded", null, anchors)
+  } catch (error) {
+    bookmarkError = error
+    await saveWordDebug("bookmark_seed_error", null, null, error)
+  }
   ui.renderResults(result, readDecisions(result.document_key))
+  ui.setLocateFailures(anchors?.failed || [])
+  if (bookmarkError) ui.showMessage(bookmarkError.message || "原文定位标记创建失败")
+  else if (anchors.failed.length) ui.showMessage(`${anchors.failed.length} 处原文未能创建定位标记`)
 }
 
 function rerunCurrentCheck() {
@@ -152,6 +203,18 @@ async function exportCurrentReport() {
     ui.showMessage("核查报告已生成，可在浏览器中打印或另存为 PDF")
   } catch (error) {
     ui.showMessage(error.message || "报告导出失败")
+  } finally {
+    ui.setBusy(false)
+  }
+}
+
+async function clearBookmarkMarkers() {
+  try {
+    ui.setBusy(true)
+    const count = await clearSourceBookmarks()
+    ui.showMessage(count ? `已清除 ${count} 个定位标记` : "没有需要清除的定位标记")
+  } catch (error) {
+    ui.showMessage(error.message || "清除定位标记失败")
   } finally {
     ui.setBusy(false)
   }

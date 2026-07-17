@@ -7,13 +7,15 @@ Word、飞书和后续其他输出端应共用这里的统计口径。
 from pydantic import BaseModel
 
 from ..domain.evidence import CaseLookupStatus, LookupStatus
-from ..domain.result import ComparisonVerdict, FrontendVerificationDocument
+from ..domain.result import ComparisonVerdict, FrontendVerificationDocument, SemanticExecutionStatus
 
 
 class VerificationSummary(BaseModel):
     """一次文档核查的数量汇总。"""
 
     total: int
+    card_total: int
+    reference_total: int
     passed: int
     issues: int
     bugs: int
@@ -26,7 +28,12 @@ def summarize_verification(
 ) -> VerificationSummary:
     """按统一口径统计通过、问题和无法判断的数量。"""
     passed = issues = bugs = 0
-    for check in verification.legal_checks:
+    references = [
+        reference
+        for card in verification.citation_cards
+        for reference in card.references
+    ]
+    for check in references:
         comparison = check.semantic_comparison
         if check.rule_findings:
             issues += 1
@@ -36,6 +43,12 @@ def summarize_verification(
                 LookupStatus.ARTICLE_FOUND,
                 LookupStatus.RELEVANT_ARTICLES_FOUND,
             }:
+                passed += 1
+            else:
+                bugs += 1
+            continue
+        if comparison.execution_status != SemanticExecutionStatus.COMPLETED:
+            if comparison.skipped_reason == "nested_reference":
                 passed += 1
             else:
                 bugs += 1
@@ -65,8 +78,12 @@ def summarize_verification(
         }
         for check in verification.case_checks
     )
+    claim_ids = {card.claim_id for card in verification.citation_cards}
+    claim_ids.update(check.claim_id for check in verification.case_checks)
     return VerificationSummary(
-        total=len(verification.legal_checks) + len(verification.case_checks),
+        total=len(references) + len(verification.case_checks),
+        card_total=len(claim_ids),
+        reference_total=len(references) + len(verification.case_checks),
         passed=passed,
         issues=issues,
         bugs=bugs,

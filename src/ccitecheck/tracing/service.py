@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Mapping
@@ -15,8 +16,12 @@ from ..domain.evidence import LookupStatus, SourceTrace
 from .sources.base import LookupRequest, LookupResult, StatuteSource
 from .sources.local_laws import LocalSQLiteSource
 from .sources.pkulaw.statutes import PkulawFallbackSource
+from .sources.pkulaw.urls import is_legacy_mcp_url
 
-DEFAULT_LOOKUP_WORKERS = 6
+try:
+    DEFAULT_LOOKUP_WORKERS = max(1, int(os.getenv("PKULAW_LOOKUP_WORKERS", "8") or "8"))
+except ValueError:
+    DEFAULT_LOOKUP_WORKERS = 8
 
 
 def build_default_sources(db_path: str | Path) -> list[StatuteSource]:
@@ -36,6 +41,7 @@ def lookup_with_chain(
     attempts: list[SourceTrace] = []
     last_result: LookupResult | None = None
     best_partial: LookupResult | None = None
+    local_complete_with_legacy_url: LookupResult | None = None
 
     for source in sources:
         result = source.lookup(request)
@@ -45,6 +51,10 @@ def lookup_with_chain(
             LookupStatus.ARTICLE_FOUND,
             LookupStatus.RELEVANT_ARTICLES_FOUND,
         ):
+            if is_legacy_mcp_url(result.trace.source_url):
+                _discard_legacy_url(result)
+                local_complete_with_legacy_url = result
+                continue
             return result, attempts
         if result.status in (
             LookupStatus.LAW_FOUND_ARTICLE_MISSING,
@@ -54,9 +64,19 @@ def lookup_with_chain(
 
     if last_result is None:
         raise ValueError("No statute sources configured")
+    if local_complete_with_legacy_url is not None:
+        return local_complete_with_legacy_url, attempts
     if best_partial is not None:
         return best_partial, attempts
     return last_result, attempts
+
+
+def _discard_legacy_url(result: LookupResult) -> None:
+    discarded = result.trace.source_url
+    result.trace.source_url = None
+    result.trace.metadata["discarded_legacy_source_url"] = discarded
+    if result.evidence is not None:
+        result.evidence.data_source.source_url = None
 
 
 def run_lookup_batch(

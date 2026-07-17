@@ -31,7 +31,12 @@ async function runCheck() {
 function renderResult(result) {
   const checks = normalizeChecks(result)
   const categories = groupChecks(checks)
-  document.getElementById("issue-total").textContent = String(checks.filter(item => item.state !== "pass").length)
+  const issueTotal = checks.reduce((total, item) => (
+    total + (item.references
+      ? item.references.filter(reference => reference.state !== "pass").length
+      : Number(item.state !== "pass"))
+  ), 0)
+  document.getElementById("issue-total").textContent = String(issueTotal)
   const list = document.getElementById("category-list")
   list.replaceChildren()
   for (const [index, category] of categories.entries()) {
@@ -51,6 +56,7 @@ function renderResult(result) {
 }
 
 function renderCheck(check) {
+  if (check.references) return renderCitationCard(check)
   const article = document.createElement("article")
   article.className = `finding finding-${check.state}`
   article.dataset.checkId = check.check_id
@@ -74,21 +80,53 @@ function renderCheck(check) {
   return article
 }
 
+function renderCitationCard(card) {
+  const article = document.createElement("article")
+  article.className = `finding finding-${card.state}`
+  article.dataset.cardId = card.card_id
+  const multiple = card.references.length > 1
+  const references = card.references.map(reference => `
+    <section class="${multiple ? "citation-reference" : "citation-single-reference"}" data-check-id="${escapeHtml(reference.check_id)}">
+      <div class="finding-head"><span>${escapeHtml(reference.title)}</span><em>${escapeHtml(reference.risk)}</em></div>
+      ${reference.finding ? `<p>${escapeHtml(reference.finding.diff_summary || "建议人工复核")}</p>` : ""}
+      ${reference.finding?.suggestion ? `<div class="suggestion"><span>处理建议</span>${escapeHtml(reference.finding.suggestion)}</div>` : ""}
+      <div class="finding-actions">
+        ${reference.url ? `<a href="${escapeHtml(reference.url)}" target="_blank" rel="noopener noreferrer">查看法条</a>` : ""}
+        <button data-action="resolve">标记已处理</button><button data-action="defer">暂不处理</button>
+      </div>
+    </section>`).join("")
+  article.innerHTML = `<blockquote>${escapeHtml(card.claim_text)}</blockquote>${references}<div class="finding-actions"><button data-action="locate">定位</button></div>`
+  article.querySelector('[data-action="locate"]').addEventListener("click", async () => {
+    try { await host.scrollToLocation(card.location) } catch (error) { showToast(error.message) }
+  })
+  for (const reference of article.querySelectorAll("[data-check-id]")) {
+    reference.querySelector('[data-action="resolve"]').addEventListener("click", () => setDecision(reference, "已处理"))
+    reference.querySelector('[data-action="defer"]').addEventListener("click", () => setDecision(reference, "暂不处理"))
+  }
+  return article
+}
+
 function normalizeChecks(result) {
-  const legal = (result.verification?.legal_checks || []).map(check => {
+  const legal = result.verification.citation_cards.map(card => {
+    const references = card.references.map(check => {
     const findings = [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
     const finding = findings[0]
-    const state = finding ? "issue" : check.semantic_comparison?.verdict === "pass" ? "pass" : "review"
-    return {
+    const existenceOnly = check.verification_scope === "existence_only" && ["article_found", "relevant_articles_found"].includes(check.lookup_status)
+    const state = finding ? "issue" : (check.semantic_comparison?.verdict === "pass" || existenceOnly) ? "pass" : "review"
+      return {
       ...check,
       state,
       finding,
-      risk: finding?.risk_level === "HIGH" ? "高风险" : state === "pass" ? "已通过" : "建议复核",
-      title: `${check.law_title || "法规引用"}${check.article_no || ""}`,
+      risk: finding?.risk_level === "HIGH" ? "高风险" : existenceOnly ? "仅核验存在性" : state === "pass" ? "已通过" : "建议复核",
+      title: formatReference(check),
       url: sourceUrl(check.evidence?.data_source?.source_url),
-      location: check.source_locations?.at(-1),
       category: categoryForLegal(check, finding, state),
-    }
+      }
+    })
+    const state = references.some(item => item.state === "issue") ? "issue"
+      : references.some(item => item.state !== "pass") ? "review" : "pass"
+    const category = references.find(item => item.category !== "passed")?.category || "passed"
+    return { ...card, references, state, category, location: card.source_locations?.at(-1) }
   })
   const cases = (result.verification?.case_checks || []).map(check => ({
     ...check,
@@ -118,7 +156,7 @@ function groupChecks(checks) {
 function categoryForLegal(check, finding, state) {
   if (state === "pass") return "passed"
   if (!finding) return "review"
-  if (finding.error_type === "旧法旧规误用") return "timeliness"
+  if (finding.error_type === "法源已废止或失效") return "timeliness"
   if (["法律渊源不存在", "条款编号或引用定位错误"].includes(finding.error_type)) return "source"
   return "meaning"
 }
@@ -131,7 +169,7 @@ function setDecision(article, label) {
 function markAffectedChecksStale(change) {
   if (!lastResult || !change?.blockId) return
   for (const card of document.querySelectorAll(".finding")) {
-    const check = normalizeChecks(lastResult).find(item => item.check_id === card.dataset.checkId)
+    const check = normalizeChecks(lastResult).find(item => item.check_id === card.dataset.checkId || item.card_id === card.dataset.cardId)
     if (check?.location?.block_id === change.blockId) {
       card.classList.add("finding-stale")
       card.querySelector(".finding-head em").textContent = "待重新核查"
@@ -170,7 +208,14 @@ function showToast(message) {
 
 function sourceUrl(raw = "") {
   const match = String(raw).match(/https?:\/\/[^)\s]+/)
-  return match?.[0] || ""
+  if (!match) return ""
+  try {
+    const parsed = new URL(match[0])
+    return parsed.pathname.startsWith("/lar/") && parsed.searchParams.get("way") === "mcp" ? "" : match[0]
+  } catch { return "" }
+}
+function formatReference(check) {
+  return `《${check.law_title}》${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`
 }
 function escapeHtml(value = "") { const node = document.createElement("span"); node.textContent = value; return node.innerHTML }
 function isDemo() { return !host.isAvailable || new URLSearchParams(location.search).has("demo") }
@@ -179,23 +224,26 @@ async function demoResult(snapshot) {
   await new Promise(resolve => setTimeout(resolve, 1700))
   return {
     file_name: snapshot.title,
-    summary: { total: 5, passed: 2, issues: 2, bugs: 1 },
+    summary: { total: 3, card_total: 2, reference_total: 3, passed: 1, issues: 1, bugs: 1 },
     verification: {
-      legal_checks: [
-        demoLegal("vc_00001", "反不正当竞争法", "第二条", snapshot.blocks[1].text, "法律引用无问题", "pass", "blk-demo-2"),
-        demoLegal("vc_00002", "网络数据安全管理条例", "第十八条", snapshot.blocks[2].text, "文中将“评估影响”扩张为独立的事前评估义务，并增加了本条没有直接规定的行政责任。", "issue", "blk-demo-3"),
+      citation_cards: [
+        demoCard("card_00001", snapshot.blocks[1].text, "blk-demo-2", [demoLegal("vc_00001", "反不正当竞争法", "第二条", "法律引用无问题", "pass")]),
+        demoCard("card_00002", snapshot.blocks[2].text, "blk-demo-3", [demoLegal("vc_00002", "网络数据安全管理条例", "第十八条", "文中将“评估影响”扩张为独立的事前评估义务，并增加了本条没有直接规定的行政责任。", "issue")]),
       ],
       case_checks: [{ check_id: "cc_00001", cited_case_name: "某平台爬虫纠纷案", claim_text: "法院已处理大量爬虫纠纷。", lookup_status: "manual_review", message: "未附案号，相关案例无法唯一确认。", source_locations: [{ platform: "feishu", block_id: "blk-demo-2", char_start: 0, char_end: 12 }] }],
     },
   }
 }
 
-function demoLegal(id, law, article, text, summary, state, blockId) {
+function demoCard(id, text, blockId, references) {
+  return { card_id: id, claim_text: text, references, source_locations: [{ platform: "feishu", block_id: blockId, char_start: 0, char_end: text.length }] }
+}
+
+function demoLegal(id, law, article, summary, state) {
   return {
-    check_id: id, law_title: law, article_no: article, claim_text: text, lookup_status: "article_found",
+    check_id: id, law_title: law, article_no: article, lookup_status: "article_found",
     rule_findings: state === "issue" ? [{ error_type: "曲解权威文本原意", risk_level: "HIGH", diff_summary: summary, suggestion: "删除扩张表述；如需保留行政责任结论，请补充对应责任条款。" }] : [],
     semantic_comparison: state === "pass" ? { verdict: "pass", issues: [] } : null,
     evidence: { data_source: { source_url: "https://www.pkulaw.com/chl/example.html" } },
-    source_locations: [{ platform: "feishu", block_id: blockId, char_start: 0, char_end: text.length }],
   }
 }

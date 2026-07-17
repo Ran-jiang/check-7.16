@@ -56,14 +56,15 @@ export async function getSelectedContent() {
     const bodyParagraphs = context.document.body.paragraphs
     const selectedParagraphs = selection.paragraphs
     const tables = context.document.body.tables
-    const footnotes = context.document.body.footnotes
-    const endnotes = context.document.body.endnotes
+    const includeNotes = Office.context.requirements.isSetSupported("WordApi", "1.5")
+    const noteCollections = includeNotes
+      ? [["footnote", context.document.body.footnotes], ["endnote", context.document.body.endnotes]]
+      : []
     selection.load("start,end")
     bodyParagraphs.load("items/tableNestingLevel")
     selectedParagraphs.load("items")
     tables.load("items/rowCount,items/columnCount")
-    footnotes.load("items")
-    endnotes.load("items")
+    for (const [, collection] of noteCollections) collection.load("items")
     await context.sync()
 
     const bodyRanges = bodyParagraphs.items.map(paragraph => paragraph.getRange())
@@ -82,7 +83,7 @@ export async function getSelectedContent() {
       }
     }
     const notes = []
-    for (const [noteType, collection] of [["footnote", footnotes], ["endnote", endnotes]]) {
+    for (const [noteType, collection] of noteCollections) {
       collection.items.forEach((note, noteIndex) => {
         note.body.paragraphs.load("items")
         notes.push({ noteType, noteIndex, note })
@@ -133,7 +134,6 @@ export async function getSelectedContent() {
         })
       })
     }
-
     const lines = []
     const sourceBlocks = []
     for (const range of selectedRanges) {
@@ -155,95 +155,6 @@ export async function getSelectedContent() {
 
 function normalizeWordText(text) {
   return String(text || "").replace(/[\t\n\r]/g, " ").replace(/ +/g, " ").trim()
-}
-
-export async function jumpToSource(sourceLocations) {
-  if (!window.Word?.run) {
-    throw new Error("当前 Word 版本不支持文档内定位")
-  }
-  const wordLocations = (sourceLocations || []).filter(item => item.platform === "docx")
-  const sameTableRow = wordLocations.length > 1
-    && wordLocations.every(item => item.table_index === wordLocations[0].table_index
-      && item.row_index === wordLocations[0].row_index
-      && item.table_index !== null)
-  const location = sameTableRow ? wordLocations.at(-1) : wordLocations[0]
-  if (!location) throw new Error("该结果缺少 Word 块定位信息")
-  await Word.run(async context => {
-    const blockRange = await getBlockRange(context, location.block_id)
-    blockRange.load("text,start,end")
-    await context.sync()
-    const offsets = normalizedOffsets(blockRange.text, location.char_start, location.char_end)
-    blockRange.select()
-    await context.sync()
-    const selection = context.document.getSelection()
-    selection.setRange(blockRange.start + offsets.start, blockRange.start + offsets.end)
-    selection.select()
-    await context.sync()
-  })
-}
-
-async function getBlockRange(context, blockId) {
-  const parts = String(blockId || "").split(":")
-  if (parts[0] !== "word") throw new Error("无法识别 Word Block ID")
-  if (parts[1] === "p" && parts.length === 3) {
-    const paragraphs = context.document.body.paragraphs
-    paragraphs.load("items/tableNestingLevel")
-    await context.sync()
-    const topLevel = paragraphs.items.filter(paragraph => paragraph.tableNestingLevel === 0)
-    const paragraph = topLevel[Number(parts[2])]
-    if (!paragraph) throw new Error("Word Block 已不存在，请重新核查文档")
-    return paragraph.getRange()
-  }
-  if (parts[1] === "t" && parts.length === 5) {
-    const [tableIndex, rowIndex, cellIndex] = parts.slice(2).map(Number)
-    return context.document.body.tables.getItemAt(tableIndex).getCell(rowIndex, cellIndex).body.getRange()
-  }
-  if (["footnote", "endnote"].includes(parts[1]) && parts.length === 4) {
-    const [noteIndex, paragraphIndex] = parts.slice(2).map(Number)
-    const notes = parts[1] === "footnote"
-      ? context.document.body.footnotes
-      : context.document.body.endnotes
-    return notes.getItemAt(noteIndex).body.paragraphs.getItemAt(paragraphIndex).getRange()
-  }
-  throw new Error("无法识别 Word Block ID")
-}
-
-function normalizedOffsets(text, charStart, charEnd) {
-  let normalized = ""
-  const starts = []
-  const ends = []
-  let inSpaces = false
-  for (let index = 0; index < text.length; index += 1) {
-    const isSpace = /[ \u3000\t\n\r\u0007]/.test(text[index])
-    if (isSpace) {
-      if (normalized.length && !inSpaces) {
-        normalized += " "
-        starts.push(index)
-        ends.push(index + 1)
-      } else if (inSpaces && normalized.length) {
-        ends[ends.length - 1] = index + 1
-      }
-      inSpaces = true
-    } else {
-      normalized += text[index]
-      starts.push(index)
-      ends.push(index + 1)
-      inSpaces = false
-    }
-  }
-  if (normalized.endsWith(" ")) {
-    normalized = normalized.slice(0, -1)
-    starts.pop()
-    ends.pop()
-  }
-  if (charStart < 0 || charEnd < charStart || charEnd > normalized.length) {
-    throw new Error("原文锚点已失效，请重新核查文档")
-  }
-  if (charStart === charEnd) {
-    const point = charStart === normalized.length ? ends.at(-1) || 0 : starts[charStart]
-    return { start: point, end: point }
-  }
-  return { start: starts[charStart], end: ends[charEnd - 1] }
 }
 
 function getCompressedFile() {

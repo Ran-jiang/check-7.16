@@ -1,5 +1,14 @@
 import json
 
+import httpx
+import pytest
+
+from ccitecheck.infrastructure import http as http_module
+from ccitecheck.infrastructure.http import (
+    HttpRequestError,
+    RetryPolicy,
+    post_json_with_retry,
+)
 from ccitecheck.domain.result import (
     ArticleEvidence,
     ComparisonVerdict,
@@ -12,44 +21,34 @@ from ccitecheck.judgment.semantic import DEFAULT_BASE_URL, PROMPT_PATH, QwenSema
 
 def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
     prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    assert "不评价法律论证是否成立" in prompt
-    assert "不评价文书结论在法律上是否成立" in prompt
+    assert "文书的法律论证是否成立" in prompt
+    assert '"verdict": "bug"' not in prompt
+    assert "上述五种错误类型之一" not in prompt
+    assert "法律渊源不存在" not in prompt
     assert "结论是否必然成立" not in prompt
 
 
-class FakeResponse:
-    def __enter__(self):
-        return self
+def _install_mock_client(monkeypatch, handler):
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_HTTP_CLIENT", client)
+    return client
 
-    def __exit__(self, exc_type, exc, traceback):
-        return False
 
-    def read(self):
-        return json.dumps(
-            {
-                "output": [
-                    {
-                        "content": [
-                            {"type": "output_text", "text": '{"verdict":"pass"}'}
-                        ]
-                    }
-                ]
-            }
-        ).encode()
+def _qwen_response(text='{"verdict":"pass"}'):
+    return {
+        "output": [{"content": [{"type": "output_text", "text": text}]}]
+    }
 
 
 def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
     captured = {}
 
-    def fake_urlopen(request, timeout, context=None):
-        captured["url"] = request.full_url
-        captured["payload"] = json.loads(request.data)
-        return FakeResponse()
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json=_qwen_response())
 
-    def fake_open(self, request, timeout=None):
-        return fake_urlopen(request, timeout=timeout)
-
-    monkeypatch.setattr("urllib.request.OpenerDirector.open", fake_open)
+    _install_mock_client(monkeypatch, handler)
     checker = QwenSemanticChecker(api_key="test-key")
     evidence = ArticleEvidence(
         law_title="中华人民共和国民法典",
@@ -75,7 +74,7 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
     assert captured["payload"]["enable_thinking"] is False
 
 
-def test_qwen_overlong_diff_summary_is_safely_truncated(monkeypatch):
+def test_qwen_diff_summary_is_preserved_for_display_layer(monkeypatch):
     payload = {
         "output": [{"content": [{"type": "output_text", "text": json.dumps({
             "verdict": "issue",
@@ -89,11 +88,9 @@ def test_qwen_overlong_diff_summary_is_safely_truncated(monkeypatch):
         }, ensure_ascii=False)}]}]
     }
 
-    class LongResponse(FakeResponse):
-        def read(self):
-            return json.dumps(payload, ensure_ascii=False).encode()
-
-    monkeypatch.setattr("urllib.request.OpenerDirector.open", lambda *args, **kwargs: LongResponse())
+    _install_mock_client(
+        monkeypatch, lambda request: httpx.Response(200, json=payload)
+    )
     checker = QwenSemanticChecker(api_key="test-key")
     evidence = ArticleEvidence(
         law_title="网络数据安全管理条例",
@@ -107,7 +104,7 @@ def test_qwen_overlong_diff_summary_is_safely_truncated(monkeypatch):
         ),
     )
     result = checker.compare("文书表述", "上下文", "《网络数据安全管理条例》第十八条", evidence)
-    assert len(result.issues[0].diff_summary) == 80
+    assert len(result.issues[0].diff_summary) == 120
 
 
 def test_qwen_malformed_json_is_repaired_once(monkeypatch):
@@ -126,18 +123,12 @@ def test_qwen_malformed_json_is_repaired_once(monkeypatch):
         }, ensure_ascii=False),
     ])
 
-    class SequencedResponse(FakeResponse):
-        def read(self):
-            text = next(responses)
-            return json.dumps({
-                "output": [{"content": [{"type": "output_text", "text": text}]}]
-            }, ensure_ascii=False).encode()
-
     calls = []
-    monkeypatch.setattr(
-        "urllib.request.OpenerDirector.open",
-        lambda *args, **kwargs: calls.append(args) or SequencedResponse(),
-    )
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=_qwen_response(next(responses)))
+
+    _install_mock_client(monkeypatch, handler)
     checker = QwenSemanticChecker(api_key="test-key")
     evidence = ArticleEvidence(
         law_title="中华人民共和国网络安全法",
@@ -155,3 +146,117 @@ def test_qwen_malformed_json_is_repaired_once(monkeypatch):
 
     assert result.verdict == ComparisonVerdict.ISSUE
     assert len(calls) == 2
+
+
+def test_retry_after_429_then_success(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "3"})
+        return httpx.Response(200, json={"ok": True})
+
+    _install_mock_client(monkeypatch, handler)
+    result = post_json_with_retry(
+        "https://example.test/responses",
+        {},
+        {},
+        policy=RetryPolicy(),
+        sleep=sleeps.append,
+    )
+    assert result == {"ok": True}
+    assert calls == 2
+    assert sleeps == [3.0]
+
+
+def test_two_connect_errors_then_success(monkeypatch):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ConnectError("broken", request=request)
+        return httpx.Response(200, json={"ok": True})
+
+    _install_mock_client(monkeypatch, handler)
+    result = post_json_with_retry(
+        "https://example.test/responses",
+        {},
+        {},
+        policy=RetryPolicy(),
+        sleep=lambda delay: None,
+    )
+    assert result == {"ok": True}
+    assert calls == 3
+
+
+def test_http_400_is_not_retried(monkeypatch):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, text="bad request")
+
+    _install_mock_client(monkeypatch, handler)
+    with pytest.raises(HttpRequestError) as caught:
+        post_json_with_retry(
+            "https://example.test/responses", {}, {}, policy=RetryPolicy()
+        )
+    assert caught.value.error_code == "http_4xx"
+    assert calls == 1
+
+
+def test_retry_after_beyond_budget_fails_without_sleep(monkeypatch):
+    sleeps = []
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "120"})
+
+    _install_mock_client(monkeypatch, handler)
+    with pytest.raises(HttpRequestError) as caught:
+        post_json_with_retry(
+            "https://example.test/responses",
+            {},
+            {},
+            policy=RetryPolicy(budget_seconds=90),
+            sleep=sleeps.append,
+        )
+    assert caught.value.error_code == "rate_limited"
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_retry_budget_stops_attempts_without_exceeding_deadline(monkeypatch):
+    now = [0.0]
+    calls = 0
+
+    def clock():
+        return now[0]
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        now[0] += 43.0
+        raise httpx.ReadTimeout("slow upstream", request=request)
+
+    _install_mock_client(monkeypatch, handler)
+    with pytest.raises(HttpRequestError) as caught:
+        post_json_with_retry(
+            "https://example.test/responses",
+            {},
+            {},
+            policy=RetryPolicy(budget_seconds=90, max_attempts=4),
+            sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+            clock=clock,
+        )
+    assert caught.value.error_code == "timeout"
+    assert calls == 2
+    assert now[0] <= 90.0

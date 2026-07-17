@@ -98,18 +98,12 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .summary-label { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
 .results-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .text-button { border: 0; padding: 5px; background: none; color: #555; font-size: 12px; cursor: pointer; }
-.results-list { display: grid; gap: 10px; }
-.result-card { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 15px; }
-.result-card.is-issue { border-left: 3px solid #bb675d; }
-.result-card.is-bug { border-left: 3px solid #bd9657; }
-.result-topline { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.results-list { display: grid; }
+.result-topline { display: flex; justify-content: flex-start; gap: 10px; align-items: flex-start; }
 .status-pill { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; background: #edf4ed; color: #397044; font-size: 10px; font-weight: 700; }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger); }
 .status-pill.is-bug { background: var(--warning-bg); color: #946520; }
 .status-pill.is-not-run { background: #f0f0f0; color: #666; }
-.claim-quote { margin: 13px 0; padding-left: 10px; border-left: 1px solid #cfd2d4; color: #555; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
-.result-details { margin-top: 12px; border-top: 1px solid #ededed; padding-top: 10px; }
-.result-details summary { cursor: pointer; font-size: 12px; color: #555; }
 .empty-results { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 28px 18px; text-align: center; color: var(--muted); font-size: 13px; }
 .toggle { appearance: none; width: 40px; height: 24px; flex: 0 0 40px; border-radius: 999px; background: #d1d1d1; position: relative; cursor: pointer; }
 .toggle::after { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .16s; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
@@ -166,16 +160,25 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 
 /* 卡片：纯白、圆角、无左色条，间距放宽 */
 .results-list { gap: 12px; }
-.result-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 16px 14px; }
+.result-card { background: #fff; border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 16px 14px; }
 .result-card.is-issue, .result-card.is-bug { border-left: 1px solid var(--line-2); }
 .card-type { font-size: 13px; font-weight: 500; color: #86909c; letter-spacing: 0; }
 .result-card.is-pass .card-type, .result-card.is-bug .card-type, .result-card.is-not-run .card-type { color: #86909c; }
-.claim-quote { margin: 12px 0 0; padding: 0; border-left: 0; color: #1f2329; font-size: 14px; line-height: 1.75; }
+.claim-quote { margin: 12px 0 0; padding: 0; border-left: 0; color: #1f2329; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.reference-source { margin-top: 10px; color: #1f2329; font-size: 13px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
+.citation-references { display: grid; gap: 10px; margin-top: 14px; }
+.citation-reference { border: 1px solid var(--line-2); border-radius: 10px; padding: 13px; background: #fafbfc; }
+.citation-reference.is-issue { border-color: #efd4d0; }
+.citation-reference.is-bug { border-color: #eadfc9; }
+.reference-label { margin-bottom: 8px; color: #86909c; font-size: 11px; font-weight: 600; }
+.citation-reference .action-row { justify-content: flex-end; }
+.citation-reference .result-topline { align-items: center; }
+.card-action-row { justify-content: flex-start; }
 .status-pill { font-size: 11px; padding: 4px 10px; }
 
 /* 法条原文折叠 */
 .result-details { margin-top: 14px; border-top: 1px solid #f2f3f5; padding-top: 12px; }
-.result-details summary { font-size: 13px; color: #4e5969; }
+.result-details summary { cursor: pointer; font-size: 13px; color: #4e5969; }
 
 /* 操作行：实线分隔，忽略描边 + 接受蓝色主按钮 */
 .action-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid #f2f3f5; }
@@ -194,8 +197,9 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .decision-button[data-decision="accepted"].is-active { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
 
 /* 底部通栏主操作：导出核查报告 */
-.results-action { position: sticky; bottom: 0; margin-top: 16px; padding: 14px 0 18px; background: linear-gradient(180deg, rgba(243,244,246,0), #f3f4f6 38%); }
+.results-action { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 14px 0 18px; background: linear-gradient(180deg, rgba(243,244,246,0), #f3f4f6 38%); }
 .results-action .primary-button { width: 100%; min-height: 48px; background: var(--blue); border-radius: 10px; font-size: 15px; }
+.results-action .text-button { flex: 0 0 auto; }
 .results-action .primary-button:hover { background: var(--blue-dark); }
 
 /* 主页核查范围选项行 */

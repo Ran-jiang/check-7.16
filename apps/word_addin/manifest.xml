@@ -21,13 +21,13 @@
   </Hosts>
   <Requirements>
     <Sets DefaultMinVersion="1.1">
-      <Set Name="WordApi" MinVersion="1.5"/>
+      <Set Name="WordApi" MinVersion="1.4"/>
     </Sets>
   </Requirements>
   <DefaultSettings>
     <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
   </DefaultSettings>
-  <Permissions>ReadAllDocument</Permissions>
+  <Permissions>ReadWriteDocument</Permissions>
 
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
                     xsi:type="VersionOverridesV1_0">

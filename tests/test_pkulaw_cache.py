@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import pytest
 
+from ccitecheck.domain.evidence import LookupStatus
+from ccitecheck.tracing.sources.base import LookupRequest
 from ccitecheck.tracing.sources.pkulaw.cache import (
     CachedPkulawClient,
     TTL_SECONDS,
@@ -16,7 +18,9 @@ from ccitecheck.tracing.sources.pkulaw.client import (
     PkulawArticle,
     PkulawLawRecord,
     PkulawNotFoundError,
+    PkulawMcpError,
 )
+from ccitecheck.tracing.sources.pkulaw.statutes import PkulawFallbackSource
 
 
 class FakeClient:
@@ -26,8 +30,9 @@ class FakeClient:
         self.article_calls = 0
         self.list_calls = 0
         self.timeliness = list(timeliness)
+        self.semantic_calls = 0
 
-    def get_law_item_content(self, title, article_no):
+    def get_article(self, title, article_no):
         self.article_calls += 1
         if "不存在" in title:
             raise PkulawNotFoundError("未找到数据")
@@ -39,11 +44,23 @@ class FakeClient:
             article_text="条文内容",
         )
 
+    def search_law_articles(self, text):
+        self.semantic_calls += 1
+        return [
+            PkulawArticle(
+                title="中华人民共和国民法典",
+                article_no="第一条",
+                article_text="缓存条文",
+            )
+        ]
+
     def get_law_list(self, title="", fulltext=""):
         self.list_calls += 1
         if "不存在" in title:
             raise PkulawNotFoundError("未找到数据")
-        return [PkulawLawRecord(title=title, url="https://x", timeliness=self.timeliness)]
+        return [
+            PkulawLawRecord(title=title, url="https://x", timeliness=self.timeliness)
+        ]
 
 
 @pytest.fixture()
@@ -51,23 +68,76 @@ def cache_db(tmp_path):
     return tmp_path / "cache.sqlite"
 
 
-def test_effective_article_cached(cache_db):
+def test_get_article_success_and_negative_results_are_cached(cache_db):
     fake = FakeClient()
     cached = CachedPkulawClient(fake, cache_db)
-    first = cached.get_law_item_content("中华人民共和国民法典", "第五百七十七条")
-    second = cached.get_law_item_content("中华人民共和国民法典", "第五百七十七条")
+    first = cached.get_article("中华人民共和国民法典", "第一条")
+    second = cached.get_article("中华人民共和国民法典", "第一条")
+    assert first.article_text == second.article_text
     assert fake.article_calls == 1
-    assert second.article_text == first.article_text == "条文内容"
-    assert second.url == "https://www.pkulaw.com/x"
 
-
-def test_not_found_negative_cached(cache_db):
-    fake = FakeClient()
-    cached = CachedPkulawClient(fake, cache_db)
     for _ in range(2):
         with pytest.raises(PkulawNotFoundError):
-            cached.get_law_item_content("不存在的法", "第一条")
-    assert fake.article_calls == 1
+            cached.get_article("不存在的法", "第一条")
+    assert fake.article_calls == 2
+
+
+def test_article_semantic_results_are_cached(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+    first = cached.search_law_articles_for_article("中华人民共和国民法典", "第一条")
+    second = cached.search_law_articles_for_article("中华人民共和国民法典", "第一条")
+    assert fake.semantic_calls == 1
+    assert second[0].article_text == first[0].article_text
+
+
+def test_empty_article_semantic_result_is_negative_cached(cache_db):
+    fake = FakeClient()
+    fake.search_law_articles = lambda text: (
+        setattr(fake, "semantic_calls", fake.semantic_calls + 1) or []
+    )
+    cached = CachedPkulawClient(fake, cache_db)
+    assert (
+        cached.search_law_articles_for_article("中华人民共和国民法典", "第一条") == []
+    )
+    assert (
+        cached.search_law_articles_for_article("中华人民共和国民法典", "第一条") == []
+    )
+    assert fake.semantic_calls == 1
+
+
+def test_not_found_article_semantic_result_is_negative_cached(cache_db):
+    fake = FakeClient()
+
+    def not_found(text):
+        fake.semantic_calls += 1
+        raise PkulawNotFoundError("未找到数据")
+
+    fake.search_law_articles = not_found
+    cached = CachedPkulawClient(fake, cache_db)
+    with pytest.raises(PkulawNotFoundError):
+        cached.search_law_articles_for_article("中华人民共和国民法典", "第一条")
+    assert (
+        cached.search_law_articles_for_article("中华人民共和国民法典", "第一条") == []
+    )
+    assert fake.semantic_calls == 1
+
+
+def test_repeating_same_lookup_uses_only_cached_pkulaw_results(cache_db):
+    fake = FakeClient()
+    source = PkulawFallbackSource(CachedPkulawClient(fake, cache_db))
+    request = LookupRequest(
+        law_title="中华人民共和国民法典",
+        source_type="law",
+        article_no="第五百七十七条",
+        context_text="当事人一方不履行合同义务，应当承担违约责任。",
+    )
+    first = source.lookup(request)
+    calls_after_first = (fake.article_calls, fake.list_calls)
+    second = source.lookup(request)
+    assert first.status == second.status == LookupStatus.ARTICLE_FOUND
+    assert calls_after_first == (1, 1)
+    assert (fake.article_calls, fake.list_calls) == calls_after_first
 
 
 def test_repealed_law_list_stores_minimal_payload(cache_db):
@@ -84,10 +154,23 @@ def test_repealed_law_list_stores_minimal_payload(cache_db):
     assert "废止或失效" in row["payload"]
 
 
+def test_law_cache_uses_matching_record_not_first_candidate(cache_db):
+    fake = FakeClient()
+    fake.get_law_list = lambda title="", fulltext="": [
+        PkulawLawRecord(title="中华人民共和国合同法", timeliness=["废止"]),
+        PkulawLawRecord(title="中华人民共和国民法典", timeliness=["现行有效"]),
+    ]
+    CachedPkulawClient(fake, cache_db).get_law_list(title="民法典")
+    with connect_cache(cache_db) as conn:
+        row = conn.execute("SELECT status, payload FROM cache_entries").fetchone()
+    assert row["status"] == "effective"
+    assert "url" in row["payload"]
+
+
 def test_expired_effective_entry_revalidates_instead_of_refetch(cache_db):
     fake = FakeClient()
     cached = CachedPkulawClient(fake, cache_db)
-    cached.get_law_item_content("中华人民共和国民法典", "第五百七十七条")
+    cached.get_article("中华人民共和国民法典", "第五百七十七条")
     # 人为把 verified_at 拨回过期
     with connect_cache(cache_db) as conn:
         conn.execute(
@@ -95,17 +178,55 @@ def test_expired_effective_entry_revalidates_instead_of_refetch(cache_db):
             (TTL_SECONDS["effective"] + 10,),
         )
         conn.commit()
-    result = cached.get_law_item_content("中华人民共和国民法典", "第五百七十七条")
+    result = cached.get_article("中华人民共和国民法典", "第五百七十七条")
     # 只做了一次轻量时效验证（get_law_list），没有重拉条文全文
     assert fake.article_calls == 1
     assert fake.list_calls == 1
     assert result.article_text == "条文内容"
 
 
+def test_unexpected_revalidation_error_is_not_swallowed(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+    cached.get_article("中华人民共和国民法典", "第一条")
+    with connect_cache(cache_db) as conn:
+        conn.execute(
+            "UPDATE cache_entries SET verified_at = verified_at - ?",
+            (TTL_SECONDS["effective"] + 10,),
+        )
+        conn.commit()
+
+    def broken_list(title="", fulltext=""):
+        raise TypeError("parser contract broken")
+
+    fake.get_law_list = broken_list
+    with pytest.raises(TypeError, match="parser contract broken"):
+        cached.get_article("中华人民共和国民法典", "第一条")
+
+
+def test_known_revalidation_service_error_renews_cached_data_for_one_day(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+    cached.get_article("中华人民共和国民法典", "第一条")
+    with connect_cache(cache_db) as conn:
+        conn.execute(
+            "UPDATE cache_entries SET verified_at = verified_at - ?",
+            (TTL_SECONDS["effective"] + 10,),
+        )
+        conn.commit()
+
+    fake.get_law_list = lambda title="", fulltext="": (_ for _ in ()).throw(
+        PkulawMcpError("network")
+    )
+    result = cached.get_article("中华人民共和国民法典", "第一条")
+    assert result.article_text == "条文内容"
+    assert fake.article_calls == 1
+
+
 def test_cache_status_and_clear(cache_db):
     fake = FakeClient()
     cached = CachedPkulawClient(fake, cache_db)
-    cached.get_law_item_content("中华人民共和国民法典", "第五百七十七条")
+    cached.get_article("中华人民共和国民法典", "第五百七十七条")
     info = cache_status(cache_db)
     assert info["groups"] and info["groups"][0]["n"] == 1
     assert cache_clear(cache_db) == 1

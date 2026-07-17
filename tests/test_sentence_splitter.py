@@ -111,6 +111,20 @@ class TestBookmarksAndQuotes:
         # 确保 join 无损
         assert "".join(s.text for s in sentences) == text
 
+    def test_chinese_left_and_right_quotes_do_not_merge_following_sentence(self):
+        """右引号应关闭引号状态，后续法条句不得被并入同一 Anchor。"""
+        text = (
+            "《解释》第九条规定，足以使相关公众误认为与他人存在特定联系，即构成“容易导致混淆”。"
+            "第十条规定，认定混淆还应考虑其他因素。"
+        )
+
+        sentences = split_sentences(text)
+
+        assert [sentence.text for sentence in sentences] == [
+            "《解释》第九条规定，足以使相关公众误认为与他人存在特定联系，即构成“容易导致混淆”。",
+            "第十条规定，认定混淆还应考虑其他因素。",
+        ]
+
 
 class TestNoSplitScenarios:
     """不切分场景测试"""

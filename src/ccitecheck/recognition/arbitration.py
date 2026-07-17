@@ -142,6 +142,7 @@ def _derive_source_locations(
             block_id=block.external_block_id or block.block_id,
             char_start=anchor.char_start,
             char_end=anchor.char_end,
+            anchor_text=anchor.text,
             table_index=block.table_index,
             row_index=block.row_index,
             cell_index=block.cell_index,
@@ -419,7 +420,7 @@ def build_claim_document(
     from ..domain.citation import ClaimMeta
 
     meta = ClaimMeta(
-        schema_version="0.2",
+        schema_version="0.3",
         source_doc_id=parsed_doc.doc_meta.doc_id,
         source_doc_hash=parsed_doc.doc_meta.doc_hash,
         source_file=parsed_doc.doc_meta.source_file,

@@ -38,13 +38,6 @@ DECISION_LABELS = {
     "ignored": "已忽略",
 }
 
-VERDICT_LABELS = {
-    "pass": "语义通过",
-    "issue": "需核实",
-    "bug": "无法判断",
-}
-
-
 def render_report_html(request: Any) -> str:
     generated_at = datetime.now(CST).strftime("%Y-%m-%d %H:%M（北京时间）")
     summary = request.summary
@@ -53,9 +46,10 @@ def render_report_html(request: Any) -> str:
         if value in decision_counts:
             decision_counts[value] += 1
 
-    rows = []
-    for check in request.verification.legal_checks:
-        rows.append(_legal_check_section(check, request.decisions.get(check.check_id)))
+    rows = [
+        _citation_card_section(card, request.decisions)
+        for card in request.verification.citation_cards
+    ]
     case_rows = [
         _case_check_section(check, request.decisions.get(check.check_id))
         for check in request.verification.case_checks
@@ -107,7 +101,8 @@ def render_report_html(request: Any) -> str:
 
 <h2>一、核查摘要</h2>
 <div class="summary">
-  共识别法规或案例引用 <b>{summary.total}</b> 处：通过 <b>{summary.passed}</b>，
+  共识别引用句 <b>{summary.card_total}</b> 处，核查具体引用 <b>{summary.reference_total}</b> 条：
+  通过 <b>{summary.passed}</b>，
   需核实 <b>{summary.issues}</b>，无法判断 <b>{summary.bugs}</b>；
   案号验证通过 <b>{summary.cases_verified}</b>，案号未命中 <b>{summary.cases_not_found}</b>。<br>
   人工处理记录：接受 <b>{decision_counts["accepted"]}</b>，
@@ -128,28 +123,45 @@ def render_report_html(request: Any) -> str:
 </html>"""
 
 
+def _citation_card_section(card, decisions: dict[str, str]) -> str:
+    references = "".join(
+        _legal_check_section(check, decisions.get(check.check_id))
+        for check in card.references
+    )
+    return (
+        '<section class="citation-card">'
+        f'<blockquote>{_esc(card.claim_text)}</blockquote>'
+        f'{references}</section>'
+    )
+
+
 def _legal_check_section(check, decision: str | None) -> str:
     findings = list(check.rule_findings) + list(
         check.semantic_comparison.issues if check.semantic_comparison else []
     )
-    verdict = check.semantic_comparison.verdict.value if check.semantic_comparison else None
+    verdict = check.semantic_comparison.verdict.value if check.semantic_comparison and check.semantic_comparison.verdict else None
     if findings:
         pill_class, pill_text = "issue", "需核实"
     elif verdict == "pass":
         pill_class, pill_text = "pass", "语义通过"
-    elif verdict == "bug":
+    elif check.semantic_comparison and check.semantic_comparison.execution_status.value == "llm_error":
         pill_class, pill_text = "", "无法判断"
+    elif check.verification_scope == "existence_only" and check.lookup_status.value in {
+        "article_found", "relevant_articles_found"
+    }:
+        pill_class, pill_text = "pass", "仅核验存在性"
+    elif verdict == "insufficient_input":
+        pill_class, pill_text = "", "输入不足"
     else:
         pill_class, pill_text = "", "未做语义核查"
 
     parts = [
         '<div class="check">',
         '<div class="check-head">',
-        f'<span class="source">《{_esc(check.law_title)}》{_esc(check.article_no or "")}'
+        f'<span class="source">{_esc(_reference_label(check))}'
         f'　<small>{_esc(check.check_id)}</small></span>',
         f'<span class="pill {pill_class}">{pill_text}</span>',
         "</div>",
-        f"<blockquote>{_esc(check.claim_text)}</blockquote>",
         f'<div class="field"><b>溯源状态：</b>'
         f'{LOOKUP_STATUS_LABELS.get(check.lookup_status.value, check.lookup_status.value)}</div>',
     ]
@@ -186,6 +198,13 @@ def _legal_check_section(check, decision: str | None) -> str:
         parts.append(f'<div class="decision">人工处理：{DECISION_LABELS[decision]}</div>')
     parts.append("</div>")
     return "".join(parts)
+
+
+def _reference_label(check) -> str:
+    return (
+        f"《{check.law_title}》{check.article_no or ''}"
+        f"{'、'.join(check.paragraphs)}{'、'.join(check.items)}"
+    )
 
 
 def _strip_repeated_article_heading(text: str, article_no: str) -> str:

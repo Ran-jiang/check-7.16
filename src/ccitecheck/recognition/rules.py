@@ -65,7 +65,9 @@ def extract_rule_candidates(
 
         if not legal_sources and current_block and has_article_reference(text):
             articles = extract_articles_only(text)
-            resolved = _resolve_block_source(current_block, block_map, records)
+            resolved = _resolve_block_source(
+                current_block, block_map, records, current_anchor_id=anchor.anchor
+            )
             if articles and resolved:
                 source_anchor_id, source_block, sources = resolved
                 inherited_sources = _build_inherited_sources(
@@ -108,12 +110,23 @@ def extract_rule_candidates(
     return candidates
 
 
-def _resolve_block_source(block, block_map: dict, records: dict, visited=None):
+def _resolve_block_source(
+    block, block_map: dict, records: dict, visited=None, current_anchor_id: str | None = None
+):
     """沿 Block 关系解析唯一法源；说明块和歧义块终止链路。"""
     visited = set(visited or ())
     if block.block_id in visited:
         return None
     visited.add(block.block_id)
+    own_records = records.get(block.block_id, [])
+    if own_records and current_anchor_id in block.sentence_anchors:
+        source_anchor_id, sources = own_records[-1]
+        current_index = block.sentence_anchors.index(current_anchor_id)
+        source_index = block.sentence_anchors.index(source_anchor_id)
+        if current_index == source_index + 1 and len({source.title for source in sources}) == 1:
+            return source_anchor_id, block, [sources[0]]
+        if current_index != source_index + 1:
+            return None
     relations = sorted(
         block.relations,
         key=lambda item: _RELATION_PRIORITY.get(item.relation_type, 99),

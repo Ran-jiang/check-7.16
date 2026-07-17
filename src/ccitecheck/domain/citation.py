@@ -93,6 +93,12 @@ class ArticleRef(BaseModel):
         default_factory=list,
         description="项号列表，如['第（一）项']"
     )
+    mention_span: tuple[int, int] | None = None
+    citation_span: tuple[int, int] | None = None
+    quote_span: tuple[int, int] | None = None
+    reference_role: Literal["direct", "nested", "inherited"] = "direct"
+    parent_reference_id: tuple[str, str] | None = None
+    span_status: Literal["located", "fallback", "error"] = "fallback"
 
 
 class LegalSource(BaseModel):
@@ -237,6 +243,7 @@ class SourceLocation(BaseModel):
     block_id: str
     char_start: int = Field(ge=0)
     char_end: int = Field(ge=0)
+    anchor_text: str = Field(default="", description="用于来源平台按文本自愈定位的 Anchor 原文")
     table_index: Optional[int] = None
     row_index: Optional[int] = None
     cell_index: Optional[int] = None
@@ -296,7 +303,7 @@ class Claim(BaseModel):
     entities: ClaimEntities = Field(description="实体信息")
     context_text: str = Field(
         default="",
-        description="主张所在语义块的上下文；仅供检索与引用忠实度比对",
+        description="主张所在语义块的上下文；仅供检索",
     )
     source_locations: list[SourceLocation] = Field(
         default_factory=list,
@@ -319,7 +326,7 @@ class Claim(BaseModel):
 
 class ClaimMeta(BaseModel):
     """引用文档元信息。"""
-    schema_version: str = Field(default="0.2", description="schema 版本号")
+    schema_version: str = Field(default="0.3", description="schema 版本号")
     claim_doc_id: str = Field(
         default_factory=lambda: str(uuid4()),
         description="claim 文档唯一 ID（uuid4）"

@@ -2,10 +2,10 @@
 
 from .report import render_report_html
 from .summary import VerificationSummary, summarize_verification
-from .verification import LegalCheckData, build_verification_document
+from .verification import CitationReferenceData, build_verification_document
 
 __all__ = [
-    "LegalCheckData",
+    "CitationReferenceData",
     "VerificationSummary",
     "build_verification_document",
     "render_report_html",

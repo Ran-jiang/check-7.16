@@ -273,7 +273,7 @@ def _write_verification(
     )
     typer.echo(
         "Verification checks: "
-        f"{len(frontend_doc.legal_checks) + len(frontend_doc.case_checks)}"
+        f"{sum(len(card.references) for card in frontend_doc.citation_cards) + len(frontend_doc.case_checks)}"
     )
     typer.echo(f"Verification output: {verify_out}")
 

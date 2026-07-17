@@ -440,6 +440,7 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
     """
     # 查找所有《》引用
     matches = list(LEGAL_SOURCE_PATTERN.finditer(text))
+    bare_matches = list(BARE_LAW_CITATION_PATTERN.finditer(text))
 
     legal_sources: list[LegalSource] = []
     seen_titles: set[str] = set()  # 用于去重（《》和裸引用可能指向同一部法）
@@ -456,6 +457,12 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
                 search_end = matches[i + 1].start()
             else:
                 search_end = len(text)
+            next_bare_start = next(
+                (bare.start() for bare in bare_matches if search_start <= bare.start() < search_end),
+                None,
+            )
+            if next_bare_start is not None:
+                search_end = next_bare_start
 
             segment = text[search_start:search_end]
 

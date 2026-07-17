@@ -44,4 +44,29 @@ def chinese_number_to_int(value: str) -> int | None:
     return total + current
 
 
-__all__ = ["chinese_number_to_int"]
+def int_to_chinese_number(value: int) -> str:
+    """将 0 到 9999 的整数转换为常用中文数字。"""
+    if not 0 <= value <= 9999:
+        raise ValueError("value must be between 0 and 9999")
+    if value == 0:
+        return "零"
+    digits = "零一二三四五六七八九"
+    units = ((1000, "千"), (100, "百"), (10, "十"), (1, ""))
+    result: list[str] = []
+    pending_zero = False
+    remainder = value
+    for divisor, unit in units:
+        digit, remainder = divmod(remainder, divisor)
+        if digit:
+            if pending_zero:
+                result.append("零")
+                pending_zero = False
+            if not (divisor == 10 and digit == 1 and not result):
+                result.append(digits[digit])
+            result.append(unit)
+        elif result and remainder:
+            pending_zero = True
+    return "".join(result)
+
+
+__all__ = ["chinese_number_to_int", "int_to_chinese_number"]

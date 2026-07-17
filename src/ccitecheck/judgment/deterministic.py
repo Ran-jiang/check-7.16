@@ -59,9 +59,8 @@ def build_rule_findings(
             findings.append(SemanticIssue(
                 error_type=SemanticErrorType.OUTDATED_SOURCE,
                 risk_level=RiskLevel.HIGH,
-                diff_summary=(f"《{strip_version_annotation(law_title)}》时效状态为"
-                              "『废止或失效』，不应作为现行依据引用")[:80],
-                suggestion="请改引现行有效的替代法规，并核对对应条文内容。",
+                diff_summary=f"《{strip_version_annotation(law_title)}》的权威证据标记为已废止或失效",
+                suggestion="该法律已经废止，若非适用行为时法，请核实并改引现行规定。",
             ))
 
     # 规则二：已确认法规存在，但现行全文或法宝均没有该条号。

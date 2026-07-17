@@ -274,6 +274,6 @@ def test_build_claim_document():
 
     claim_doc = build_claim_document(doc, [claim])
 
-    assert claim_doc.claim_meta.schema_version == "0.2"
+    assert claim_doc.claim_meta.schema_version == "0.3"
     assert len(claim_doc.claims) == 1
     assert claim_doc.claims[0].claim_id == "cl_00001"

@@ -73,6 +73,8 @@ button { cursor: pointer; }
 .finding-head em { color: var(--red); font-size: 10px; font-style: normal; white-space: nowrap; }
 .finding-pass .finding-head em { color: var(--green); }
 .finding blockquote { margin: 10px 0 0; padding-left: 8px; border-left: 2px solid #c9ced7; color: #59606b; font-size: 11px; line-height: 1.65; }
+.citation-reference { margin-top: 10px; padding: 10px; border: 1px solid #eceef2; border-radius: 7px; background: #fafbfc; }
+.citation-single-reference { margin-top: 10px; }
 .finding p { margin: 10px 0 0; color: #373d46; font-size: 11.5px; line-height: 1.7; }
 .suggestion { margin-top: 10px; padding: 9px 10px; background: #f6f7f9; color: #505762; font-size: 11px; line-height: 1.65; }
 .suggestion span { display: block; margin-bottom: 3px; color: #9298a1; font-size: 10px; }
@@ -80,7 +82,7 @@ button { cursor: pointer; }
 .finding-actions button, .finding-actions a { border: 0; padding: 0; background: transparent; color: #5368aa; font-size: 10.5px; text-decoration: none; }
 .finding-actions button:nth-last-child(-n+2) { margin-left: auto; color: #777e88; }
 .finding-actions button:last-child { margin-left: 0; }
-.finding.is-decided { opacity: .58; }
+.finding.is-decided, .citation-reference.is-decided, .citation-single-reference.is-decided { opacity: .58; }
 .finding-stale { background: var(--amber-soft); border-color: #ecd9aa; }
 .finding-stale .finding-head em { color: var(--amber); }
 .toast { position: absolute; left: 14px; right: 14px; bottom: 14px; padding: 10px 12px; border-radius: 7px; background: #272a30; color: #fff; font-size: 11px; box-shadow: 0 10px 28px rgba(0,0,0,.16); }

@@ -2,12 +2,19 @@ import json
 
 import pytest
 
+from ccitecheck.domain.evidence import LookupStatus
+from ccitecheck.tracing.sources.base import LookupRequest
 from ccitecheck.tracing.sources.pkulaw.client import (
     MCP_ENDPOINTS,
+    PkulawArticle,
+    PkulawLawRecord,
     PkulawMcpClient,
+    PkulawMcpError,
+    PkulawNotFoundError,
     _parse_anhao_response,
-    article_no_to_number,
+    normalize_article_no,
 )
+from ccitecheck.tracing.sources.pkulaw.statutes import PkulawFallbackSource
 
 
 def test_anhao_response_accepts_nested_results_and_deduplicates():
@@ -16,9 +23,27 @@ def test_anhao_response_accepts_nested_results_and_deduplicates():
         "gid": "case-1",
         "title": "甲公司诉乙公司案",
     }
-    parsed = _parse_anhao_response({"Message": "成功", "Data": {"results": [item, item]}})
+    parsed = _parse_anhao_response(
+        {"Message": "成功", "Data": {"results": [item, item]}}
+    )
     assert len(parsed) == 1
     assert parsed[0].case_flag == "（2023）浙民终1113号"
+
+
+def test_case_number_at_start_preserves_zero_position():
+    parsed = _parse_anhao_response(
+        {
+            "anhaoname": [
+                {
+                    "text": "（2023）浙民终1113号",
+                    "start": 0,
+                    "end": 15,
+                    "caseFlag": "（2023）浙民终1113号",
+                }
+            ]
+        }
+    )
+    assert parsed[0].start == 0
 
 
 class FakePkulawClient(PkulawMcpClient):
@@ -45,30 +70,42 @@ def _mcp_text_payload(data):
     }
 
 
-def test_get_law_item_content_parses_full_text():
-    client = FakePkulawClient(
+def test_get_article_uses_exact_semantic_tool_and_normalizes_number():
+    client = CapturingPkulawClient(
         _mcp_text_payload(
             {
                 "Message": "成功",
                 "Data": {
-                    "Title": "中华人民共和国民法典",
-                    "FullText": "第五百七十七条　当事人一方不履行合同义务。",
-                    "Url": "[北大法宝](https://example.com#tiao_577.0)",
-                    "IssueDate": "2020.05.28",
-                    "ImplementDate": "2021.01.01",
-                    "TimelinessDic": ["现行有效"],
-                    "EffectivenessDic": ["法律"],
+                    "title": "中华人民共和国民法典",
+                    "article": "第四十八条　条文内容",
+                    "url": "https://x",
                 },
             }
         )
     )
+    article = client.get_article("民法典", "第48条")
+    assert article.article_no == "第四十八条"
+    assert article.article_text == "条文内容"
+    assert client.calls == [
+        (
+            MCP_ENDPOINTS["law_semantic"],
+            "get_article",
+            {"title": "民法典", "number": "第四十八条"},
+        )
+    ]
 
-    article = client.get_law_item_content("民法典", "第五百七十七条")
 
-    assert article.title == "中华人民共和国民法典"
-    assert article.article_no == "第五百七十七条"
-    assert "不履行合同义务" in article.article_text
-    assert article.timeliness == ["现行有效"]
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("第48条", "第四十八条"),
+        ("第184条之1", "第一百八十四条之一"),
+        ("第一百八十四条之一", "第一百八十四条之一"),
+        ("非法输入", "非法输入"),
+    ],
+)
+def test_normalize_article_no(raw, expected):
+    assert normalize_article_no(raw) == expected
 
 
 def test_get_law_list_parses_candidates():
@@ -93,6 +130,22 @@ def test_get_law_list_parses_candidates():
     assert len(records) == 1
     assert records[0].title == "中华人民共和国民法典"
     assert records[0].issue_department == ["全国人民代表大会"]
+
+
+def test_get_law_list_discards_obsolete_lar_mcp_url():
+    client = FakePkulawClient(
+        _mcp_text_payload(
+            {
+                "Message": "成功",
+                "Data": [{
+                    "Title": "中华人民共和国商标法",
+                    "Url": "[北大法宝](https://www.pkulaw.com/lar/dead.html?way=mcp)",
+                }],
+            }
+        )
+    )
+
+    assert client.get_law_list(title="商标法")[0].url is None
 
 
 def test_recognize_case_numbers_parses_anhaoname_array():
@@ -122,11 +175,6 @@ def test_recognize_case_numbers_parses_anhaoname_array():
     assert cases[0].case_flag == "（2024）浙0114破1-6号之二"
     assert cases[0].court == "浙江省杭州市钱塘区人民法院"
     assert cases[0].gid.startswith("08df102e")
-
-
-def test_article_no_to_number_supports_chinese_and_zhi_suffix():
-    assert article_no_to_number("第五百七十七条") == 577
-    assert article_no_to_number("第二条之一") == 2.1
 
 
 class CapturingPkulawClient(FakePkulawClient):
@@ -225,3 +273,200 @@ def test_current_access_token_and_gateway_configuration(monkeypatch):
 
     assert client.access_token == "current-token"
     assert client.gateway == "https://apim-gateway.pkulaw.com"
+
+
+class RoutingClient:
+    def __init__(self, *, exact=None, semantic=None, laws=None):
+        self.exact = exact
+        self.semantic = [] if semantic is None else semantic
+        self.laws = [] if laws is None else laws
+        self.calls = []
+
+    @staticmethod
+    def _resolve(value):
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def get_article(self, title, article_no):
+        self.calls.append(("get_article", title, article_no))
+        value = self._resolve(self.exact)
+        if value is None:
+            raise PkulawNotFoundError("未找到数据")
+        return value
+
+    def search_law_articles_for_article(self, title, article_no):
+        self.calls.append(("semantic_exact", title, article_no))
+        return self._resolve(self.semantic)
+
+    def search_law_articles(self, text):
+        self.calls.append(("semantic", text))
+        return self._resolve(self.semantic)
+
+    def get_law_list(self, title="", fulltext=""):
+        self.calls.append(("law_list", title))
+        return self._resolve(self.laws)
+
+
+LAW = PkulawLawRecord(
+    title="中华人民共和国民法典",
+    timeliness=["现行有效"],
+    effectiveness=["法律"],
+    implement_date="2021-01-01",
+)
+
+
+def _article(
+    article_no="第四十八条", text="保护当事人的合法民事权益。", title=LAW.title
+):
+    return PkulawArticle(title=title, article_no=article_no, article_text=text)
+
+
+def _request(article_no="第四十八条", context="保护当事人的合法民事权益。"):
+    return LookupRequest(
+        law_title="民法典",
+        source_type="law",
+        article_no=article_no,
+        context_text=context,
+    )
+
+
+def test_numbered_exact_hit_enriches_timeliness_and_records_route_order():
+    client = RoutingClient(exact=_article(), laws=[LAW])
+    result = PkulawFallbackSource(client).lookup(_request())
+    assert result.status == LookupStatus.ARTICLE_FOUND
+    assert result.evidence.version_status == "现行有效"
+    assert [
+        (x["service"], x["status"]) for x in result.trace.metadata["route_attempts"]
+    ] == [("law_search_get_article", "completed"), ("law_keyword", "completed")]
+    assert (
+        result.trace.metadata["route_attempts"][1]["purpose"] == "timeliness_enrichment"
+    )
+
+
+def test_numbered_mismatched_exact_result_is_ignored_and_uses_semantic():
+    client = RoutingClient(
+        exact=_article(title="中华人民共和国刑法"), semantic=[_article()], laws=[LAW]
+    )
+    result = PkulawFallbackSource(client).lookup(_request())
+    assert result.status == LookupStatus.ARTICLE_FOUND
+    assert result.trace.metadata["route_attempts"][0]["status"] == "mismatched"
+    assert any(call[0] == "semantic_exact" for call in client.calls)
+
+
+def test_numbered_exact_miss_semantic_same_number_is_article_found():
+    client = RoutingClient(semantic=[_article()], laws=[LAW])
+    result = PkulawFallbackSource(client).lookup(_request())
+    assert result.status == LookupStatus.ARTICLE_FOUND
+
+
+def test_numbered_semantic_other_articles_are_ranked_and_limited():
+    articles = [
+        _article(f"第{i}条", "保护当事人的合法民事权益和财产权利。")
+        for i in range(1, 6)
+    ]
+    result = PkulawFallbackSource(RoutingClient(semantic=articles, laws=[LAW])).lookup(
+        _request()
+    )
+    assert result.status == LookupStatus.RELEVANT_ARTICLES_FOUND
+    assert 0 < len(result.evidence.related_articles) <= 3
+
+
+def test_numbered_all_article_routes_miss_but_law_exists():
+    result = PkulawFallbackSource(RoutingClient(laws=[LAW])).lookup(_request())
+    assert result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+
+
+def test_numbered_all_routes_miss_returns_candidates_and_completed_marker():
+    candidate = PkulawLawRecord(title="中华人民共和国民法典总则编司法解释")
+    result = PkulawFallbackSource(RoutingClient(laws=[candidate])).lookup(_request())
+    assert result.status == LookupStatus.LAW_NOT_FOUND
+    assert result.trace.metadata["search_completed"] is True
+    assert result.trace.metadata["candidate_titles"] == [candidate.title]
+
+
+def test_numbered_exact_network_error_does_not_degrade():
+    client = RoutingClient(
+        exact=PkulawMcpError("network"), semantic=[_article()], laws=[LAW]
+    )
+    result = PkulawFallbackSource(client).lookup(_request())
+    assert result.status == LookupStatus.SOURCE_ERROR
+    assert [call[0] for call in client.calls] == ["get_article"]
+
+
+def test_numbered_semantic_error_cannot_be_reported_as_missing():
+    client = RoutingClient(semantic=PkulawMcpError("semantic network"), laws=[LAW])
+    result = PkulawFallbackSource(client).lookup(_request())
+    assert result.status == LookupStatus.SOURCE_ERROR
+    assert result.trace.metadata["route_attempts"][-2]["status"] == "error"
+
+
+def test_unnumbered_bare_reference_skips_semantic_search():
+    client = RoutingClient(laws=[LAW])
+    request = LookupRequest(
+        law_title="民法典", source_type="law", context_text="根据《民法典》规定"
+    )
+    result = PkulawFallbackSource(client).lookup(request)
+    assert result.status == LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
+    assert not any(call[0].startswith("semantic") for call in client.calls)
+
+
+def test_unnumbered_substantive_reference_returns_ranked_articles_and_filters_titles():
+    client = RoutingClient(
+        laws=[LAW],
+        semantic=[
+            _article("第一条", "保护当事人的合法民事权益。"),
+            _article(
+                "第二条", "保护当事人的合法民事权益。", title="中华人民共和国刑法"
+            ),
+        ],
+    )
+    request = LookupRequest(
+        law_title="民法典",
+        source_type="law",
+        context_text="应当保护当事人的合法民事权益和财产权利",
+    )
+    result = PkulawFallbackSource(client).lookup(request)
+    assert result.status == LookupStatus.RELEVANT_ARTICLES_FOUND
+    assert [x.article_no for x in result.evidence.related_articles] == ["第一条"]
+
+
+def test_unnumbered_semantic_article_without_number_has_no_blank_prefix():
+    text = "保护当事人的合法民事权益和财产权利。"
+    client = RoutingClient(laws=[LAW], semantic=[_article("", text)])
+    request = LookupRequest(law_title="民法典", source_type="law", context_text=text)
+    result = PkulawFallbackSource(client).lookup(request)
+    assert result.status == LookupStatus.RELEVANT_ARTICLES_FOUND
+    assert result.evidence.article_text == text
+
+
+@pytest.mark.parametrize(
+    ("semantic", "expected"),
+    [
+        (
+            [_article("第一条", "保护当事人的合法民事权益。")],
+            LookupStatus.RELEVANT_ARTICLES_FOUND,
+        ),
+        ([], LookupStatus.LAW_NOT_FOUND),
+    ],
+)
+def test_unnumbered_keyword_miss_semantic_outcomes(semantic, expected):
+    request = LookupRequest(
+        law_title="民法典",
+        source_type="law",
+        context_text="应当保护当事人的合法民事权益和财产权利",
+    )
+    result = PkulawFallbackSource(RoutingClient(semantic=semantic)).lookup(request)
+    assert result.status == expected
+
+
+def test_unnumbered_keyword_miss_semantic_error_is_source_error():
+    request = LookupRequest(
+        law_title="民法典",
+        source_type="law",
+        context_text="应当保护当事人的合法民事权益和财产权利",
+    )
+    result = PkulawFallbackSource(
+        RoutingClient(semantic=PkulawMcpError("semantic network"))
+    ).lookup(request)
+    assert result.status == LookupStatus.SOURCE_ERROR

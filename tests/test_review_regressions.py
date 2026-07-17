@@ -146,6 +146,37 @@ def test_article_paragraphs_and_items_stop_at_next_article():
     assert second.items == ["第四项"]
 
 
+def test_next_sentence_in_same_paragraph_inherits_unique_law_source(tmp_path: Path):
+    text = (
+        "《最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释》"
+        "第九条规定，相关公众容易产生混淆。"
+        "第十条规定，人民法院应当综合考虑相关因素后作出裁判。"
+    )
+    path = tmp_path / "same-paragraph.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    assert len(candidates) == 2
+    second_source = candidates[1].entities.legal_sources[0]
+    assert second_source.title == "最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释"
+    assert second_source.articles[0].article == "第十条"
+    assert second_source.resolution == "inherited"
+
+
+def test_same_paragraph_inheritance_stops_after_intervening_sentence(tmp_path: Path):
+    text = "《中华人民共和国商标法》第九条规定了有关规则。本案另有事实争议。第十条规定了其他规则。"
+    path = tmp_path / "intervening-sentence.docx"
+    document = DocxDocument()
+    document.add_paragraph(text)
+    document.save(path)
+    parsed = parse_docx(str(path))
+    candidates = extract_rule_candidates(parsed, build_indexes(parsed), include_cases=False)
+    assert len(candidates) == 1
+    assert candidates[0].entities.legal_sources[0].articles[0].article == "第九条"
+
+
 def test_article_range_is_expanded_in_source_order():
     articles = extract_legal_sources("依据《民法典》第四十三条至第四十五条处理")[0].articles
     assert [article.article for article in articles] == [

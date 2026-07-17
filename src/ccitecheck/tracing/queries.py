@@ -23,6 +23,26 @@ def build_law_title_query(title: str) -> str:
     return strip_version_annotation(normalize_title(title))
 
 
+def build_article_exact_title(title: str) -> str:
+    return build_law_title_query(title)
+
+
+def build_article_semantic_fallback_query(title: str, article_no: str) -> str:
+    return f"《{build_article_exact_title(title)}》{article_no}的条文内容"
+
+
+def has_substantive_content(context_text: str, law_title: str) -> bool:
+    normalized_title = build_law_title_query(law_title)
+    return (
+        len(
+            "".join(
+                _clean_phrases(context_text, excluded=(law_title, normalized_title))
+            )
+        )
+        >= 10
+    )
+
+
 def build_law_fulltext_query(context_text: str, law_title: str) -> str:
     return " ".join(_keyword_phrases(context_text, excluded=(law_title,)))
 
@@ -62,19 +82,27 @@ def _keyword_phrases(
     excluded: tuple[str | None, ...],
     max_terms: int = 4,
 ) -> list[str]:
-    cleaned = _remove_citations(text)
-    for value in excluded:
-        if value:
-            cleaned = cleaned.replace(value, "")
     terms: list[str] = []
-    for raw in _PUNCTUATION.split(cleaned):
-        term = _TRAILING_NOISE.sub("", _LEADING_NOISE.sub("", raw)).strip()
-        if len(term) < 2 or term in _EMPTY_CONNECTORS or term in terms:
+    for term in _clean_phrases(text, excluded):
+        if len(term) < 2 or term in terms:
             continue
         terms.append(term[:24])
         if len(terms) == max_terms:
             break
     return terms
+
+
+def _clean_phrases(text: str, excluded: tuple[str | None, ...]) -> list[str]:
+    cleaned = _remove_citations(text)
+    for value in excluded:
+        if value:
+            cleaned = cleaned.replace(value, "")
+    phrases: list[str] = []
+    for raw in _PUNCTUATION.split(cleaned):
+        phrase = _TRAILING_NOISE.sub("", _LEADING_NOISE.sub("", raw)).strip()
+        if phrase and phrase not in _EMPTY_CONNECTORS:
+            phrases.append(phrase)
+    return phrases
 
 
 def _compact_context(text: str, excluded: tuple[str | None, ...]) -> str:

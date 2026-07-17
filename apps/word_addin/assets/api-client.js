@@ -41,3 +41,11 @@ export async function checkHealth() {
   const response = await fetch("/api/health")
   if (!response.ok) throw new Error("核验服务不可用")
 }
+
+export async function captureDebugEvent(payload) {
+  await fetch("/api/debug-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+}

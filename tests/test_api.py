@@ -49,6 +49,9 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
+    assert "legal_checks" not in payload["verification"]
+    assert payload["summary"]["card_total"] == 1
+    assert payload["summary"]["reference_total"] == 1
     assert payload["semantic_check"] is False
     assert payload["summary"]["total"] == 1
 
@@ -92,8 +95,8 @@ def test_selection_check_api(tmp_path, monkeypatch):
     payload = response.json()
     assert payload["file_name"] == "test.docx（选中片段）"
     assert payload["summary"]["total"] == 1
-    assert payload["verification"]["legal_checks"][0]["lookup_status"] == "article_found"
-    location = payload["verification"]["legal_checks"][0]["source_locations"][0]
+    assert payload["verification"]["citation_cards"][0]["references"][0]["lookup_status"] == "article_found"
+    location = payload["verification"]["citation_cards"][0]["source_locations"][0]
     assert location["block_id"] == "word:p:7"
     assert location["char_start"] == 12
 
@@ -110,6 +113,17 @@ def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
 
 def test_case_only_selection_reports_unconfigured_case_source(tmp_path, monkeypatch):
     api_module = importlib.import_module("apps.api.app")
+    verification_module = importlib.import_module("ccitecheck.application.verify_claims")
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawNotConfiguredError
+
+    class UnconfiguredCaseSource:
+        def search_keyword(self, title, fulltext):
+            raise PkulawNotConfiguredError("案例数据源未配置")
+
+        def search_semantic(self, text):
+            raise PkulawNotConfiguredError("案例数据源未配置")
+
+    monkeypatch.setattr(verification_module, "PkulawCaseSource", UnconfiguredCaseSource)
     monkeypatch.setattr(api_module, "LAW_DB", tmp_path / "laws.sqlite")
     client = TestClient(api_module.app)
     response = client.post(
@@ -126,7 +140,7 @@ def test_case_only_selection_reports_unconfigured_case_source(tmp_path, monkeypa
     payload = response.json()
     assert payload["summary"]["total"] == 1
     assert payload["summary"]["bugs"] == 1
-    assert payload["verification"]["legal_checks"] == []
+    assert payload["verification"]["citation_cards"] == []
     assert payload["verification"]["case_checks"][0]["lookup_status"] == "source_not_configured"
     assert payload["document_key"].startswith("sha256:")
 
@@ -144,12 +158,12 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
         "/api/checks/selection",
         json={
             "file_name": "范本.docx",
-            "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
+            "text": "依据《中华人民共和国民法典》第五百七十七条第一款、第三款，被告应当承担违约责任。",
             "semantic_check": False,
         },
     ).json()
 
-    check_id = check["verification"]["legal_checks"][0]["check_id"]
+    check_id = check["verification"]["citation_cards"][0]["references"][0]["check_id"]
     report = client.post(
         "/api/reports",
         json={
@@ -170,6 +184,7 @@ def test_report_generation_and_retrieval(tmp_path, monkeypatch):
     assert "全链路溯源记录" in page.text
     assert "获取时间" in page.text
     assert "民法典" in page.text
+    assert "第五百七十七条第一款、第三款" in page.text
 
 
 def test_scope_validation_requires_at_least_one(tmp_path, monkeypatch):
@@ -206,4 +221,4 @@ def test_statutes_can_be_excluded(tmp_path, monkeypatch):
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["verification"]["legal_checks"] == []
+    assert payload["verification"]["citation_cards"] == []

@@ -52,7 +52,12 @@ QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 `.env` 已被 Git 忽略，不应提交到代码库。
 
-`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：精准法条（`/mcp-fatiao`）、法规关键词（`/mcp-law`）、法规语义（`/mcp-law-search-service`）、案号识别（`/case_number_recognition`）、案例关键词（`/mcp-case`）和案例语义检索（`/mcp-case-search-service`）。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。北大法宝配置只读取 `PKULAW_ACCESS_TOKEN` 与 `PKULAW_MCP_GATEWAY`。
+本机测试默认会把完整调试现场保存到 `debug_runs/<时间-编号>/`，包括原始
+DOCX、Blocks/Anchors、Claims、核查响应和 Word 定位事件。该目录已被 Git
+忽略，但内容可能包含敏感原文；如需关闭，设置
+`CCITECHECK_DEBUG_CAPTURE=0`。
+
+`PKULAW_ACCESS_TOKEN` 是可选项，用于北大法宝多路 MCP：法规关键词（`/mcp-law`）、法规语义与精确查条（`/mcp-law-search-service`）、案号识别（`/case_number_recognition`）、案例关键词（`/mcp-case`）和案例语义检索（`/mcp-case-search-service`）。当前 42 部本地法规/司法解释已有全文，命中本地库时法条不消耗法宝调用；案例没有本地库，未配置 token 时相关核查标记为 `source_not_configured`。北大法宝配置只读取 `PKULAW_ACCESS_TOKEN` 与 `PKULAW_MCP_GATEWAY`。
 
 ## 快速检查
 

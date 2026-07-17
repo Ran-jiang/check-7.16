@@ -56,12 +56,14 @@ def verify_case_claims(
         return []
 
     # 全篇合并为一次案号识别调用（法宝接口本身支持批量），节省额度与往返
-    claims_with_numbers = [
-        claim for claim, ref in refs if ref.case_number
-    ]
+    claims_with_numbers = [claim for claim, ref in refs if ref.case_number]
     if claims_with_numbers:
-        joined_text = "\n".join(dict.fromkeys(claim.text for claim in claims_with_numbers))
-        recognized, error_status, message = _recognize_case_numbers(recognizer, joined_text)
+        joined_text = "\n".join(
+            dict.fromkeys(claim.text for claim in claims_with_numbers)
+        )
+        recognized, error_status, message = _recognize_case_numbers(
+            recognizer, joined_text
+        )
     else:
         recognized, error_status, message = [], None, ""
 
@@ -75,9 +77,7 @@ def verify_case_claims(
         with ThreadPoolExecutor(max_workers=_CASE_LOOKUP_WORKERS) as pool:
             outcomes = list(
                 pool.map(
-                    lambda key: _search_case_reference(
-                        recognizer, *search_jobs[key]
-                    ),
+                    lambda key: _search_case_reference(recognizer, *search_jobs[key]),
                     keys,
                 )
             )
@@ -104,10 +104,14 @@ def verify_case_claims(
             status, evidence, note, traces = search_results[
                 _case_search_key(claim, ref)
             ]
-            trace = traces[-1] if traces else CaseSourceTrace(
-                source_name="CCiteheck 案例检索路由",
-                status=status,
-                message=note,
+            trace = (
+                traces[-1]
+                if traces
+                else CaseSourceTrace(
+                    source_name="CCiteheck 案例检索路由",
+                    status=status,
+                    message=note,
+                )
             )
         checks.append(
             CaseCheck(
@@ -121,9 +125,7 @@ def verify_case_claims(
                 lookup_status=status,
                 evidence=evidence,
                 message=note,
-                source_attempts=(
-                    [trace] if ref.case_number else traces or [trace]
-                ),
+                source_attempts=([trace] if ref.case_number else traces or [trace]),
             )
         )
     return checks
@@ -150,13 +152,18 @@ def _search_case_reference(recognizer, claim, ref):
     search_semantic = getattr(recognizer, "search_semantic", None)
     if not callable(search_keyword) and not callable(search_semantic):
         note = "该案例线索未附案号，当前案例源不支持案名或语义检索，请人工核验"
-        return CaseLookupStatus.MANUAL_REVIEW, None, note, [
-            CaseSourceTrace(
-                source_name="CCiteheck 案例检索路由",
-                status=CaseLookupStatus.MANUAL_REVIEW,
-                message=note,
-            )
-        ]
+        return (
+            CaseLookupStatus.MANUAL_REVIEW,
+            None,
+            note,
+            [
+                CaseSourceTrace(
+                    source_name="CCiteheck 案例检索路由",
+                    status=CaseLookupStatus.MANUAL_REVIEW,
+                    message=note,
+                )
+            ],
+        )
 
     context = claim.context_text or claim.text
     title, fulltext = build_case_keyword_query(ref.case_name, context, ref.court)
@@ -171,9 +178,7 @@ def _search_case_reference(recognizer, claim, ref):
             )
         )
     if callable(search_semantic):
-        semantic_query = build_case_semantic_query(
-            ref.case_name, context, ref.court
-        )
+        semantic_query = build_case_semantic_query(ref.case_name, context, ref.court)
         routes.append(
             (
                 "北大法宝 MCP：检索司法案例-语义",
@@ -216,7 +221,10 @@ def _search_case_reference(recognizer, claim, ref):
     if error_statuses:
         status = (
             CaseLookupStatus.SOURCE_NOT_CONFIGURED
-            if all(item == CaseLookupStatus.SOURCE_NOT_CONFIGURED for item in error_statuses)
+            if all(
+                item == CaseLookupStatus.SOURCE_NOT_CONFIGURED
+                for item in error_statuses
+            )
             else CaseLookupStatus.SOURCE_ERROR
         )
         return status, None, "北大法宝案例检索未完成，无法判断", traces
@@ -309,12 +317,22 @@ def _match_case_record(
     normalized_court = _normalize_case_name(court or "")
     for record in records:
         candidate = _normalize_case_name(record.title)
-        title_matches = target == candidate or (
-            min(len(target), len(candidate)) >= 6
-            and (target in candidate or candidate in target)
+        target_guiding_id = _guiding_case_id(target)
+        candidate_guiding_id = _guiding_case_id(candidate)
+        title_matches = (
+            target == candidate
+            or (
+                target_guiding_id is not None
+                and target_guiding_id == candidate_guiding_id
+            )
+            or (
+                min(len(target), len(candidate)) >= 6
+                and (target in candidate or candidate in target)
+            )
         )
-        court_matches = not normalized_court or normalized_court in _normalize_case_name(
-            record.court
+        court_matches = (
+            not normalized_court
+            or normalized_court in _normalize_case_name(record.court)
         )
         if title_matches and court_matches:
             return record
@@ -324,6 +342,11 @@ def _match_case_record(
 def _normalize_case_name(value: str) -> str:
     normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", value)
     return normalized.replace("指导性案例", "指导案例")
+
+
+def _guiding_case_id(value: str) -> str | None:
+    match = re.match(r"^指导案例(\d+)号", value)
+    return match.group(1) if match else None
 
 
 def _case_record_evidence(
@@ -343,7 +366,10 @@ def _case_record_evidence(
 def _match_case_number(cited: str, recognized) -> CaseEvidence | None:
     target = _normalize_case_number(cited)
     for item in recognized:
-        if target in (_normalize_case_number(item.text), _normalize_case_number(item.case_flag)):
+        if target in (
+            _normalize_case_number(item.text),
+            _normalize_case_number(item.case_flag),
+        ):
             return CaseEvidence(
                 matched_text=item.text,
                 case_number=item.case_flag or item.text,
@@ -361,13 +387,17 @@ def _case_status(recognized, evidence, error_status, message):
         return error_status, message
     if evidence is not None:
         return CaseLookupStatus.VERIFIED, ""
-    return CaseLookupStatus.NOT_FOUND, "文书案号未在北大法宝案例库命中，疑似有误或不存在"
+    return (
+        CaseLookupStatus.NOT_FOUND,
+        "文书案号未在北大法宝案例库命中，疑似有误或不存在",
+    )
 
 
 def _normalize_case_number(value: str) -> str:
-    table = str.maketrans({"（": "(", "）": ")", "〔": "(", "〕": ")", "　": "", " ": ""})
+    table = str.maketrans(
+        {"（": "(", "）": ")", "〔": "(", "〕": ")", "　": "", " ": ""}
+    )
     return value.translate(table)
-
 
 
 __all__ = ["verify_case_claims"]
