@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import os
 import tempfile
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +44,18 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
 app = FastAPI(title="CCiteheck API", version="1.0.0")
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CCITECHECK_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
 app.mount("/assets", StaticFiles(directory=ADDIN_ROOT / "assets"), name="assets")
 app.mount(
     "/feishu-addon",
@@ -208,6 +222,8 @@ def _rebase_selection_locations(verification, source_blocks) -> None:
             location.block_id = source.block_id
             location.char_start += source.char_start
             location.char_end += source.char_start
+            # 选区临时 DOCX 中的出现序号不等于原文所属段落中的出现序号。
+            location.occurrence = None
             rebased.append(location)
         check.source_locations = rebased
 
