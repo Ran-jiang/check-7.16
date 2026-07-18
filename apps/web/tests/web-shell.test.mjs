@@ -17,7 +17,12 @@ test("web shell exposes upload, paste, preview and result surfaces", () => {
   assert.match(html, /EUR-Lex MCP/)
   assert.match(html, /brand-back/)
   assert.doesNotMatch(html, /核查工作台/)
+  assert.match(html, /id="preview-title">核查文件：/)
+  assert.doesNotMatch(html, /id="visible-count"/)
+  assert.doesNotMatch(html, /id="result-list-title"/)
   assert.doesNotMatch(html, /progress-title[^>]*>[^<]*<\/p>\s*<h1/)
+  assert.match(script, /核查完成。共/)
+  assert.doesNotMatch(script, /document-title|visible-count/)
 })
 
 test("web client uses the dedicated session revision protocol", () => {

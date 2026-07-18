@@ -66,7 +66,6 @@
     <section id="workspace" class="workspace is-hidden">
       <header class="workspace-header">
         <div class="workspace-summary">
-          <p id="document-title" class="checked-file">核查文件：</p>
           <p id="summary-line"></p>
           <p class="comparison-guide">引用句已在文书原文中标亮，可与右侧核查结果对照查看；点击任一引用句或结果卡片即可同步定位。</p>
         </div>
@@ -75,7 +74,7 @@
       <div class="workbench">
         <section class="document-pane" aria-labelledby="preview-title">
           <div class="pane-heading preview-heading">
-            <h2 id="preview-title">文书原文</h2>
+            <h2 id="preview-title">核查文件：</h2>
             <div class="highlight-guide" aria-label="引用句颜色说明">
               <strong>引用句已标亮</strong>
               <span class="is-issue">红色为未通过</span>
@@ -85,9 +84,8 @@
           </div>
           <article id="document-preview" class="paper"></article>
         </section>
-        <aside class="results-pane" aria-labelledby="result-list-title">
+        <aside class="results-pane" aria-label="核查结果">
           <div class="results-toolbar">
-            <div class="pane-heading"><h2 id="result-list-title">核查结果</h2><span id="visible-count"></span></div>
             <nav id="status-filters" class="filter-group" aria-label="筛选核查状态"></nav>
           </div>
           <div id="web-results" class="web-results"></div>

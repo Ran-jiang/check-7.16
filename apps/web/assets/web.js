@@ -67,9 +67,9 @@ async function runCheck() {
 
 function renderWorkspace() {
   const { result } = state
-  $("document-title").textContent = `核查文件：${result.file_name}`
+  $("preview-title").textContent = `核查文件：${result.file_name}`
   const s = result.summary
-  $("summary-line").textContent = `共 ${s.reference_total} 条引用 · ${s.passed} 处通过 · ${s.issues} 处未通过 · ${s.bugs} 处待核实`
+  $("summary-line").textContent = `核查完成。共 ${s.reference_total} 条引用 · ${s.passed} 处通过 · ${s.issues} 处未通过 · ${s.bugs} 处待核实`
   $("download-button").href = `/api/web/sessions/${result.session_id}/document`
   $("download-button").classList.remove("is-disabled")
   renderStatusFilters()
@@ -93,6 +93,7 @@ function renderStatusFilters() {
   $("status-filters").replaceChildren(...[["all", "全部"], ["issue", "未通过"], ["bug", "待核实"], ["pass", "已通过"]].map(([value, label]) => {
     const button = el("button", `filter-button${state.status === value ? " is-active" : ""}`)
     button.type = "button"
+    button.setAttribute("aria-pressed", String(state.status === value))
     button.append(label, el("em", "", String(counts[value] || 0)))
     button.addEventListener("click", () => { state.status = value; renderStatusFilters(); renderResults() })
     return button
@@ -101,7 +102,6 @@ function renderStatusFilters() {
 
 function renderResults() {
   const visible = checks().filter(check => state.status === "all" || check.outcome === state.status)
-  $("visible-count").textContent = `${visible.length} 条`
   $("web-results").replaceChildren(...visible.map(createResultCard))
   if (!visible.length) $("web-results").append(el("div", "empty-state", "当前筛选条件下没有核查结果。"))
 }
