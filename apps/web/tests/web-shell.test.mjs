@@ -13,6 +13,11 @@ test("web shell exposes upload, paste, preview and result surfaces", () => {
   }
   assert.match(html, /引用句已标亮/)
   assert.doesNotMatch(html, /全部引用/)
+  assert.match(html, /北大法宝 MCP/)
+  assert.match(html, /EUR-Lex MCP/)
+  assert.match(html, /brand-back/)
+  assert.doesNotMatch(html, /核查工作台/)
+  assert.doesNotMatch(html, /progress-title[^>]*>[^<]*<\/p>\s*<h1/)
 })
 
 test("web client uses the dedicated session revision protocol", () => {
@@ -22,6 +27,8 @@ test("web client uses the dedicated session revision protocol", () => {
   assert.match(script, /\/document`/)
   assert.match(script, /centerInPane/)
   assert.match(script, /原文链接：/)
+  assert.doesNotMatch(script, /result-kind/)
+  assert.doesNotMatch(script, /el\("details"/)
 })
 
 test("result cards follow parsed document order across paragraphs and tables", () => {

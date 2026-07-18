@@ -50,7 +50,6 @@ async function runCheck() {
     payload = { file_name: "粘贴文本.docx", text, ...scope }
   }
   showOnly("progress")
-  cycleProgress()
   try {
     const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     const data = await response.json()
@@ -68,7 +67,7 @@ async function runCheck() {
 
 function renderWorkspace() {
   const { result } = state
-  $("document-title").textContent = result.file_name
+  $("document-title").textContent = `核查文件：${result.file_name}`
   const s = result.summary
   $("summary-line").textContent = `共 ${s.reference_total} 条引用 · ${s.passed} 处通过 · ${s.issues} 处未通过 · ${s.bugs} 处待核实`
   $("download-button").href = `/api/web/sessions/${result.session_id}/document`
@@ -113,9 +112,9 @@ function createResultCard(check) {
   card.dataset.checkId = check.check_id
   const top = el("button", "result-card-top")
   top.type = "button"
-  top.append(el("span", "result-kind", check.check_kind === "case" ? "司法案例" : "法律法规"), el("span", `result-status is-${check.outcome}`, view.badge.text))
+  top.append(el("h3", "result-reference", view.refLine.text || check.claim_text), el("span", `result-status is-${check.outcome}`, view.badge.text))
   top.addEventListener("click", () => selectCheck(check))
-  card.append(top, el("h3", "", view.refLine.text || check.claim_text))
+  card.append(top)
   const tags = el("div", "result-tags")
   ;(check.findings || []).forEach(finding => tags.append(el("span", "", findingLabel(finding, check.check_kind))))
   if (tags.childNodes.length) card.append(tags)
@@ -133,19 +132,19 @@ function createResultCard(check) {
 }
 
 function createEvidence(evidence) {
-  const details = el("details", "web-evidence")
-  details.append(el("summary", "", evidence.summaryLabel))
-  if (evidence.structurePath) details.append(el("p", "evidence-path", `章节位置：${evidence.structurePath}`))
-  if (evidence.articleText) details.append(el("blockquote", "", `${evidence.articleHeading ? `${evidence.articleHeading}　` : ""}${evidence.articleText}`))
+  const section = el("section", "web-evidence")
+  section.append(el("div", "evidence-title", evidence.summaryLabel))
+  if (evidence.structurePath) section.append(el("p", "evidence-path", `章节位置：${evidence.structurePath}`))
+  if (evidence.articleText) section.append(el("blockquote", "", `${evidence.articleHeading ? `${evidence.articleHeading}　` : ""}${evidence.articleText}`))
   if (evidence.url) {
     const linkLine = el("p", "source-line")
     linkLine.append("原文链接：")
     const link = el("a", "source-link", evidence.url)
     link.href = evidence.url; link.target = "_blank"; link.rel = "noopener noreferrer"
     linkLine.append(link)
-    details.append(linkLine)
+    section.append(linkLine)
   }
-  return details
+  return section
 }
 
 async function toggleRevision(check, accepted) {
@@ -220,8 +219,7 @@ function revisedBlockText(text) { for (const check of checks()) if (state.accept
 function revisedClaim(check) { const r = revisionOf(check); return state.accepted.has(check.check_id) && r ? r.revised_text : check.claim_text }
 function revisionOf(check) { const revisions = (check.findings || []).map(item => item.revision).filter(item => item?.machine_applicable && item.revised_text); return revisions.length === 1 ? revisions[0] : null }
 function showLanding() { showOnly("landing") }
-function showOnly(id) { for (const section of ["landing", "progress", "workspace"]) $(section).classList.toggle("is-hidden", section !== id); window.scrollTo({ top: 0, behavior: "smooth" }) }
-function cycleProgress() { const messages = ["正在解析文书结构", "正在连接权威法律来源", "正在核对法规与案例引用"]; let i = 0; $("progress-title").textContent = messages[0]; const timer = setInterval(() => { if ($("progress").classList.contains("is-hidden")) return clearInterval(timer); $("progress-title").textContent = messages[++i % messages.length] }, 2400) }
+function showOnly(id) { document.body.dataset.screen = id; for (const section of ["landing", "progress", "workspace"]) $(section).classList.toggle("is-hidden", section !== id); window.scrollTo({ top: 0, behavior: "smooth" }) }
 function fileBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("文件读取失败")); reader.readAsDataURL(file) }) }
 function toast(message) { $("toast").textContent = message; $("toast").classList.remove("is-hidden"); clearTimeout(toast.timer); toast.timer = setTimeout(() => $("toast").classList.add("is-hidden"), 5000) }
 function el(tag, className = "", text = "") { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node }
