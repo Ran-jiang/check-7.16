@@ -3,19 +3,18 @@
 from ccitecheck.recognition.cases import NAMED_CASE_PATTERN
 from ccitecheck.recognition.statutes import _extract_articles_from_text
 from ccitecheck.infrastructure.database import strip_version_annotation
-from ccitecheck.judgment.deterministic import (
-    build_rule_findings,
+from ccitecheck.judgment.statutes import (
+    assess_statute,
     classify_not_verifiable,
     suggest_similar_title,
 )
-from ccitecheck.domain.result import (
+from ccitecheck.domain.evidence import (
     ArticleEvidence,
     LookupStatus,
-    RiskLevel,
-    SemanticErrorType,
     SourceTier,
     SourceTrace,
 )
+from ccitecheck.domain.statute_results import StatuteErrorCode
 from ccitecheck.tracing.sources import LookupResult
 
 
@@ -87,12 +86,12 @@ def _local_partial_result(law_title: str, article_no: str, article_count: int):
 
 def test_article_not_exist_produces_high_finding():
     result, attempts = _local_partial_result("中华人民共和国民法典", "第一千三百条", 1260)
-    findings = build_rule_findings(
+    findings = assess_statute(
         "中华人民共和国民法典", "第一千三百条", result, attempts, []
     )
     assert any(
-        f.error_type == SemanticErrorType.LOCATION_ERROR
-        and f.risk_level == RiskLevel.HIGH
+        f.code == StatuteErrorCode.CITATION_LOCATION_ERROR
+        and f.risk_level == "HIGH"
         for f in findings
     )
 
@@ -112,17 +111,17 @@ def test_repealed_law_produces_outdated_finding():
         data_source=trace,
     )
     result = LookupResult(trace.status, evidence, trace)
-    findings = build_rule_findings(
+    findings = assess_statute(
         "中华人民共和国合同法", "第五十二条", result, [trace], []
     )
     assert any(
-        f.error_type == SemanticErrorType.OUTDATED_SOURCE
-        and f.risk_level == RiskLevel.HIGH
+        f.code == StatuteErrorCode.SOURCE_REPEALED
+        and f.risk_level == "HIGH"
         for f in findings
     )
     # 已废止时不应叠加"未检索到条文"噪音
     assert not any(
-        f.error_type == SemanticErrorType.LOCATION_ERROR for f in findings
+        f.code == StatuteErrorCode.CITATION_LOCATION_ERROR for f in findings
     )
 
 
@@ -136,12 +135,12 @@ def test_law_not_found_after_completed_search_produces_high_finding():
         metadata={"search_completed": True},
     )
     result = LookupResult(LookupStatus.LAW_NOT_FOUND, None, trace)
-    findings = build_rule_findings(
+    findings = assess_statute(
         "中华人民共和国印章管理办法", "第五条", result, [trace], []
     )
     assert any(
-        f.error_type == SemanticErrorType.SOURCE_NOT_FOUND
-        and f.risk_level == RiskLevel.HIGH
+        f.code == StatuteErrorCode.SOURCE_NOT_FOUND
+        and f.risk_level == "HIGH"
         for f in findings
     )
 
@@ -184,33 +183,6 @@ _PATENT_ARTICLE_9 = (
     "声明放弃该实用新型专利权的，可以授予发明专利权。\n"
     "两个以上的申请人分别就同样的发明创造申请专利的，专利权授予最先申请的人。"
 )
-
-
-def test_paragraph_out_of_range_produces_high_finding():
-    result, attempts = _article_found_result(
-        "中华人民共和国专利法", "第九条", _PATENT_ARTICLE_9
-    )
-    findings = build_rule_findings(
-        "中华人民共和国专利法", "第九条", result, attempts, [],
-        paragraphs=["第五款"],
-    )
-    assert any(
-        f.error_type == SemanticErrorType.LOCATION_ERROR
-        and f.risk_level == RiskLevel.HIGH
-        and "第五款" in f.diff_summary
-        for f in findings
-    )
-
-
-def test_paragraph_in_range_produces_no_finding():
-    result, attempts = _article_found_result(
-        "中华人民共和国专利法", "第九条", _PATENT_ARTICLE_9
-    )
-    findings = build_rule_findings(
-        "中华人民共和国专利法", "第九条", result, attempts, [],
-        paragraphs=["第二款"],
-    )
-    assert not findings
 
 
 def test_split_paragraphs_merges_item_lines():

@@ -1,5 +1,7 @@
 # CCitecheck Word for Mac 测试指南
 
+评委或小范围公网测试者应优先使用 `tools/word-installers/mac/install-ccitecheck.command`，无需安装开发环境或配置密钥。以下内容仅适用于需要运行本地服务的开发者。
+
 本指南用于帮助测试者从 GitHub 下载并在本机运行 CCitecheck Word 插件。
 
 ## 运行条件

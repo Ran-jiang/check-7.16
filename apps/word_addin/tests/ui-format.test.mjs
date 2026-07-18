@@ -13,7 +13,7 @@ import {
 test("single-reference cards preserve card_id for bookmark lookup", () => {
   const ui = new CheckUi()
   ui.createResultCard = value => value
-  const flattened = ui.createCitationCard({
+  const flattened = ui.createStatuteGroup({
     card_id: "card_00001",
     claim_text: "引用原文。",
     source_locations: [{ block_id: "word:p:0" }],
@@ -68,9 +68,9 @@ test("formats one article with multiple paragraphs as one reference", () => {
   }), "《中华人民共和国商标法》第十三条第一款、第三款")
 })
 
-test("each reference keeps its own verification state", () => {
-  assert.equal(checkState({ rule_findings: [], semantic_comparison: { verdict: "pass" } }), "pass")
-  assert.equal(checkState({ rule_findings: [{ error_type: "条款编号或引用定位错误" }] }), "issue")
+test("each statute result keeps its own verification state", () => {
+  assert.equal(checkState({ outcome: "pass", findings: [] }), "pass")
+  assert.equal(checkState({ outcome: "issue", findings: [{ code: "citation_location_error" }] }), "issue")
 })
 
 // ---------- 统一视图模型（normalizeCheck） ----------
@@ -78,15 +78,15 @@ test("each reference keeps its own verification state", () => {
 import { normalizeCheck } from "../assets/view-model.js"
 
 test("badge text follows the renamed three-state scheme", () => {
-  const issue = normalizeCheck({ rule_findings: [{ error_type: "曲解权威文本原意", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
+  const issue = normalizeCheck({ outcome: "issue", findings: [{ code: "meaning_distorted", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
   assert.equal(issue.state, "issue")
   assert.equal(issue.badge.text, "未通过")
 
-  const bug = normalizeCheck({ law_title: "刑法", lookup_status: "law_found_text_unavailable" })
+  const bug = normalizeCheck({ outcome: "bug", law_title: "刑法", lookup_status: "law_found_text_unavailable" })
   assert.equal(bug.state, "bug")
   assert.equal(bug.badge.text, "待核实")
 
-  const pass = normalizeCheck({ law_title: "民法典", lookup_status: "article_found", semantic_comparison: { verdict: "pass" } })
+  const pass = normalizeCheck({ outcome: "pass", law_title: "民法典", lookup_status: "article_found", meaning_check: { verdict: "pass" } })
   assert.equal(pass.badge.text, "通过")
   assert.equal(pass.typeLabel, "法律引用无问题")
 })
@@ -94,6 +94,7 @@ test("badge text follows the renamed three-state scheme", () => {
 test("out-of-scope statutes surface the boundary message", () => {
   const view = normalizeCheck({
     law_title: "知识产权法典",
+    outcome: "bug",
     lookup_status: "out_of_scope",
     source_attempts: [{ status: "out_of_scope", message: "涉外法规（非中国/欧盟法域），超出本产品核查边界，请人工核验" }],
   })
@@ -107,8 +108,8 @@ test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
   const view = normalizeCheck({
     law_title: "通用数据保护条例",
     jurisdiction: "EU",
+    outcome: "pass",
     lookup_status: "relevant_articles_found",
-    verification_scope: "existence_only",
     evidence: {
       law_title: "Regulation (EU) 2016/679",
       version_status: "现行有效",
@@ -124,6 +125,7 @@ test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
 test("case checks normalize into the same shape as statutes", () => {
   const view = normalizeCheck({
     check_kind: "case",
+    outcome: "bug",
     check_id: "cc_00001",
     claim_text: "在某案中……",
     cited_case_name: "腾讯诉上海盈讯公司著作权侵权案",
@@ -142,7 +144,7 @@ test("case checks normalize into the same shape as statutes", () => {
 
 test("compact sub-references drop the quote and jump affordance", () => {
   const view = normalizeCheck(
-    { law_title: "刑法", article_no: "第二百九十一条", claim_text: "整段引文", lookup_status: "article_found", semantic_comparison: { verdict: "pass" } },
+    { outcome: "pass", law_title: "刑法", article_no: "第二百九十一条", claim_text: "整段引文", lookup_status: "article_found", meaning_check: { verdict: "pass" } },
     { compact: true },
   )
   assert.equal(view.quote, null)
@@ -153,6 +155,7 @@ test("compact sub-references drop the quote and jump affordance", () => {
 test("recalled related articles keep the evidence section even without full text", () => {
   const view = normalizeCheck({
     law_title: "著作权法",
+    outcome: "pass",
     lookup_status: "relevant_articles_found",
     evidence: {
       law_title: "中华人民共和国著作权法",
@@ -170,9 +173,9 @@ test("EU evidence headings use the Article convention with a separator", () => {
     law_title: "通用数据保护条例",
     article_no: "第十七条",
     jurisdiction: "EU",
+    outcome: "pass",
     lookup_status: "article_found",
-    verification_scope: "full",
-    semantic_comparison: { verdict: "pass" },
+    meaning_check: { verdict: "pass" },
     evidence: {
       law_title: "General Data Protection Regulation 2016/679",
       article_no: "Article 17",
@@ -187,9 +190,9 @@ test("EU evidence headings use the Article convention with a separator", () => {
 test("structure citations label distinctly from nested references", () => {
   const structure = normalizeCheck({
     law_title: "中华人民共和国民法典",
+    outcome: "pass",
     article_no: "第三编第四章",
     lookup_status: "relevant_articles_found",
-    verification_scope: "existence_only",
     evidence: {
       law_title: "中华人民共和国民法典",
       structure_path: "第三编 合同 / 第一分编 通则 / 第四章 合同的履行",
@@ -203,21 +206,21 @@ test("structure citations label distinctly from nested references", () => {
 
   const ambiguous = normalizeCheck({
     law_title: "中华人民共和国民法典",
+    outcome: "bug",
     article_no: "第四章",
     lookup_status: "relevant_articles_found",
-    verification_scope: "existence_only",
-    semantic_comparison: { execution_status: "skipped", skipped_reason: "structure_ambiguous" },
+    meaning_check: { execution_status: "skipped", skipped_reason: "structure_ambiguous" },
     evidence: { law_title: "中华人民共和国民法典", structure_path: "候选：……", data_source: {} },
   })
   assert.equal(ambiguous.state, "bug")
   assert.equal(ambiguous.typeLabel, "章节引用存在多个候选，请人工确认")
 
   const nested = normalizeCheck({
+    outcome: "pass",
     law_title: "中华人民共和国刑法",
     article_no: "第二百九十一条",
     reference_role: "nested",
     lookup_status: "article_found",
-    verification_scope: "existence_only",
   })
   assert.equal(nested.typeLabel, "内部转引：仅核验存在性")
 })

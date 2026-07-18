@@ -7,12 +7,11 @@ import binascii
 import hashlib
 import os
 import tempfile
-import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from ccitecheck.application import (
@@ -24,15 +23,13 @@ from ccitecheck.application import (
 )
 from ccitecheck.infrastructure.paths import PROJECT_ROOT
 from ccitecheck.parsing.feishu import parse_feishu_snapshot
-from ccitecheck.output import render_report_html, summarize_verification
+from ccitecheck.output import summarize_verification
 
 from .schema import (
     DebugEventRequest,
     DocumentCheckRequest,
     DocumentCheckResponse,
     FeishuDocumentCheckRequest,
-    ReportRequest,
-    ReportResponse,
     SelectionCheckRequest,
 )
 from .debug_capture import append_event, create_run, write_json
@@ -40,7 +37,6 @@ from .debug_capture import append_event, create_run, write_json
 ADDIN_ROOT = PROJECT_ROOT / "apps" / "word_addin"
 FEISHU_ADDIN_ROOT = PROJECT_ROOT / "apps" / "feishu"
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
-REPORTS_DIR = PROJECT_ROOT / "reports"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
 app = FastAPI(title="CCiteheck API", version="1.0.0")
@@ -90,8 +86,14 @@ def help_page() -> FileResponse:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "pkulaw_configured": bool(os.getenv("PKULAW_ACCESS_TOKEN", "").strip()),
+        "llm_configured": bool(
+            (os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+        ),
+    }
 
 
 def _validate_scope(request) -> None:
@@ -218,7 +220,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
 
 def _rebase_selection_locations(verification, source_blocks) -> None:
     """把临时选区 DOCX 的段落坐标映射回当前 Word 文档。"""
-    located_items = [*verification.citation_cards, *verification.case_checks]
+    located_items = [*verification.statute_results, *verification.case_results]
     for check in located_items:
         rebased = []
         for location in check.source_locations:
@@ -279,26 +281,6 @@ def check_feishu_document(request: FeishuDocumentCheckRequest) -> DocumentCheckR
         summary=summarize_verification(verification),
         verification=verification,
     )
-
-
-@app.post("/api/reports", response_model=ReportResponse)
-def create_report(request: ReportRequest) -> ReportResponse:
-    """由前端回传核查结果与人工标记，生成可交付、可审计的 HTML 核查报告。"""
-    report_id = uuid.uuid4().hex
-    REPORTS_DIR.mkdir(exist_ok=True)
-    report_path = REPORTS_DIR / f"{report_id}.html"
-    report_path.write_text(render_report_html(request), encoding="utf-8")
-    return ReportResponse(report_id=report_id, url=f"/reports/{report_id}")
-
-
-@app.get("/reports/{report_id}", include_in_schema=False)
-def get_report(report_id: str) -> HTMLResponse:
-    if not report_id.isalnum():
-        raise HTTPException(status_code=404, detail="报告不存在")
-    report_path = REPORTS_DIR / f"{report_id}.html"
-    if not report_path.exists():
-        raise HTTPException(status_code=404, detail="报告不存在")
-    return HTMLResponse(report_path.read_text(encoding="utf-8"))
 
 
 def _decode_document(encoded: str) -> bytes:

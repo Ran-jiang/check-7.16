@@ -9,6 +9,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -21,7 +22,6 @@ from ....infrastructure.http import default_ssl_context
 from ...queries import build_article_semantic_fallback_query
 from .models import (
     PkulawArticle,
-    PkulawCaseNumber,
     PkulawCaseRecord,
     PkulawLawRecord,
     PkulawMcpError,
@@ -30,7 +30,6 @@ from .models import (
 )
 from .parsing import (
     parse_article_records as _parse_article_search_response,
-    parse_case_numbers as _parse_anhao_response,
     parse_case_records as _parse_case_list_response,
     parse_exact_article as _parse_get_article_response,
     parse_law_records as _parse_law_list_response,
@@ -43,7 +42,6 @@ MCP_ENDPOINTS = {
     "law_semantic": "/mcp-law-search-service",
     "case_keyword": "/mcp-case",
     "case_semantic": "/mcp-case-search-service",
-    "case_number": "/case_number_recognition",
 }
 
 
@@ -106,15 +104,6 @@ class PkulawMcpClient:
             build_article_semantic_fallback_query(title, article_no)
         )
 
-    def recognize_case_numbers(self, text: str) -> list[PkulawCaseNumber]:
-        payload = self._call_tool(
-            endpoint=MCP_ENDPOINTS["case_number"],
-            tool_name="anhao_recognition",
-            arguments={"text": text},
-        )
-        data = _extract_payload_data(payload)
-        return _parse_anhao_response(data)
-
     def get_case_list(
         self, title: str = "", fulltext: str = ""
     ) -> list[PkulawCaseRecord]:
@@ -123,7 +112,7 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["case_keyword"],
             tool_name="get_case_list",
-            arguments={"title": title, "fulltext": fulltext},
+            arguments={"caseInput": {"Title": title, "FullText": fulltext}},
         )
         data = _extract_payload_data(payload)
         return _parse_case_list_response(data)
@@ -182,7 +171,7 @@ class PkulawMcpClient:
                 )
                 if exc.code < 500:  # 4xx 是配置/鉴权问题，重试无意义
                     raise last_error from exc
-            except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError) as exc:
                 reason = getattr(exc, "reason", exc)
                 last_error = PkulawMcpError(f"Pkulaw MCP request failed: {reason}")
         raise last_error

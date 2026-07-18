@@ -31,7 +31,7 @@ from ccitecheck.infrastructure.database import (
 from ccitecheck.parsing.docx import parse_docx
 from ccitecheck.domain.document import Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument
 from ccitecheck.judgment.cases import verify_case_claims
-from ccitecheck.domain.result import CaseLookupStatus
+from ccitecheck.domain.evidence import CaseLookupStatus
 
 
 def _parsed(*texts: str) -> ParsedDocument:
@@ -300,12 +300,15 @@ def test_claim_document_json_roundtrip_restores_typed_entities_and_context():
     assert restored.claims[0].context_text == doc.anchors[0].text
 
 
-class _RecognizerMustNotRun:
-    def recognize(self, text: str):
-        raise AssertionError("no-number case clues must not call exact recognizer")
+class _EmptyCaseSearcher:
+    def search_keyword(self, title: str, fulltext: str):
+        return []
+
+    def search_semantic(self, text: str):
+        return []
 
 
-def test_case_without_number_is_preserved_as_manual_review():
+def test_case_without_number_uses_both_routes_before_not_found():
     doc = _parsed("指导案例262号具有参考意义。")
     candidate = ClaimCandidate(
         claim_type=ClaimType.CASE_CITATION,
@@ -320,10 +323,9 @@ def test_case_without_number_is_preserved_as_manual_review():
         ),
     )
     claim_doc = build_claim_document(doc, arbitrate_claim_candidates([candidate], doc))
-    claim = claim_doc.claims[0]
-    checks = verify_case_claims(claim_doc, _RecognizerMustNotRun())
+    checks = verify_case_claims(claim_doc, _EmptyCaseSearcher())
     assert len(checks) == 1
-    assert checks[0].lookup_status == CaseLookupStatus.MANUAL_REVIEW
+    assert checks[0].lookup_status == CaseLookupStatus.NOT_FOUND
     assert checks[0].cited_case_name == "指导案例262号"
     assert checks[0].source_attempts
 

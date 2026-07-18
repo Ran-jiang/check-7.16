@@ -77,6 +77,7 @@ class CaseEvidence(BaseModel):
     title: str = ""
     last_instance_date: Optional[str] = None
     url: Optional[str] = None
+    holding: Optional[str] = None
 
 
 class CaseSourceTrace(BaseModel):

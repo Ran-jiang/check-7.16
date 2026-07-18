@@ -11,7 +11,7 @@ from ccitecheck.domain.citation import (
     LegalSourceClaimEntities,
 )
 from ccitecheck.domain.evidence import LookupStatus
-from ccitecheck.domain.result import SemanticErrorType
+from ccitecheck.domain.statute_results import StatuteErrorCode
 from ccitecheck.infrastructure import database as db
 from ccitecheck.recognition.statutes import extract_legal_sources
 
@@ -83,10 +83,10 @@ def test_unique_structure_citation_passes_with_path(tmp_path: Path):
         _structure_db(tmp_path),
         include_cases=False,
     )
-    check = doc.citation_cards[0].references[0]
+    check = doc.statute_results[0]
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
-    assert check.verification_scope == "existence_only"
-    assert not check.rule_findings
+    assert check.outcome == "pass"
+    assert not check.findings
     assert check.evidence.structure_path == "第三编 合同 / 第四章 合同的履行"
     assert [r.article_no for r in check.evidence.related_articles] == ["第五百零九条"]
 
@@ -97,9 +97,9 @@ def test_ambiguous_structure_citation_goes_to_manual(tmp_path: Path):
         _structure_db(tmp_path),
         include_cases=False,
     )
-    check = doc.citation_cards[0].references[0]
-    assert not check.rule_findings
-    assert check.semantic_comparison.skipped_reason == "structure_ambiguous"
+    check = doc.statute_results[0]
+    assert not check.findings
+    assert check.meaning_check.skipped_reason == "structure_ambiguous"
     assert check.evidence.structure_path.startswith("候选：")
 
 
@@ -109,6 +109,6 @@ def test_missing_structure_citation_reports_location_error(tmp_path: Path):
         _structure_db(tmp_path),
         include_cases=False,
     )
-    check = doc.citation_cards[0].references[0]
+    check = doc.statute_results[0]
     assert check.lookup_status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
-    assert check.rule_findings[0].error_type == SemanticErrorType.LOCATION_ERROR
+    assert check.findings[0].code == StatuteErrorCode.CITATION_LOCATION_ERROR

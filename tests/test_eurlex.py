@@ -146,11 +146,10 @@ def test_eu_statute_routes_to_eurlex_and_skips_semantic(tmp_path: Path, monkeypa
         ],
     )
     frontend_doc = verify_claim_document(claim_doc, db_path, include_cases=False)
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert check.jurisdiction == "EU"
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
-    assert check.verification_scope == "existence_only"
-    assert check.semantic_comparison is None
+    assert check.meaning_check.skipped_reason == "retrieval_incomplete"
     assert check.evidence.source_metadata["celex"] == "32016R0679"
 
 
@@ -198,7 +197,8 @@ def test_eurlex_article_fetch_failure_degrades_to_existence():
 
 
 def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeypatch):
-    from ccitecheck.domain.result import ComparisonVerdict, SemanticComparison
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteMeaningCheck
 
     class PassChecker:
         def __init__(self):
@@ -206,7 +206,7 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
 
         def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
             self.calls.append({"statute_text": evidence.article_text, "paragraphs": paragraphs})
-            return SemanticComparison(verdict=ComparisonVerdict.PASS)
+            return StatuteMeaningCheck(verdict=CheckVerdict.PASS)
 
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "https://eurlex.test")
     client = FakeEurLexClientWithDocument(
@@ -239,10 +239,9 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
     frontend_doc = verify_claim_document(
         claim_doc, db_path, semantic_checker=checker, include_cases=False
     )
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
-    assert check.verification_scope == "full"
-    assert check.semantic_comparison.verdict.value == "pass"
+    assert check.meaning_check.verdict.value == "pass"
     assert checker.calls and "Right to erasure" in checker.calls[0]["statute_text"]
     # 外文条文不做中文款级切片
     assert checker.calls[0]["paragraphs"] is None
@@ -259,22 +258,19 @@ def test_prompt_authorizes_cross_language_comparison():
 
 def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
     from ccitecheck.domain.evidence import ArticleExcerpt
-    from ccitecheck.domain.result import (
-        ComparisonVerdict,
-        RiskLevel,
-        SemanticComparison,
-        SemanticErrorType,
-        SemanticIssue,
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import (
+        StatuteErrorCode, StatuteFinding, StatuteMeaningCheck,
     )
 
     class IssueChecker:
         def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
-            return SemanticComparison(
-                verdict=ComparisonVerdict.ISSUE,
-                issues=[SemanticIssue(
-                    error_type=SemanticErrorType.NO_SUBSTANTIVE_MATCH,
-                    risk_level=RiskLevel.HIGH,
-                    diff_summary="文书写数据可携权，原文是第十七条的删除权，可携权实际规定在第二十条",
+            return StatuteMeaningCheck(
+                verdict=CheckVerdict.ISSUE,
+                findings=[StatuteFinding(
+                    code=StatuteErrorCode.MEANING_DISTORTED,
+                    risk_level="HIGH",
+                    summary="文书写数据可携权，原文是第十七条的删除权，可携权实际规定在第二十条",
                     suggestion="核实引用的条款号，数据可携权通常对应《通用数据保护条例》第二十条。",
                 )],
             )
@@ -320,7 +316,7 @@ def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
     frontend_doc = verify_claim_document(
         claim_doc, db_path, semantic_checker=IssueChecker(), include_cases=False
     )
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert fetched == [("32016R0679", 20)]
     related = check.evidence.related_articles
     assert len(related) == 1

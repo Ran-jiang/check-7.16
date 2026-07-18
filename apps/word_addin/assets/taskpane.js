@@ -1,4 +1,4 @@
-import { captureDebugEvent, checkDocument, checkHealth, checkSelection, exportReport } from "./api-client.js"
+import { captureDebugEvent, checkDocument, checkHealth, checkSelection } from "./api-client.js"
 import { readDecisions, readHistory, readResultSnapshot, recordHistory, saveDecision } from "./history.js"
 import {
   connectToWord,
@@ -8,16 +8,17 @@ import {
 } from "./office-document.js"
 import { clearSourceBookmarks, jumpToSource, seedSourceBookmarks } from "./word-bookmarks.js"
 import { CheckUi } from "./ui.js"
+import { applyTrackedRevision } from "./word-revisions.js"
 
 const ui = new CheckUi()
 let documentName = "未命名文档.docx"
 let lastResult = null
 let lastCheckMode = "full"
+let lastScope = null
 
 document.getElementById("start-button").addEventListener("click", runCheck)
 document.getElementById("selection-button").addEventListener("click", runSelectionCheck)
 document.getElementById("rerun-button").addEventListener("click", rerunCurrentCheck)
-document.getElementById("export-button").addEventListener("click", exportCurrentReport)
 document.getElementById("clear-bookmarks-button").addEventListener("click", clearBookmarkMarkers)
 document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
@@ -37,6 +38,19 @@ ui.setHandlers({
     if (!lastResult) return {}
     return saveDecision(lastResult.document_key, checkId, decision)
   },
+  onApplyFix: async check => {
+    if (!lastResult) return
+    try {
+      const details = await applyTrackedRevision(check)
+      saveDecision(lastResult.document_key, check.check_id, "accepted")
+      await saveWordDebug("revision_applied", check, details)
+      ui.renderResults(lastResult, readDecisions(lastResult.document_key))
+      ui.showMessage("修订已写入 Word，可在审阅面板接受或拒绝")
+    } catch (error) {
+      await saveWordDebug("revision_error", check, null, error)
+      ui.showMessage(error.message)
+    }
+  },
   onHistoryOpen: openHistorySnapshot,
 })
 
@@ -50,10 +64,11 @@ async function initialize() {
 async function connect() {
   ui.setDocument("正在读取 Word 文档…", "正在连接插件", false)
   try {
-    await Promise.all([connectToWord(), checkHealth()])
+    const [, health] = await Promise.all([connectToWord(), checkHealth()])
     documentName = await getDocumentName()
     ui.setDocument(documentName, "已连接 · 可核查全文或选中片段", true)
     document.getElementById("selection-button").disabled = false
+    if (!health.pkulaw_configured) ui.showMessage("案例库凭证未配置，司法案例核查当前不可用")
   } catch (error) {
     ui.setDocument("无法开始核查", error.message, false)
     document.getElementById("selection-button").disabled = true
@@ -75,6 +90,7 @@ function checkScope() {
 async function runCheck() {
   const scope = checkScope()
   if (!scope) return
+  lastScope = scope
   ui.resetProgress()
   ui.setBusy(true)
   ui.showScreen("progress-screen")
@@ -102,6 +118,7 @@ async function runCheck() {
 async function runSelectionCheck() {
   const scope = checkScope()
   if (!scope) return
+  lastScope = scope
   try {
     ui.setBusy(true)
     const selection = await getSelectedContent()
@@ -161,8 +178,6 @@ async function finishCheck(result, mode) {
   }
   document.getElementById("rerun-button").textContent = mode === "selection" ? "继续核查" : "重新核查"
   ui.setStage("stage-check", "complete", `已识别 ${result.summary.card_total} 个引用句、${result.summary.reference_total} 条引用`)
-  const debugLabel = result.debug_run_id ? ` · 调试 ${result.debug_run_id}` : ""
-  ui.setStage("stage-report", "complete", `核查完成，可导出报告${debugLabel}`)
   let bookmarkError = null
   let anchors = null
   try {
@@ -172,7 +187,7 @@ async function finishCheck(result, mode) {
     bookmarkError = error
     await saveWordDebug("bookmark_seed_error", null, null, error)
   }
-  ui.renderResults(result, readDecisions(result.document_key))
+  ui.renderResults(result, readDecisions(result.document_key), { scope: lastScope })
   ui.setLocateFailures(anchors?.failed || [])
   if (bookmarkError) ui.showMessage(bookmarkError.message || "原文定位标记创建失败")
   else if (anchors?.failed?.length) ui.showMessage(`${anchors.failed.length} 处原文未能创建定位标记`)
@@ -180,29 +195,6 @@ async function finishCheck(result, mode) {
 
 function rerunCurrentCheck() {
   return lastCheckMode === "selection" ? runSelectionCheck() : runCheck()
-}
-
-async function exportCurrentReport() {
-  if (!lastResult) {
-    ui.showMessage("请先完成一次核查")
-    return
-  }
-  try {
-    ui.setBusy(true)
-    const report = await exportReport({
-      file_name: lastResult.file_name,
-      semantic_check: lastResult.semantic_check,
-      summary: lastResult.summary,
-      verification: lastResult.verification,
-      decisions: readDecisions(lastResult.document_key),
-    })
-    openExternal(`${window.location.origin}${report.url}`)
-    ui.showMessage("核查报告已生成，可在浏览器中打印或另存为 PDF")
-  } catch (error) {
-    ui.showMessage(error.message || "报告导出失败")
-  } finally {
-    ui.setBusy(false)
-  }
 }
 
 function openHistorySnapshot(entry) {

@@ -172,10 +172,7 @@ class CachedPkulawClient:
             )
             return records
 
-    # ---- 案号识别不缓存（输入是动态文书文本） ----
-
-    def recognize_case_numbers(self, text: str):
-        return self.client.recognize_case_numbers(text)
+    # ---- 案例检索直接透传 ----
 
     def search_law_articles(self, text: str):
         return self.client.search_law_articles(text)

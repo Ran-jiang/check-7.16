@@ -1,5 +1,10 @@
 import { checkSnapshot } from "./api.js"
 import { FeishuHost } from "./host.js"
+import { buildResultCards } from "/assets/result-models.js"
+
+function stripInternalMarkers(text) {
+  return String(text || "").replace(/⟦[^⟧]*⟧|\[\[[^\[\]]{0,60}\]\]|【(?:锚点|anchor)[^】]*】|(?<![A-Za-z])line\d{4,6}(?!\d)/gi, "").trim()
+}
 
 const host = new FeishuHost()
 const views = ["start-view", "progress-view", "results-view"]
@@ -106,67 +111,76 @@ function renderVisibleChecks() {
 }
 
 function renderCheck(check) {
-  if (check.references) return renderCitationCard(check)
+  if (check.references) return renderStatuteGroup(check)
   if (check.category === "case") return renderCaseCard(check)
   return renderStatuteCard(check, check.claim_text, check.location)
 }
 
 function renderStatuteCard(check, claimText, location, nested = false) {
-  const article = document.createElement("article")
-  article.className = nested ? `citation-reference is-${check.state}` : `result-card is-${check.state}`
+  const article = document.createElement(nested ? "details" : "article")
+  article.className = nested ? `reference-row is-${check.state}` : `result-card is-${check.state}`
   article.dataset.checkId = check.check_id
+  const jurisdiction = check.jurisdiction && check.jurisdiction !== "CN" ? `<span class="jurisdiction-label">${escapeHtml(check.jurisdiction)}</span>` : ""
+  const version = check.evidence?.version_label || check.evidence?.version_status || ""
+  const heading = `<span class="reference-source">${escapeHtml(check.title)}</span>${jurisdiction}<span class="status-pill is-${check.state}">${check.pill}</span>`
   article.innerHTML = `
-    <div class="result-topline"><span class="status-pill is-${check.state}">${check.pill}</span><span class="card-type">${escapeHtml(check.type)}</span></div>
-    ${nested ? "" : `<blockquote class="claim-quote">${escapeHtml(claimText)}</blockquote>`}
-    <div class="reference-source">${escapeHtml(check.title)}</div>
+    ${nested ? `<summary class="reference-row-summary">${heading}</summary>` : `${quoteZone(claimText)}<div class="zone-label-row"><span class="zone-label">核查对象</span></div><div class="reference-row-summary">${heading}</div>`}
+    <div class="reference-body"><div class="reference-body-topline"><span class="card-type">${escapeHtml(check.type)}</span>${version ? `<span class="version-status">${escapeHtml(version)}</span>` : ""}</div>
     ${check.finding ? `<div class="card-conf">风险分级：${escapeHtml(check.risk)}</div><p class="card-suggestion">${escapeHtml(check.finding.suggestion || "请人工复核该引用。")}</p>` : check.message && check.state === "bug" ? `<p class="card-suggestion">${escapeHtml(check.message)}</p>` : ""}
     ${renderStatuteDetails(check)}
-    <div class="action-row">
-      ${nested ? "" : `<button class="action-button jump-button" data-action="locate">定位原文</button>`}
-      <div class="decision-group"><button class="action-button decision-button" data-action="defer">忽略</button><button class="action-button decision-button" data-action="resolve">接受</button></div>
-    </div>`
+    <div class="action-row"><button class="action-button decision-button" data-action="resolve">接受修订</button></div></div>`
   bindCardActions(article, location)
   return article
 }
 
-function renderCitationCard(card) {
+function renderStatuteGroup(card) {
   if (card.references.length === 1) return renderStatuteCard(card.references[0], card.claim_text, card.location)
   const article = document.createElement("article")
-  article.className = "result-card citation-card is-multiple"
+  article.className = "result-card statute-group is-multiple"
   article.dataset.cardId = card.card_id
-  article.append(createElement("blockquote", "claim-quote", card.claim_text))
+  const counts = { issue: 0, bug: 0, pass: 0 }
+  card.references.forEach(reference => { counts[reference.state] += 1 })
+  article.innerHTML = `<div class="result-topline"><span class="card-type">本段共 ${card.references.length} 条引用</span><span class="multi-counts"><span class="count-issue">${counts.issue} 未通过</span><span class="count-bug">${counts.bug} 待核实</span><span class="count-pass">${counts.pass} 通过</span></span></div>${quoteZone(card.claim_text)}<div class="zone-label-row"><span class="zone-label">核查对象</span></div>`
   const references = createElement("div", "citation-references")
-  card.references.forEach((reference, index) => {
+  card.references.forEach(reference => {
     const rendered = renderStatuteCard(reference, card.claim_text, card.location, true)
-    rendered.prepend(createElement("div", "reference-label", `引用 ${index + 1}${reference.reference_role === "nested" ? " · 内部转引" : reference.reference_role === "inherited" ? " · 承前引用" : ""}`))
     references.append(rendered)
   })
-  const locate = createElement("button", "action-button jump-button", "定位原文")
-  locate.type = "button"
-  locate.addEventListener("click", () => locateSource(card.location))
-  const row = createElement("div", "action-row card-action-row")
-  row.append(locate)
-  article.append(references, row)
+  article.querySelector('[data-action="locate"]')?.addEventListener("click", () => locateSource(card.location))
+  article.append(references)
   return article
 }
 
 function renderCaseCard(check) {
   const article = createElement("article", `result-card is-${check.state}`)
   article.dataset.checkId = check.check_id
-  article.innerHTML = `<div class="result-topline"><div class="card-type">${escapeHtml(check.type)}</div><span class="status-pill is-${check.state}">${check.pill}</span></div><blockquote class="claim-quote">${escapeHtml(check.claim_text)}</blockquote><div class="card-conf">引用线索：${escapeHtml(check.title)}</div>${check.message ? `<p class="card-suggestion">${escapeHtml(check.message)}</p>` : ""}<div class="action-row"><button class="action-button jump-button" data-action="locate">定位原文</button><div class="decision-group"><button class="action-button decision-button" data-action="defer">忽略</button><button class="action-button decision-button" data-action="resolve">接受</button></div></div>`
+  const candidates = caseCandidates(check)
+  const candidateList = candidates.length ? `<details class="result-details" open><summary>参考案例（${candidates.length}）</summary>${candidates.map((candidate, index) => {
+    const url = sourceUrl(candidate.url)
+    const label = `${index + 1}. ${candidate.title || "未命名案例"}${candidate.case_number ? ` | ${candidate.case_number}` : ""}${candidate.court ? ` | ${candidate.court}` : ""}${candidate.last_instance_date ? ` | ${candidate.last_instance_date}` : ""}`
+    return `<div class="statute-line">${escapeHtml(label)}${url ? ` | <a class="statute-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看原文</a>` : ""}</div>`
+  }).join("")}</details>` : ""
+  article.innerHTML = `${quoteZone(check.claim_text)}<div class="zone-label-row"><span class="zone-label">核查对象</span></div><details class="reference-row is-${check.state}"><summary class="reference-row-summary"><span class="reference-source">${escapeHtml(check.title)}</span>${check.jurisdiction && check.jurisdiction !== "CN" ? `<span class="jurisdiction-label">${escapeHtml(check.jurisdiction)}</span>` : ""}<span class="status-pill is-${check.state}">${check.pill}</span></summary><div class="reference-body"><div class="card-type">${escapeHtml(check.type)}</div>${check.message ? `<p class="card-suggestion">${escapeHtml(check.message)}</p>` : ""}${candidateList}</div></details>`
   bindCardActions(article, check.location)
   return article
 }
 
+function caseCandidates(check) {
+  return (check.source_attempts || []).flatMap(attempt => attempt.metadata?.candidates || []).slice(0, 10)
+}
+
 function renderStatuteDetails(check) {
-  if (!check.evidence?.article_text && !check.url) return ""
-  return `<details class="result-details"><summary>查看法条原文</summary>${check.url ? `<div class="statute-line">原文链接：<a class="statute-link" href="${escapeHtml(check.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(check.url)}</a></div>` : ""}${check.evidence?.article_text ? `<div class="statute-line">原文内容：<span class="statute-text-inline">${escapeHtml(check.evidence.article_text)}</span></div>` : ""}</details>`
+  if (!check.evidence?.article_text && !check.url && !check.evidence?.structure_path) return ""
+  return `<details class="result-details"><summary>权威原文</summary>${check.evidence?.structure_path ? `<div class="statute-line">章节位置：${escapeHtml(check.evidence.structure_path)}</div>` : ""}${check.evidence?.article_text ? `<div class="authority-quote">${escapeHtml(check.evidence.article_text)}</div>` : ""}${check.url ? `<div class="statute-line">原文链接：<a class="statute-link" href="${escapeHtml(check.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(check.url)}</a></div>` : ""}</details>`
+}
+
+function quoteZone(text) {
+  return `<div class="zone-label-row"><span class="zone-label">文书原文</span><button class="action-button jump-button" data-action="locate">定位原文</button></div><blockquote class="doc-quote">${escapeHtml(text)}</blockquote>`
 }
 
 function bindCardActions(article, location) {
   article.querySelector('[data-action="locate"]')?.addEventListener("click", () => locateSource(location))
-  article.querySelector('[data-action="resolve"]').addEventListener("click", event => setDecision(article, event.currentTarget, "已接受"))
-  article.querySelector('[data-action="defer"]').addEventListener("click", event => setDecision(article, event.currentTarget, "已忽略"))
+  article.querySelector('[data-action="resolve"]')?.addEventListener("click", event => setDecision(article, event.currentTarget, "已接受"))
 }
 
 async function locateSource(location) {
@@ -174,43 +188,48 @@ async function locateSource(location) {
 }
 
 function normalizeChecks(result) {
-  const legal = result.verification.citation_cards.map(card => {
-    const references = card.references.map(check => {
-    const findings = [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
-    const finding = findings[0]
-    const existenceOnly = check.verification_scope === "existence_only" && ["article_found", "relevant_articles_found"].includes(check.lookup_status)
-    const state = finding ? "issue" : (check.semantic_comparison?.verdict === "pass" || existenceOnly) ? "pass" : "bug"
-    const type = finding?.error_type || (existenceOnly ? "内部转引：仅核验存在性" : state === "pass" ? "法律引用无问题" : "未完成核查，需人工处理")
+  const newCards = buildResultCards(result.verification)
+  return newCards.map(card => {
+    if (card.check_kind === "case") {
+      const finding = card.findings?.[0]
       return {
-      ...check,
-      state,
-      pill: state === "issue" ? "待核实" : state === "pass" ? "通过" : "无法判断",
-      type,
-      finding,
-      risk: finding?.risk_level === "HIGH" ? "高" : finding?.risk_level === "MEDIUM" ? "中" : finding?.risk_level || "",
-      message: check.semantic_comparison?.notes || check.message || "",
-      title: formatReference(check),
-      url: sourceUrl(check.evidence?.data_source?.source_url),
-      category: categoryForLegal(check, finding, state),
+        ...card,
+        pill: card.state === "pass" ? "通过" : card.state === "issue" ? "未通过" : "待核实",
+        title: card.cited_case_number || card.cited_case_name || "司法案例",
+        category: "case",
+        finding,
+        location: card.source_locations?.at(-1),
+        message: finding?.suggestion || card.message,
+        url: sourceUrl(card.evidence?.url),
+      }
+    }
+    const references = card.references.map(reference => {
+      const finding = reference.findings?.[0]
+      return {
+        ...reference,
+        pill: reference.state === "pass" ? "通过" : reference.state === "issue" ? "未通过" : "待核实",
+        finding,
+        risk: finding?.risk_level === "HIGH" ? "高" : finding?.risk_level === "MEDIUM" ? "中" : "",
+        title: formatReference(reference),
+        category: statuteCategory(finding?.code, reference.state),
+        url: sourceUrl(reference.evidence?.data_source?.source_url),
       }
     })
-    const state = references.some(item => item.state === "issue") ? "issue"
-      : references.some(item => item.state !== "pass") ? "bug" : "pass"
-    const category = references.find(item => item.category !== "passed")?.category || "passed"
-    return { ...card, references, state, category, location: card.source_locations?.at(-1) }
+    return {
+      ...card,
+      references,
+      state: references.some(item => item.state === "issue") ? "issue" : references.some(item => item.state === "bug") ? "bug" : "pass",
+      category: references.find(item => item.category !== "passed")?.category || "passed",
+      location: card.source_locations?.at(-1),
+    }
   })
-  const cases = (result.verification?.case_checks || []).map(check => ({
-    ...check,
-    state: check.lookup_status === "verified" ? "pass" : check.lookup_status === "not_found" ? "issue" : "bug",
-    pill: check.lookup_status === "verified" ? "通过" : check.lookup_status === "not_found" ? "待核实" : "无法判断",
-    type: ({ verified: "案例已验证", not_found: "案例未命中", manual_review: "候选案例需人工确认", source_not_configured: "案例源未配置", source_error: "案例检索失败" })[check.lookup_status] || "司法案例",
-    title: check.cited_case_number || check.cited_case_name || "司法案例",
-    category: check.lookup_status === "verified" ? "passed" : "case",
-    finding: check.message ? { diff_summary: check.message } : null,
-    url: sourceUrl(check.evidence?.url),
-    location: check.source_locations?.at(-1),
-  }))
-  return [...legal, ...cases]
+}
+
+function statuteCategory(code, state) {
+  if (state === "pass") return "passed"
+  if (["source_repealed", "source_amended"].includes(code)) return "timeliness"
+  if (["source_not_found", "citation_location_error"].includes(code)) return "source"
+  return code === "meaning_distorted" ? "meaning" : "review"
 }
 
 function categoryLabel(value) {
@@ -222,14 +241,6 @@ function categoryLabel(value) {
     review: "建议人工复核",
     passed: "已通过",
   }[value] || value
-}
-
-function categoryForLegal(check, finding, state) {
-  if (state === "pass") return "passed"
-  if (!finding) return "review"
-  if (finding.error_type === "法源已废止或失效") return "timeliness"
-  if (["法律渊源不存在", "条款编号或引用定位错误"].includes(finding.error_type)) return "source"
-  return "meaning"
 }
 
 function setDecision(article, button, label) {
@@ -292,7 +303,7 @@ function sourceUrl(raw = "") {
 function formatReference(check) {
   return `《${check.law_title}》${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`
 }
-function escapeHtml(value = "") { const node = document.createElement("span"); node.textContent = value; return node.innerHTML }
+function escapeHtml(value = "") { const node = document.createElement("span"); node.textContent = stripInternalMarkers(value); return node.innerHTML }
 function createElement(tag, className = "", text = "") {
   const node = document.createElement(tag)
   if (className) node.className = className
@@ -307,24 +318,21 @@ async function demoResult(snapshot) {
     file_name: snapshot.title,
     summary: { total: 3, card_total: 2, reference_total: 3, passed: 1, issues: 1, bugs: 1 },
     verification: {
-      citation_cards: [
-        demoCard("card_00001", snapshot.blocks[1].text, "blk-demo-2", [demoLegal("vc_00001", "反不正当竞争法", "第二条", "法律引用无问题", "pass")]),
-        demoCard("card_00002", snapshot.blocks[2].text, "blk-demo-3", [demoLegal("vc_00002", "网络数据安全管理条例", "第十八条", "文中将“评估影响”扩张为独立的事前评估义务，并增加了本条没有直接规定的行政责任。", "issue")]),
+      statute_results: [
+        demoStatute("vc_00001", "card_00001", snapshot.blocks[1].text, "blk-demo-2", "反不正当竞争法", "第二条", "pass"),
+        demoStatute("vc_00002", "card_00002", snapshot.blocks[2].text, "blk-demo-3", "网络数据安全管理条例", "第十八条", "issue"),
       ],
-      case_checks: [{ check_id: "cc_00001", cited_case_name: "某平台爬虫纠纷案", claim_text: "法院已处理大量爬虫纠纷。", lookup_status: "manual_review", message: "未附案号，相关案例无法唯一确认。", source_locations: [{ platform: "feishu", block_id: "blk-demo-2", char_start: 0, char_end: 12 }] }],
+      case_results: [{ check_id: "cc_00001", claim_id: "claim_case_1", cited_case_name: "某平台爬虫纠纷案", claim_text: "法院已处理大量爬虫纠纷。", lookup_status: "manual_review", outcome: "bug", findings: [], message: "北大法宝返回了案例，但现有引用信息不足以证明是哪一份裁判文书。可参考案例如下。", source_locations: [{ platform: "feishu", block_id: "blk-demo-2", char_start: 0, char_end: 12 }] }],
     },
   }
 }
 
-function demoCard(id, text, blockId, references) {
-  return { card_id: id, claim_text: text, references, source_locations: [{ platform: "feishu", block_id: blockId, char_start: 0, char_end: text.length }] }
-}
-
-function demoLegal(id, law, article, summary, state) {
+function demoStatute(id, cardId, text, blockId, law, article, outcome) {
   return {
-    check_id: id, law_title: law, article_no: article, lookup_status: "article_found",
-    rule_findings: state === "issue" ? [{ error_type: "曲解权威文本原意", risk_level: "HIGH", diff_summary: summary, suggestion: "删除扩张表述；如需保留行政责任结论，请补充对应责任条款。" }] : [],
-    semantic_comparison: state === "pass" ? { verdict: "pass", issues: [] } : null,
+    check_id: id, card_id: cardId, claim_id: `claim_${id}`, claim_text: text,
+    law_title: law, cited_locators: [{ article_no: article }], lookup_status: "article_found", outcome,
+    findings: outcome === "issue" ? [{ code: "meaning_distorted", risk_level: "HIGH", diff_summary: "文中将“评估影响”扩张为独立的事前评估义务，并增加了本条没有直接规定的行政责任。", suggestion: "删除扩张表述；如需保留行政责任结论，请补充对应责任条款。" }] : [],
     evidence: { data_source: { source_url: "https://www.pkulaw.com/chl/example.html" } },
+    source_locations: [{ platform: "feishu", block_id: blockId, char_start: 0, char_end: text.length }],
   }
 }

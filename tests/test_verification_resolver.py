@@ -22,22 +22,18 @@ from ccitecheck.infrastructure.database import (
 from ccitecheck.application.verify_claims import verify_claim_document
 from ccitecheck.judgment.semantic import SemanticTransportError
 from ccitecheck.output.summary import summarize_verification
-from ccitecheck.domain.result import (
+from ccitecheck.domain.evidence import (
     ArticleEvidence,
     CaseLookupStatus,
-    CaseCheck,
-    ComparisonVerdict,
     LookupStatus,
-    RiskLevel,
-    SemanticComparison,
-    SemanticErrorType,
-    SemanticIssue,
     SourceTier,
     SourceTrace,
 )
+from ccitecheck.domain.case_results import CaseVerificationResult
+from ccitecheck.domain.checks import CheckVerdict
+from ccitecheck.domain.statute_results import StatuteErrorCode, StatuteFinding, StatuteMeaningCheck
 from ccitecheck.tracing.sources.pkulaw.client import (
     PkulawArticle,
-    PkulawCaseNumber,
     PkulawCaseRecord,
     PkulawLawRecord,
     PkulawNotFoundError,
@@ -104,8 +100,8 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
 
     frontend_doc = verify_claim_document(claim_doc, db_path)
 
-    assert len(frontend_doc.citation_cards) == 1
-    check = frontend_doc.citation_cards[0].references[0]
+    assert len(frontend_doc.statute_results) == 1
+    check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
     assert check.evidence is not None
     assert check.evidence.law_title == "中华人民共和国劳动合同法"
@@ -114,14 +110,14 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
 
 
 class FakeSemanticChecker:
-    def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
-        return SemanticComparison(
-            verdict=ComparisonVerdict.ISSUE,
-            issues=[
-                SemanticIssue(
-                    error_type=SemanticErrorType.MEANING_DISTORTED,
-                    risk_level=RiskLevel.MEDIUM,
-                    diff_summary="文书未明示被告不履行或履行不符合约定",
+    def compare(self, doc_quote, quote_context, cited_source, evidence):
+        return StatuteMeaningCheck(
+            verdict=CheckVerdict.ISSUE,
+            findings=[
+                StatuteFinding(
+                    code=StatuteErrorCode.MEANING_DISTORTED,
+                    risk_level="MEDIUM",
+                    summary="文书未明示被告不履行或履行不符合约定",
                     suggestion="核实并补充违约事实。",
                 )
             ],
@@ -172,10 +168,10 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
         semantic_checker=FakeSemanticChecker(),
     )
 
-    check = frontend_doc.citation_cards[0].references[0]
-    comparison = check.semantic_comparison
-    assert comparison.verdict == ComparisonVerdict.ISSUE
-    assert comparison.issues[0].error_type == SemanticErrorType.MEANING_DISTORTED
+    check = frontend_doc.statute_results[0]
+    comparison = check.meaning_check
+    assert comparison.verdict == CheckVerdict.ISSUE
+    assert comparison.findings[0].code == StatuteErrorCode.MEANING_DISTORTED
 
 
 def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
@@ -229,11 +225,11 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
         semantic_checker=FakeSemanticChecker(),
     )
 
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
-    assert check.article_no is None
+    assert check.cited_locators == []
     assert check.evidence.related_articles[0].article_no == "第一条"
-    assert check.semantic_comparison is not None
+    assert check.meaning_check is not None
 
 
 class FakeLawListClient:
@@ -400,7 +396,7 @@ def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
         ],
     )
 
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
     assert len(check.source_attempts) == 2
     assert "不履行合同义务" in check.evidence.article_text
@@ -495,12 +491,16 @@ def test_legacy_local_mcp_url_is_hidden_when_remote_repair_fails():
     assert result.trace.source_url is None
 
 
-class FakeCaseRecognizer:
-    def __init__(self, cases: list[PkulawCaseNumber]):
+class FakeCaseSearcher:
+    def __init__(self, cases: list[PkulawCaseRecord]):
         self.cases = cases
 
-    def recognize(self, text: str) -> list[PkulawCaseNumber]:
-        return self.cases
+    def search_keyword(self, title: str, fulltext: str):
+        normalized = fulltext.replace("（", "(").replace("）", ")")
+        return [case for case in self.cases if case.case_number == normalized]
+
+    def search_semantic(self, text: str):
+        return []
 
 
 def _case_claim(claim_id: str, case_number: str) -> Claim:
@@ -520,7 +520,7 @@ def _case_claim(claim_id: str, case_number: str) -> Claim:
     )
 
 
-def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
+def test_case_numbers_verified_and_flagged_by_searcher(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
     claim_doc = ClaimDocument(
@@ -530,14 +530,11 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
             _case_claim("cl_00002", "（2099）虚构民终9999号"),
         ],
     )
-    recognizer = FakeCaseRecognizer(
+    searcher = FakeCaseSearcher(
         [
-            PkulawCaseNumber(
-                text="（2024）浙0114破1-6号之二",
-                start=2,
-                end=20,
+            PkulawCaseRecord(
                 gid="08df102e7c10f206",
-                case_flag="(2024)浙0114破1-6号之二",
+                case_number="(2024)浙0114破1-6号之二",
                 court="浙江省杭州市钱塘区人民法院",
                 title="指导性案例252号：某执行实施案",
                 last_instance_date="2024.06.18",
@@ -549,11 +546,11 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
     frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
-        case_recognizer=recognizer,
+        case_searcher=searcher,
     )
 
-    assert not frontend_doc.citation_cards
-    verified, flagged = frontend_doc.case_checks
+    assert not frontend_doc.statute_results
+    verified, flagged = frontend_doc.case_results
     assert verified.lookup_status == CaseLookupStatus.VERIFIED
     assert verified.evidence.court == "浙江省杭州市钱塘区人民法院"
     assert verified.evidence.url.endswith(".html")
@@ -561,13 +558,10 @@ def test_case_numbers_verified_and_flagged_against_recognizer(tmp_path: Path):
     assert flagged.evidence is None
 
 
-class FakeCaseSearcher:
+class RoutingCaseSearcher:
     def __init__(self):
         self.keyword_calls = []
         self.semantic_calls = []
-
-    def recognize(self, text):
-        raise AssertionError("no-number case must not use case-number recognition")
 
     def search_keyword(self, title, fulltext):
         self.keyword_calls.append((title, fulltext))
@@ -610,15 +604,15 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
             )
         ],
     )
-    searcher = FakeCaseSearcher()
+    searcher = RoutingCaseSearcher()
 
     frontend_doc = verify_claim_document(
         claim_doc,
         db_path,
-        case_recognizer=searcher,
+        case_searcher=searcher,
     )
 
-    check = frontend_doc.case_checks[0]
+    check = frontend_doc.case_results[0]
     assert check.lookup_status == CaseLookupStatus.VERIFIED
     assert check.evidence.case_number == "（2024）最高法民终262号"
     assert len(check.source_attempts) == 2
@@ -626,7 +620,7 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
     assert searcher.semantic_calls
 
 
-def test_case_name_containment_remains_verified(tmp_path: Path):
+def test_case_name_containment_requires_manual_review(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
     claim_doc = ClaimDocument(
@@ -651,9 +645,6 @@ def test_case_name_containment_remains_verified(tmp_path: Path):
     )
 
     class ContainmentSearcher:
-        def recognize(self, text):
-            raise AssertionError("not used")
-
         def search_keyword(self, title, fulltext):
             return [PkulawCaseRecord(title="甲公司诉乙公司合同纠纷案再审审查案")]
 
@@ -661,9 +652,9 @@ def test_case_name_containment_remains_verified(tmp_path: Path):
             return []
 
     check = verify_claim_document(
-        claim_doc, db_path, case_recognizer=ContainmentSearcher()
-    ).case_checks[0]
-    assert check.lookup_status == CaseLookupStatus.VERIFIED
+        claim_doc, db_path, case_searcher=ContainmentSearcher()
+    ).case_results[0]
+    assert check.lookup_status == CaseLookupStatus.MANUAL_REVIEW
 
 
 def test_match_law_record_accepts_promulgation_notice_title():
@@ -733,12 +724,12 @@ class FailOncePerQuoteChecker:
     def __init__(self):
         self.calls = {}
 
-    def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
+    def compare(self, doc_quote, quote_context, cited_source, evidence):
         count = self.calls.get(doc_quote, 0) + 1
         self.calls[doc_quote] = count
         if count == 1:
             raise SemanticTransportError("temporary EOF", "transport_error")
-        return SemanticComparison(verdict=ComparisonVerdict.PASS)
+        return StatuteMeaningCheck(verdict=CheckVerdict.PASS)
 
 
 def test_semantic_salvage_retries_in_submission_order_and_honors_cap(
@@ -761,11 +752,7 @@ def test_semantic_salvage_retries_in_submission_order_and_honors_cap(
         semantic_checker=checker,
         include_cases=False,
     )
-    comparisons = [
-        reference.semantic_comparison
-        for card in result.citation_cards
-        for reference in card.references
-    ]
+    comparisons = [reference.meaning_check for reference in result.statute_results]
     assert comparisons[0].execution_status == "completed"
     assert comparisons[0].notes == "（打捞轮恢复）"
     assert comparisons[1].execution_status == "llm_error"
@@ -773,7 +760,7 @@ def test_semantic_salvage_retries_in_submission_order_and_honors_cap(
     assert list(checker.calls.values()) == [2, 1]
 
 
-def test_multiple_references_are_grouped_in_one_citation_card(tmp_path: Path):
+def test_multiple_statute_references_share_one_group(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
     claim = Claim(
@@ -802,18 +789,19 @@ def test_multiple_references_are_grouped_in_one_citation_card(tmp_path: Path):
         db_path,
         sources=[CountingSource()],
     )
-    assert len(result.citation_cards) == 1
-    assert len(result.citation_cards[0].references) == 3
-    assert result.citation_cards[0].references[0].paragraphs == ["第一款", "第三款"]
+    assert len({reference.card_id for reference in result.statute_results}) == 1
+    assert len(result.statute_results) == 3
+    assert [locator.paragraph_no for locator in result.statute_results[0].cited_locators] == ["第一款", "第三款"]
     summary = summarize_verification(result)
     assert summary.card_total == 1
     assert summary.reference_total == 3
     assert summary.total == 3
-    result.case_checks.append(CaseCheck(
+    result.case_results.append(CaseVerificationResult(
         check_id="cc_00001",
         claim_id="cl_00001",
         claim_text=claim.text,
         lookup_status=CaseLookupStatus.VERIFIED,
+        outcome="pass",
     ))
     mixed_summary = summarize_verification(result)
     assert mixed_summary.card_total == 1
@@ -839,33 +827,32 @@ def test_duplicate_citations_share_one_lookup(tmp_path: Path):
     source = CountingSource()
     frontend_doc = verify_claim_document(claim_doc, db_path, sources=[source])
     # 3 条 check 全部产出，但底层只发生 2 次查询（第五条去重）
-    assert sum(len(card.references) for card in frontend_doc.citation_cards) == 3
+    assert len(frontend_doc.statute_results) == 3
     assert len(source.calls) == 2
-    assert frontend_doc.citation_cards[0].references[0].evidence.article_text == "条文"
-    assert frontend_doc.citation_cards[1].references[0].evidence.article_text == "条文"
+    assert frontend_doc.statute_results[0].evidence.article_text == "条文"
+    assert frontend_doc.statute_results[1].evidence.article_text == "条文"
 
 
-class CountingRecognizer:
+class CountingCaseSearcher:
     def __init__(self):
         self.calls = 0
 
-    def recognize(self, text: str):
+    def search_keyword(self, title: str, fulltext: str):
         self.calls += 1
-        return [
-            PkulawCaseNumber(
-                text="（2020）京01民终1号",
-                start=0,
-                end=10,
+        if fulltext == "（2020）京01民终1号":
+            return [PkulawCaseRecord(
                 gid="g1",
-                case_flag="（2020）京01民终1号",
+                case_number="（2020）京01民终1号",
                 court="北京市第一中级人民法院",
                 title="某案",
-            )
-        ]
+            )]
+        return []
+
+    def search_semantic(self, text: str):
+        return []
 
 
-def test_case_claims_batched_into_single_recognition(tmp_path: Path):
-    """多个含案号的 claim 合并为一次案号识别调用。"""
+def test_case_claims_use_exact_then_semantic_route(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
 
@@ -897,17 +884,17 @@ def test_case_claims_batched_into_single_recognition(tmp_path: Path):
             case_claim("cl_00002", "（2021）沪02民终2号"),
         ],
     )
-    recognizer = CountingRecognizer()
+    searcher = CountingCaseSearcher()
     frontend_doc = verify_claim_document(
-        claim_doc, db_path, case_recognizer=recognizer, include_statutes=False
+        claim_doc, db_path, case_searcher=searcher, include_statutes=False
     )
-    assert recognizer.calls == 1
-    assert len(frontend_doc.case_checks) == 2
-    statuses = {check.lookup_status for check in frontend_doc.case_checks}
+    assert searcher.calls == 2
+    assert len(frontend_doc.case_results) == 2
+    statuses = {check.lookup_status for check in frontend_doc.case_results}
     assert statuses == {CaseLookupStatus.VERIFIED, CaseLookupStatus.NOT_FOUND}
 
 
-def test_rule_findings_skip_semantic_llm(tmp_path: Path):
+def test_deterministic_findings_skip_meaning_llm(tmp_path: Path):
     """确定性规则已有结论时不再调用语义核查。"""
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
@@ -950,11 +937,11 @@ def test_rule_findings_skip_semantic_llm(tmp_path: Path):
         sources=[RepealedSource()],
         semantic_checker=ExplodingChecker(),
     )
-    check = frontend_doc.citation_cards[0].references[0]
-    assert check.rule_findings
-    assert check.rule_findings[0].error_type == SemanticErrorType.OUTDATED_SOURCE
-    assert check.semantic_comparison.execution_status.value == "skipped"
-    assert check.semantic_comparison.skipped_reason == "retrieval_incomplete"
+    check = frontend_doc.statute_results[0]
+    assert check.findings
+    assert check.findings[0].code == StatuteErrorCode.SOURCE_REPEALED
+    assert check.meaning_check.execution_status.value == "skipped"
+    assert check.meaning_check.skipped_reason == "retrieval_incomplete"
 
 
 def test_extraction_respects_scope_selection():
@@ -977,87 +964,3 @@ def test_extraction_respects_scope_selection():
     only_cases = extract_claims(doc, include_statutes=False, include_cases=True)
     assert all(c.claim_type != ClaimType.LEGAL_SOURCE_CLAIM for c in only_cases.claims)
     assert len(only_cases.claims) == 1
-
-
-def test_llm_issue_appends_alternative_article_suggestion(tmp_path: Path):
-    """判"无实质对应"后，从本地全文召回并给出"疑似应改引第X条"。"""
-    db_path = tmp_path / "laws.sqlite"
-    init_db(db_path)
-    with connect(db_path) as conn:
-        law_id = upsert_law(
-            conn,
-            {
-                "title": "中华人民共和国民法典",
-                "source_type": "law",
-                "status": "has_articles",
-            },
-        )
-        upsert_article(
-            conn,
-            law_id,
-            {
-                "article_no": "第五百七十七条",
-                "text": "当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
-            },
-        )
-        upsert_article(
-            conn,
-            law_id,
-            {
-                "article_no": "第六百五十七条",
-                "text": "赠与合同是赠与人将自己的财产无偿给予受赠人，受赠人表示接受赠与的合同。",
-            },
-        )
-
-    class MismatchChecker:
-        suggestion_calls = 0
-
-        def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
-            return SemanticComparison(
-                verdict=ComparisonVerdict.ISSUE,
-                issues=[
-                    SemanticIssue(
-                        error_type=SemanticErrorType.NO_SUBSTANTIVE_MATCH,
-                        risk_level=RiskLevel.HIGH,
-                        diff_summary="所引条文调整违约责任，与赠与撤销无关",
-                        suggestion="请核实引用条文。",
-                    )
-                ],
-                notes="",
-            )
-
-        def suggest_article(self, doc_quote, candidates):
-            self.suggestion_calls += 1
-            assert any(c["article_no"] == "第六百五十七条" for c in candidates)
-            return "第六百五十七条"
-
-    claim_doc = ClaimDocument(
-        claim_meta=ClaimMeta(
-            source_doc_id="doc-test",
-            source_doc_hash="sha256:test",
-            source_file="t.docx",
-        ),
-        claims=[
-            _simple_claim(
-                "cl_00001",
-                "根据《民法典》第五百七十七条，赠与合同是赠与人将自己的财产无偿给予受赠人的合同。",
-                "民法典",
-                "第五百七十七条",
-            ),
-            _simple_claim(
-                "cl_00002",
-                "根据《民法典》第五百七十七条，赠与合同是赠与人将自己的财产无偿给予受赠人的合同。",
-                "民法典",
-                "第五百七十七条",
-            ),
-        ],
-    )
-    checker = MismatchChecker()
-    frontend_doc = verify_claim_document(
-        claim_doc, db_path, semantic_checker=checker
-    )
-    check = frontend_doc.citation_cards[0].references[0]
-    suggestion = check.semantic_comparison.issues[0].suggestion
-    assert "疑似应改引第六百五十七条" in suggestion
-    assert checker.suggestion_calls == 1
-    assert "疑似应改引第六百五十七条" in frontend_doc.citation_cards[1].references[0].semantic_comparison.issues[0].suggestion

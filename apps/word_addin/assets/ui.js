@@ -11,6 +11,7 @@ import {
   sourceUrlOf,
   stripRepeatedArticleHeading,
 } from "./view-model.js"
+import { buildResultCards } from "./result-models.js"
 
 export {
   BADGE_TEXT,
@@ -93,7 +94,6 @@ export class CheckUi {
     this.setStage("stage-read", "active", "正在获取完整 DOCX")
     this.setStage("stage-submit", "", "等待执行")
     this.setStage("stage-check", "", "等待执行")
-    this.setStage("stage-report", "", "等待执行")
   }
 
   renderHistory(history) {
@@ -121,12 +121,9 @@ export class CheckUi {
   renderResults(result, decisions = {}, options = {}) {
     const { summary, verification } = result
     this.decisions = decisions
-    this.cards = orderChecksByCitation([
-      ...verification.citation_cards.map(card => ({ ...card, check_kind: "citation-card" })),
-      ...(verification.case_checks || []).map(check => ({ ...check, check_kind: "case" })),
-    ])
+    this.cards = orderChecksByCitation(buildResultCards(verification))
     this.checks = [
-      ...this.cards.flatMap(item => item.check_kind === "citation-card"
+      ...this.cards.flatMap(item => item.check_kind === "statute-group"
         ? item.references.map(reference => ({ ...reference, check_kind: "statute" }))
         : [item]),
     ]
@@ -187,7 +184,7 @@ export class CheckUi {
     for (const check of this.checks) {
       const findings = findingsOf(check)
       if (findings.length) {
-        for (const finding of findings) types.add(finding.error_type)
+        for (const type of normalizeCheck(check).typeTags) types.add(type)
       } else if (check.check_kind === "case") {
         types.add(caseTypeOf(check))
       }
@@ -212,10 +209,10 @@ export class CheckUi {
     const list = document.getElementById("results-list")
     list.replaceChildren()
     const visible = this.cards.filter(item => {
-      const checks = item.check_kind === "citation-card" ? item.references : [item]
+      const checks = item.check_kind === "statute-group" ? item.references : [item]
       if (this.statusFilter !== "all" && !checks.some(check => checkState(check) === this.statusFilter)) return false
       if (!this.typeFilter) return true
-      return checks.some(check => findingsOf(check).some(f => f.error_type === this.typeFilter) ||
+      return checks.some(check => normalizeCheck(check).typeTags.includes(this.typeFilter) ||
         (check.check_kind === "case" && caseTypeOf(check) === this.typeFilter))
     })
     if (!visible.length) {
@@ -223,11 +220,11 @@ export class CheckUi {
       return
     }
     for (const item of visible) {
-      list.append(item.check_kind === "citation-card" ? this.createCitationCard(item) : this.createResultCard(item))
+      list.append(item.check_kind === "statute-group" ? this.createStatuteGroup(item) : this.createResultCard(item))
     }
   }
 
-  createCitationCard(card) {
+  createStatuteGroup(card) {
     if (card.references.length === 1) {
       return this.createResultCard({
         ...card.references[0],
@@ -256,7 +253,7 @@ export class CheckUi {
     const views = card.references.map(reference =>
       normalizeCheck({ ...reference, check_kind: "statute" }, { compact: true })
     )
-    const container = element("article", "result-card citation-card is-multiple")
+    const container = element("article", "result-card statute-group is-multiple")
 
     const top = element("div", "result-topline")
     top.append(element("div", "card-type", `本段共 ${views.length} 条引用`))
@@ -375,6 +372,8 @@ export class CheckUi {
   // ⑥区：单个决策按钮，接受修订 ⇄ 取消修订
   createDecisionRow(view) {
     const row = element("div", "action-row")
+    const applicable = findingsOf(view.raw).some(finding => finding.revision?.machine_applicable)
+    if (!applicable) return row
     const button = element("button", "action-button decision-button")
     button.type = "button"
     button.dataset.decision = "accepted"
@@ -385,9 +384,13 @@ export class CheckUi {
       button.classList.toggle("is-active", accepted)
     }
     sync()
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const next = this.decisions[view.checkId] === "accepted" ? null : "accepted"
-      this.decisions = this.handlers.onDecide?.(view.checkId, next) || this.decisions
+      if (next === "accepted") {
+        await this.handlers.onApplyFix?.(view.raw)
+      } else {
+        this.decisions = this.handlers.onDecide?.(view.checkId, next) || this.decisions
+      }
       sync()
     })
     row.append(button)

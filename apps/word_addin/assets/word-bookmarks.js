@@ -125,7 +125,7 @@ export function escapeSearchText(text) {
 }
 
 async function locateTargets(context, targets, includeNotes) {
-  const scopes = await prepareSearchScopes(context, includeNotes)
+  const scopes = await prepareSearchScopes(context, includeNotes, targets)
   const primary = queueSearchPass(scopes, targets, false)
   await loadSearchResults(context, primary)
   const located = resolveSearchPass(primary)
@@ -177,10 +177,12 @@ export function validateSearchSpan(rangeText, pieces, anchorText) {
   return cursor - firstPosition <= anchorLength + 32
 }
 
-async function prepareSearchScopes(context, includeNotes) {
+async function prepareSearchScopes(context, includeNotes, targets) {
   const body = context.document.body
   const paragraphs = body.paragraphs
   paragraphs.load("items/tableNestingLevel")
+  const tables = body.tables
+  tables.load("items/rowCount,items/columnCount")
   const noteCollections = includeNotes
     ? [["footnote", body.footnotes], ["endnote", body.endnotes]]
     : []
@@ -203,6 +205,19 @@ async function prepareSearchScopes(context, includeNotes) {
       })
     })
   }
+  for (const target of targets) {
+    const match = /^word:t:(\d+):(\d+):(\d+)$/.exec(target.location.block_id)
+    if (!match) continue
+    const table = tables.items[Number(match[1])]
+    if (!table) continue
+    const row = Number(match[2])
+    const column = Number(match[3])
+    if (row >= table.rowCount || column >= table.columnCount) continue
+    ranges.set(
+      target.location.block_id,
+      table.getCell(row, column).body.getRange(),
+    )
+  }
   return { bodyRange: body.getRange(), ranges }
 }
 
@@ -211,9 +226,13 @@ function queueSearchPass(scopes, targets, forceBody) {
   for (const target of targets) {
     const location = target.location
     const blockRange = scopes.ranges.get(location.block_id)
-    const useBody = forceBody || isTableBlock(location.block_id) || !blockRange
+    if (isTableBlock(location.block_id) && !blockRange) {
+      queued.push({ target, collections: [], scopeKind: "cell", candidates: [] })
+      continue
+    }
+    const useBody = forceBody || !blockRange
     const scope = useBody ? scopes.bodyRange : blockRange
-    const scopeKind = useBody ? "full" : "block"
+    const scopeKind = useBody ? "full" : isTableBlock(location.block_id) ? "cell" : "block"
     const collections = planSearchPieces(location.anchor_text).map(piece => {
       const collection = scope.search(piece, searchOptions())
       collection.load("items")
@@ -229,7 +248,7 @@ async function loadSearchResults(context, queued) {
   await context.sync()
   for (const item of queued) {
     item.candidates = item.collections.map(collection => collection.items.map(range => {
-      if (!isTableBlock(item.target.location.block_id)) return { range, cell: null }
+      if (!isTableBlock(item.target.location.block_id) || item.scopeKind === "cell") return { range, cell: null }
       const cell = range.parentTableCellOrNullObject
       cell.load("isNullObject,rowIndex,cellIndex")
       return { range, cell }
@@ -259,7 +278,7 @@ function resolveSearchPass(queued) {
     const range = chosen.length === 1 ? first : first.expandTo(last)
     result.set(item.target, {
       range,
-      method: item.scopeKind === "block" ? "block_search" : "full_search",
+      method: `${item.scopeKind}_search`,
     })
   }
   return result
@@ -267,7 +286,7 @@ function resolveSearchPass(queued) {
 
 function chooseCandidate(group, location, occurrence, scopeKind) {
   let valid = group
-  if (isTableBlock(location.block_id)) {
+  if (isTableBlock(location.block_id) && scopeKind !== "cell") {
     valid = group.filter(({ cell }) => cell
       && !cell.isNullObject
       && cell.rowIndex === location.row_index
@@ -313,7 +332,7 @@ async function selectBlockFallback(context, location, includeNotes) {
       return {
         location,
         method: "block_fallback",
-        warning: "原句可能已被修改，已定位到所在单元格",
+        warning: "未能精确定位原句，已范围定位到所在单元格",
       }
     } catch {
       throw new Error("未能自动定位到原句，请手动查找")
@@ -367,10 +386,14 @@ function supportsWordApi15() {
 
 function bookmarkTargets(result) {
   const verification = result.verification
-  const checks = [
-    ...(verification.citation_cards || []),
-    ...(verification.case_checks || []),
-  ]
+  const statuteCards = new Map()
+  for (const check of verification.statute_results || []) {
+    if (!statuteCards.has(check.card_id)) statuteCards.set(check.card_id, {
+      card_id: check.card_id,
+      source_locations: check.source_locations,
+    })
+  }
+  const checks = [...statuteCards.values(), ...(verification.case_results || [])]
   return checks.flatMap(check => locationsForCheck(check, result.document_key))
 }
 

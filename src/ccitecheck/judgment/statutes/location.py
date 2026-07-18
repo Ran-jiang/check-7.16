@@ -1,0 +1,78 @@
+"""确定性验证法规引用的款、项位置。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from ...domain.statute_results import StatuteLocator, StructuredArticle
+from .structure import locator_ordinal
+
+
+class LocationStatus(str, Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    STRUCTURE_UNAVAILABLE = "structure_unavailable"
+
+
+@dataclass(frozen=True)
+class LocationAssessment:
+    status: LocationStatus
+    message: str = ""
+    authoritative_text: str | None = None
+
+
+def assess_location(
+    structure: StructuredArticle | None,
+    locators: list[StatuteLocator],
+) -> LocationAssessment:
+    if not locators or all(
+        locator.paragraph_no is None and locator.item_no is None
+        for locator in locators
+    ):
+        return LocationAssessment(
+            LocationStatus.VALID,
+            authoritative_text=structure.raw_text if structure else None,
+        )
+    if structure is None:
+        return LocationAssessment(
+            LocationStatus.STRUCTURE_UNAVAILABLE,
+            "权威条文未保留可验证的款项结构",
+        )
+
+    selected: list[str] = []
+    for locator in locators:
+        paragraph_index = locator_ordinal(locator.paragraph_no or "", "款")
+        if paragraph_index is None:
+            return LocationAssessment(
+                LocationStatus.STRUCTURE_UNAVAILABLE,
+                f"无法识别款编号：{locator.paragraph_no}",
+            )
+        if paragraph_index > len(structure.paragraphs) and not structure.paragraph_boundaries_reliable:
+            return LocationAssessment(
+                LocationStatus.STRUCTURE_UNAVAILABLE,
+                "权威条文未保留足以核验该款号的自然段边界",
+            )
+        if paragraph_index > len(structure.paragraphs):
+            return LocationAssessment(
+                LocationStatus.INVALID,
+                f"权威条文共{len(structure.paragraphs)}款，其中不存在{locator.paragraph_no}",
+            )
+        paragraph = structure.paragraphs[paragraph_index - 1]
+        if locator.item_no is None:
+            selected.append(paragraph.text)
+            continue
+        item_index = locator_ordinal(locator.item_no, "项")
+        if item_index is None or item_index > len(paragraph.items):
+            return LocationAssessment(
+                LocationStatus.INVALID,
+                f"{paragraph.paragraph_no}共{len(paragraph.items)}项，其中不存在{locator.item_no}",
+            )
+        selected.append(paragraph.items[item_index - 1].text)
+    return LocationAssessment(
+        LocationStatus.VALID,
+        authoritative_text="\n\n".join(selected),
+    )
+
+
+__all__ = ["LocationAssessment", "LocationStatus", "assess_location"]

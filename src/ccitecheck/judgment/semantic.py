@@ -17,29 +17,26 @@ from ..infrastructure.http import (
 )
 
 from ..domain.evidence import ArticleEvidence
-from ..domain.result import SemanticComparison
+from ..domain.case_results import CaseErrorCode, CaseFinding, CaseHoldingCheck
+from ..domain.checks import CheckVerdict
+from ..domain.revisions import RevisionProposal
+from ..domain.statute_results import (
+    StatuteErrorCode,
+    StatuteFinding,
+    StatuteMeaningCheck,
+)
+from .markers import strip_internal_markers
 from .paragraphs import resolve_paragraph
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 PROMPT_PATH = (
-    Path(__file__).resolve().parent / "prompts" / "legal_semantic_comparison.md"
+    Path(__file__).resolve().parent / "prompts" / "statute_meaning_check.md"
 )
+HOLDING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_holding_comparison.md"
 _LLM_ISSUE_TYPES = {
-    "条款编号或引用定位错误",
     "曲解权威文本原意",
-    "引用内容与权威文本无实质对应",
 }
-
-# 改引建议：从本地全文召回的候选条款中，判断哪一条（如有）真正支持文书表述。
-# 仅在语义核查判"无实质对应/定位错误"且该法本地有全文时调用。
-SUGGEST_PROMPT = (
-    "你是法律引用核查系统的改引建议模块。输入包含文书表述 doc_quote 与若干候选条款"
-    " candidates（来自同一部法规的全文召回，含 article_no 与 article_text）。"
-    "任务：判断哪一条候选的内容与 doc_quote 的表述实质对应。只依据候选条款文本判断，"
-    '禁止使用模型记忆补全。若有对应，输出 {"article_no": "第X条"}；'
-    '若都不对应或拿不准，输出 {"article_no": null}。仅输出该 JSON 对象。'
-)
 
 
 class SemanticChecker(Protocol):
@@ -50,7 +47,7 @@ class SemanticChecker(Protocol):
         cited_source: str,
         evidence: ArticleEvidence,
         paragraphs: list[str] | None = None,
-    ) -> SemanticComparison: ...
+    ) -> StatuteMeaningCheck: ...
 
 
 class SemanticCheckError(RuntimeError):
@@ -109,28 +106,36 @@ class QwenSemanticChecker:
         cited_source: str,
         evidence: ArticleEvidence,
         paragraphs: list[str] | None = None,
-    ) -> SemanticComparison:
+    ) -> StatuteMeaningCheck:
         if not evidence.article_text:
             raise SemanticCheckError("未取得法条原文，无法进行语义对比")
 
-        user_content: dict[str, Any] = {
+        user_input = {
             "doc_quote": doc_quote,
             "quote_context": quote_context,
             "cited_source": cited_source,
             "statute_text": evidence.article_text,
             "source_metadata": _source_metadata(evidence),
         }
-        target = _target_paragraph(paragraphs, evidence.article_text)
-        if target is not None:
-            user_content["target_paragraph"] = target
-
+        if paragraphs:
+            target = resolve_paragraph(paragraphs[0], evidence.article_text)
+            if target is not None:
+                user_input["target_paragraph"] = {
+                    "cited": paragraphs[0],
+                    "number": target.number,
+                    "total_paragraphs": target.total,
+                    "text": target.text,
+                }
         payload = {
             "model": self.model,
             "input": [
                 {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
                 {
                     "role": "user",
-                    "content": json.dumps(user_content, ensure_ascii=False),
+                    "content": json.dumps(
+                        user_input,
+                        ensure_ascii=False,
+                    ),
                 },
             ],
             "enable_thinking": False,
@@ -164,13 +169,21 @@ class QwenSemanticChecker:
                 ) from exc
 
         try:
+            raw_comparison["notes"] = strip_internal_markers(str(raw_comparison.get("notes", "")))
             for issue in raw_comparison.get("issues", []):
                 if not isinstance(issue, dict) or issue.get("error_type") not in _LLM_ISSUE_TYPES:
                     raise SemanticResponseError(
                         "Qwen returned an error_type reserved for deterministic checks",
                         "invalid_schema",
                     )
-            return SemanticComparison.model_validate(raw_comparison)
+                for field in ("diff_summary", "suggestion", "revised_text"):
+                    if isinstance(issue.get(field), str):
+                        issue[field] = strip_internal_markers(issue[field])
+                if issue.get("revised_text") == doc_quote:
+                    issue["revised_text"] = None
+            comparison = _statute_check_from_raw(raw_comparison)
+            _approve_statute_revisions(comparison, raw_comparison, doc_quote)
+            return comparison
         except SemanticResponseError:
             raise
         except ValueError as exc:
@@ -178,35 +191,31 @@ class QwenSemanticChecker:
                 f"Qwen returned invalid semantic JSON: {exc}"
             ) from exc
 
-    def suggest_article(
-        self,
-        doc_quote: str,
-        candidates: list[dict[str, str]],
-    ) -> str | None:
-        """从候选条款中挑出真正支持文书表述的条号；没有则返回 None。"""
+    def compare_holding(self, paraphrase_text: str, holding_text: str, case_title: str) -> CaseHoldingCheck:
         payload = {
             "model": self.model,
             "input": [
-                {"role": "system", "content": SUGGEST_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {"doc_quote": doc_quote, "candidates": candidates},
-                        ensure_ascii=False,
-                    ),
-                },
+                {"role": "system", "content": HOLDING_PROMPT_PATH.read_text(encoding="utf-8")},
+                {"role": "user", "content": json.dumps({
+                    "paraphrase_text": paraphrase_text,
+                    "case_title": case_title,
+                    "authoritative_holding": holding_text,
+                }, ensure_ascii=False)},
             ],
             "enable_thinking": False,
         }
+        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+        raw["notes"] = strip_internal_markers(str(raw.get("notes", "")))
+        for issue in raw.get("issues", []):
+            if not isinstance(issue, dict) or issue.get("error_type") != "所述观点非该案裁判观点":
+                raise SemanticResponseError("Qwen returned an invalid case holding error_type")
+            for field in ("diff_summary", "suggestion"):
+                if isinstance(issue.get(field), str):
+                    issue[field] = strip_internal_markers(issue[field])
         try:
-            data = self._post_response(payload)
-            output_text = _extract_output_text(data)
-            result = _load_json_object(output_text)
-            article_no = result.get("article_no")
-            return article_no if isinstance(article_no, str) and article_no else None
-        except (SemanticCheckError, ValueError, json.JSONDecodeError):
-            # 改引建议是增强信息，失败时静默降级，不影响主结论
-            return None
+            return _case_check_from_raw(raw)
+        except ValueError as exc:
+            raise SemanticResponseError(f"Qwen returned invalid case holding JSON: {exc}") from exc
 
     def _post_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -233,23 +242,6 @@ class QwenSemanticChecker:
             ) from exc
 
 
-def _target_paragraph(
-    paragraphs: list[str] | None, article_text: str
-) -> dict[str, Any] | None:
-    """当引用指明具体款时，为语义比对定位目标款的原文切片。"""
-    if not paragraphs:
-        return None
-    location = resolve_paragraph(paragraphs[0], article_text)
-    if location is None or location.text is None:
-        return None
-    return {
-        "cited": paragraphs[0],
-        "number": location.number,
-        "total_paragraphs": location.total,
-        "text": location.text,
-    }
-
-
 def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:
     return {
         "law_name": evidence.law_title,
@@ -258,6 +250,59 @@ def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:
             item.model_dump(mode="json") for item in evidence.related_articles
         ],
     }
+
+
+def _approve_statute_revisions(
+    comparison: StatuteMeaningCheck,
+    raw: dict[str, Any],
+    doc_quote: str,
+) -> None:
+    """批准仅替换本次精确核查片段的法规语义修订。"""
+    for issue, raw_issue in zip(comparison.findings, raw.get("issues", [])):
+        proposed_text = raw_issue.get("revised_text")
+        if not proposed_text or proposed_text == doc_quote:
+            continue
+        issue.revision = RevisionProposal(
+            strategy="replace_exact_text",
+            original_text=doc_quote,
+            revised_text=proposed_text,
+            rationale=issue.suggestion,
+            machine_applicable=True,
+            preconditions=["original_text_unique", "document_unchanged"],
+        )
+
+
+def _statute_check_from_raw(raw: dict[str, Any]) -> StatuteMeaningCheck:
+    findings = []
+    for issue in raw.get("issues", []):
+        finding = StatuteFinding(
+            code=StatuteErrorCode.MEANING_DISTORTED,
+            risk_level=issue["risk_level"],
+            summary=issue["diff_summary"],
+            suggestion=issue["suggestion"],
+        )
+        findings.append(finding)
+    return StatuteMeaningCheck(
+        verdict=CheckVerdict(raw["verdict"]),
+        findings=findings,
+        notes=raw.get("notes", ""),
+    )
+
+
+def _case_check_from_raw(raw: dict[str, Any]) -> CaseHoldingCheck:
+    return CaseHoldingCheck(
+        verdict=CheckVerdict(raw["verdict"]),
+        findings=[
+            CaseFinding(
+                code=CaseErrorCode.HOLDING_NOT_IN_CASE,
+                risk_level=issue["risk_level"],
+                summary=issue["diff_summary"],
+                suggestion=issue["suggestion"],
+            )
+            for issue in raw.get("issues", [])
+        ],
+        notes=raw.get("notes", ""),
+    )
 
 
 def _load_json_object(text: str) -> dict[str, Any]:

@@ -25,8 +25,22 @@ export const CASE_STATUS_LABELS = {
 
 export const BADGE_TEXT = { pass: "通过", issue: "未通过", bug: "待核实" }
 
+const STATUTE_ERROR_LABELS = {
+  source_not_found: "北大法宝未检索到所引法源",
+  citation_location_error: "条款编号或引用定位错误",
+  source_repealed: "法源已废止或失效",
+  source_amended: "法源已修改",
+  meaning_distorted: "曲解权威文本原意",
+}
+
+const CASE_ERROR_LABELS = {
+  case_not_found: "北大法宝未检索到引用案例",
+  case_identity_error: "案例引用信息错误",
+  holding_not_in_case: "所述观点非该案裁判观点",
+}
+
 export function findingsOf(check) {
-  return [...(check.rule_findings || []), ...(check.semantic_comparison?.issues || [])]
+  return check.findings || []
 }
 
 export function formatReference(check) {
@@ -36,18 +50,7 @@ export function formatReference(check) {
 }
 
 export function checkState(check) {
-  if (check.check_kind === "case") {
-    return check.lookup_status === "verified" ? "pass" : check.lookup_status === "not_found" ? "issue" : "bug"
-  }
-  if (findingsOf(check).length) return "issue"
-  // 章节引用多候选：存在性虽确认，但归属未定，转人工（与后端 bugs 口径一致）
-  if (check.semantic_comparison?.skipped_reason === "structure_ambiguous") return "bug"
-  if (check.verification_scope === "existence_only" && ["article_found", "relevant_articles_found"].includes(check.lookup_status)) return "pass"
-  if (check.semantic_comparison?.verdict === "pass") return "pass"
-  if (!check.semantic_comparison && ["article_found", "relevant_articles_found"].includes(check.lookup_status)) {
-    return "pass"
-  }
-  return "bug"
+  return check.outcome || "bug"
 }
 
 export function stripRepeatedArticleHeading(text, articleNo) {
@@ -89,20 +92,17 @@ export function orderChecksByCitation(checks) {
 }
 
 function statuteTypeLabel(check, state, findings) {
-  if (findings.length) return findings.map(f => f.error_type).join("；")
+  if (findings.length) return findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code).join("；")
   if (check.lookup_status === "out_of_scope") return "超出核查边界"
   if (state === "pass") {
-    if (check.jurisdiction === "EU" && check.verification_scope === "existence_only") return "欧盟法规：已核验存在性"
-    if (check.verification_scope === "existence_only") {
-      // 章节引用（第X编/章/节，无条号）与内部转引共用存在性核验，但语义不同
-      if (/[编章节]$/.test(check.article_no || "")) return "章节引用：已核验存在"
-      return "内部转引：仅核验存在性"
-    }
+    if (check.jurisdiction === "EU" && !check.meaning_check) return "欧盟法规：已核验存在性"
+    if (/[编章节]$/.test(check.article_no || "")) return "章节引用：已核验存在"
+    if (check.reference_role === "nested") return "内部转引：仅核验存在性"
     return "法律引用无问题"
   }
-  if (check.semantic_comparison?.skipped_reason === "structure_ambiguous") return "章节引用存在多个候选，请人工确认"
-  if (check.semantic_comparison?.execution_status === "llm_error") return "语义核查服务失败，可重试"
-  if (check.semantic_comparison?.verdict === "insufficient_input") return "输入不足，需人工处理"
+  if (check.meaning_check?.skipped_reason === "structure_ambiguous") return "章节引用存在多个候选，请人工确认"
+  if (check.meaning_check?.execution_status === "llm_error") return "语义核查服务失败，可重试"
+  if (check.meaning_check?.verdict === "insufficient_input") return "输入不足，需人工处理"
   if (state === "bug") return LOOKUP_STATUS_LABELS[check.lookup_status] || "未完成核查，需人工处理"
   return LOOKUP_STATUS_LABELS[check.lookup_status] || check.lookup_status
 }
@@ -122,13 +122,15 @@ function statuteVerdict(check, state, findings) {
     const message = outOfScopeMessage(check)
     return message ? { riskText: null, suggestion: message } : null
   }
-  if (state === "bug" && check.semantic_comparison?.notes) {
-    return { riskText: null, suggestion: check.semantic_comparison.notes }
+  if (state === "bug" && check.meaning_check?.notes) {
+    return { riskText: null, suggestion: check.meaning_check.notes }
   }
   return null
 }
 
 function caseVerdict(check, state) {
+  const first = findingsOf(check)[0]
+  if (first) return { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: first.suggestion }
   if (state === "issue") {
     return { riskText: null, suggestion: check.message || "请核实案例名称或案号，并以权威案例库的检索结果为准。" }
   }
@@ -208,7 +210,7 @@ export function normalizeCheck(check, options = {}) {
       : { label: "核查对象", text: formatReference(check), status: versionStatusOf(check) },
     verdict: isCase ? caseVerdict(check, state) : statuteVerdict(check, state, findings),
     evidence: isCase ? caseEvidence(check) : statuteEvidence(check),
-    typeTags: isCase ? [caseTypeOf(check)] : findings.map(f => f.error_type),
+    typeTags: isCase ? findings.map(f => CASE_ERROR_LABELS[f.code] || f.code) : findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code),
     actions: { jump: !compact, decide: true },
     raw: check,
   }

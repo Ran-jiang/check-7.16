@@ -31,6 +31,14 @@ class LookupResult:
     trace: SourceTrace
 
 
+@dataclass
+class LocationCandidateResult:
+    """二次定位查询返回的同一法规候选条文与独立轨迹。"""
+
+    candidates: list[ArticleEvidence]
+    trace: SourceTrace
+
+
 class StatuteSource(Protocol):
     """所有法规数据源适配器共同实现的结构化接口。"""
 
@@ -39,4 +47,4 @@ class StatuteSource(Protocol):
         ...
 
 
-__all__ = ["LookupRequest", "LookupResult", "StatuteSource"]
+__all__ = ["LocationCandidateResult", "LookupRequest", "LookupResult", "StatuteSource"]

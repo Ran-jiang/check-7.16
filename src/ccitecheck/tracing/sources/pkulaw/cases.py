@@ -1,4 +1,4 @@
-"""北大法宝案号识别与案例检索适配器。
+"""北大法宝案例检索适配器。
 
 本适配器只把通用案例溯源操作转换为北大法宝客户端调用。候选选择以及
 通过或人工复核判定属于判定层，不在这里处理。
@@ -8,18 +8,11 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
-from .client import PkulawCaseNumber, PkulawCaseRecord, PkulawMcpClient
+from .client import PkulawCaseRecord, PkulawMcpClient
 
 
-class CaseNumberRecognizer(Protocol):
-    """仅需精确案号识别时使用的接口。"""
-
-    def recognize(self, text: str) -> list[PkulawCaseNumber]:
-        ...
-
-
-class CaseSearcher(CaseNumberRecognizer, Protocol):
-    """支持关键词和语义案例检索的扩展接口。"""
+class CaseSearcher(Protocol):
+    """案例精准检索和语义补查接口。"""
 
     def search_keyword(self, title: str, fulltext: str) -> list[PkulawCaseRecord]:
         ...
@@ -34,9 +27,6 @@ class PkulawCaseSource:
     def __init__(self, client: Optional[PkulawMcpClient] = None):
         self.client = client
 
-    def recognize(self, text: str) -> list[PkulawCaseNumber]:
-        return self._client().recognize_case_numbers(text)
-
     def search_keyword(self, title: str, fulltext: str) -> list[PkulawCaseRecord]:
         return self._client().get_case_list(title=title, fulltext=fulltext)
 
@@ -49,4 +39,4 @@ class PkulawCaseSource:
         return self.client
 
 
-__all__ = ["CaseNumberRecognizer", "CaseSearcher", "PkulawCaseSource"]
+__all__ = ["CaseSearcher", "PkulawCaseSource"]

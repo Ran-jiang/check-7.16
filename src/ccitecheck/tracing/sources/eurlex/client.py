@@ -63,7 +63,7 @@ class EurLexMcpClient:
         self.timeout = timeout
         self._session_id: Optional[str] = None
         if not self.gateway:
-            raise EurLexNotConfiguredError("EURLEX_MCP_GATEWAY is not configured")
+            raise EurLexNotConfiguredError("欧盟法规数据源未配置：缺少 EURLEX_MCP_GATEWAY")
 
     def search_law(self, query: str, celex: str = "") -> list[EurLexRecord]:
         """检索欧盟法规。已知 CELEX 号时优先精确解析，其余走关键词检索。"""

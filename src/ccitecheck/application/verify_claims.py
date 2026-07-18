@@ -11,48 +11,56 @@ from pathlib import Path
 from typing import Iterable
 
 from ..domain.citation import ArticleRef, Claim, ClaimDocument, ClaimType, StructureRef
-from ..domain.evidence import (
-    ArticleEvidence,
-    ArticleExcerpt,
-    LookupStatus,
-    SourceTier,
-    SourceTrace,
-)
-from ..domain.result import RiskLevel, SemanticErrorType
+from ..domain.evidence import ArticleEvidence, ArticleExcerpt, LookupStatus, SourceTier, SourceTrace
+from ..domain.checks import CheckVerdict, ExecutionStatus
 from ..domain.legal_numbers import chinese_number_to_int
-from ..domain.result import ComparisonVerdict
-from ..tracing.sources.eurlex import article_number_from_citation, fetch_article_excerpt
-from ..domain.result import FrontendVerificationDocument, SemanticCheckResult, SemanticIssue
-from ..infrastructure.config import load_project_env
+from ..domain.result import FrontendVerificationDocument
+from ..domain.statute_results import (
+    StatuteErrorCode,
+    StatuteFinding,
+    StatuteLocationResolution,
+    StatuteLocator,
+    StatuteMeaningCheck,
+    StatuteVerificationResult,
+    StatuteVersion,
+)
 from ..infrastructure.database import (
     connect,
     find_law,
     list_articles_in_structure,
-    list_current_articles,
+    list_historical_article_versions,
     list_law_titles,
     resolve_structure_path,
-    strip_version_annotation,
 )
 from ..judgment.cases import verify_case_claims
-from ..judgment.deterministic import build_rule_findings, classify_not_verifiable
 from ..judgment.semantic import SemanticChecker
+from ..judgment.statutes import (
+    LocationAssessment,
+    LocationStatus,
+    assess_location,
+    assess_statute,
+    classify_not_verifiable,
+    parse_article_structure,
+    resolve_location_candidates,
+)
 from ..judgment.service import (
-    add_article_suggestion,
     compare_with_llm,
     decide_semantic_gate,
     skipped_semantic_result,
 )
-from ..output.verification import CitationReferenceData, build_verification_document
-from ..tracing.retrieval import retrieve_relevant_articles
 from ..recognition.spans import locate_claim_article_spans
 from ..tracing.service import build_default_sources, build_eu_sources, run_lookup_batch
 from ..tracing.sources import (
-    CaseNumberRecognizer,
+    CaseSearcher,
     LookupRequest,
     LookupResult,
     PkulawCaseSource,
     StatuteSource,
 )
+from ..tracing.sources.eurlex import article_number_from_citation, fetch_article_excerpt
+
+_EU_CN_ARTICLE_PATTERN = re.compile(r"第([一二三四五六七八九十百千零两0-9]+)条")
+_EU_EN_ARTICLE_PATTERN = re.compile(r"Article\s+(\d+)", re.IGNORECASE)
 
 
 def _semantic_workers() -> int:
@@ -68,7 +76,7 @@ def verify_claim_document(
     database_path: str | Path,
     sources: Iterable[StatuteSource] | None = None,
     semantic_checker: SemanticChecker | None = None,
-    case_recognizer: CaseNumberRecognizer | None = None,
+    case_searcher: CaseSearcher | None = None,
     include_statutes: bool = True,
     include_cases: bool = True,
 ) -> FrontendVerificationDocument:
@@ -76,27 +84,31 @@ def verify_claim_document(
     source_chain = (
         list(sources) if sources is not None else build_default_sources(database_path)
     )
-    recognizer = case_recognizer or PkulawCaseSource()
+    searcher = case_searcher or PkulawCaseSource()
     items = _collect_check_items(claim_document) if include_statutes else []
-    lookup_results = _run_lookups(source_chain, items)
-    lookup_results.update(_run_structure_lookups(database_path, items))
+    lookup_results = _run_lookups(source_chain, items, database_path)
+    location_repairs = _run_location_repairs(source_chain, items, lookup_results)
+    historical_versions = _load_historical_versions(
+        database_path, items, lookup_results
+    )
     judgments = _run_judgments(
         semantic_checker,
         items,
         lookup_results,
         _load_known_titles(database_path),
-        database_path,
+        historical_versions,
+        location_repairs,
     )
-    reference_data = _build_reference_data(items, lookup_results, judgments)
-    case_checks = (
-        verify_case_claims(claim_document, recognizer)
+    statute_results = _build_statute_results(items, lookup_results, judgments)
+    case_results = (
+        verify_case_claims(claim_document, searcher, semantic_checker)
         if include_cases
         else []
     )
-    return build_verification_document(
-        claim_document.claim_meta.claim_doc_id,
-        reference_data,
-        case_checks,
+    return FrontendVerificationDocument(
+        source_claim_doc_id=claim_document.claim_meta.claim_doc_id,
+        statute_results=statute_results,
+        case_results=case_results,
     )
 
 
@@ -159,25 +171,21 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
             locate_claim_article_spans(claim)
         for legal_source in getattr(claim.entities, "legal_sources", []):
             not_verifiable = classify_not_verifiable(legal_source.title)
-            jurisdiction = getattr(legal_source, "jurisdiction", "CN")
-            out_of_scope = _classify_out_of_scope(jurisdiction)
-            structures = getattr(legal_source, "structures", [])
-            if not legal_source.articles and structures:
-                # 章节引用（如《民法典》第三编第四章）：走本地结构解析
-                for structure in structures:
-                    items.append(
-                        _CheckItem(
-                            claim=claim,
-                            law_title=legal_source.title,
-                            source_type=legal_source.source_type.value,
-                            article=None,
-                            article_no=structure.label,
-                            not_verifiable=not_verifiable,
-                            jurisdiction=jurisdiction,
-                            out_of_scope=out_of_scope,
-                            structure=structure,
-                        )
-                    )
+            jurisdiction = legal_source.jurisdiction
+            out_of_scope = _out_of_scope_message(jurisdiction)
+            if not legal_source.articles and legal_source.structures:
+                for structure in legal_source.structures:
+                    items.append(_CheckItem(
+                        claim=claim,
+                        law_title=legal_source.title,
+                        source_type=legal_source.source_type.value,
+                        article=None,
+                        article_no=structure.label,
+                        not_verifiable=not_verifiable,
+                        jurisdiction=jurisdiction,
+                        out_of_scope=out_of_scope,
+                        structure=structure,
+                    ))
                 continue
             for article in legal_source.articles or [None]:
                 items.append(
@@ -195,22 +203,16 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
     return items
 
 
-def _classify_out_of_scope(jurisdiction: str) -> str | None:
-    """非中国法域引用的边界分类；返回给用户的说明文本。"""
+def _out_of_scope_message(jurisdiction: str) -> str | None:
     if jurisdiction == "FOREIGN":
-        return "涉外法规（非中国/欧盟法域），超出本产品核查边界，请人工核验"
-    load_project_env()
-    if jurisdiction == "EU" and not os.getenv("EURLEX_MCP_GATEWAY"):
-        return (
-            "欧盟法规数据源未配置，暂无法核验；"
-            "请人工核验，或配置 EURLEX_MCP_GATEWAY 后重新核查"
-        )
+        return "该法规属于当前不支持的外国法域，超出本产品核查边界，请人工核验。"
     return None
 
 
 def _run_lookups(
     source_chain: list[StatuteSource],
     items: list[_CheckItem],
+    database_path: str | Path,
 ) -> dict[tuple, tuple[LookupResult, list[SourceTrace]]]:
     requests: dict[tuple, LookupRequest] = {}
     eu_requests: dict[tuple, LookupRequest] = {}
@@ -230,125 +232,140 @@ def _run_lookups(
     results = run_lookup_batch(source_chain, requests)
     if eu_requests:
         results.update(run_lookup_batch(build_eu_sources(), eu_requests))
+    results.update(_run_structure_lookups(items, database_path))
     return results
 
 
 def _run_structure_lookups(
-    database_path: str | Path,
     items: list[_CheckItem],
+    database_path: str | Path,
 ) -> dict[tuple, tuple[LookupResult, list[SourceTrace]]]:
     results: dict[tuple, tuple[LookupResult, list[SourceTrace]]] = {}
-    db_path = Path(database_path)
     for item in items:
-        if item.structure is None or item.skip_lookup:
+        if item.structure is None or item.skip_lookup or item.lookup_key in results:
             continue
-        if item.lookup_key not in results:
-            results[item.lookup_key] = _lookup_structure(db_path, item)
+        results[item.lookup_key] = _lookup_structure(item, database_path)
     return results
 
 
 def _lookup_structure(
-    db_path: Path, item: _CheckItem
+    item: _CheckItem, database_path: str | Path
 ) -> tuple[LookupResult, list[SourceTrace]]:
-    """在本地结构表解析章节引用；多候选原样返回，绝不猜测。"""
     trace = SourceTrace(
         tier=SourceTier.LOCAL_SQLITE,
-        source_name="CCiteheck 本地章节结构",
+        source_name="CCiteCheck 本地章节结构",
         status=LookupStatus.LAW_NOT_FOUND,
     )
-    label = item.structure.label
-    if not db_path.exists():
-        trace.status = LookupStatus.SOURCE_NOT_CONFIGURED
-        trace.message = f"SQLite database not found: {db_path}"
-        return LookupResult(trace.status, None, trace), [trace]
-    with connect(db_path) as conn:
-        law = find_law(conn, item.law_title)
+    with connect(database_path) as connection:
+        law = find_law(connection, item.law_title)
         if law is None:
             trace.message = "本地法规库未收录该法规，章节引用无法核验"
             return LookupResult(trace.status, None, trace), [trace]
         tokens = [(unit.unit, unit.number) for unit in item.structure.units]
-        candidates = resolve_structure_path(conn, int(law["id"]), tokens)
+        candidates = resolve_structure_path(connection, int(law["id"]), tokens)
         if not candidates:
             trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
-            trace.message = f"《{law['title']}》现行章节结构中不存在{label}"
+            trace.message = f"现行章节结构中不存在{item.structure.label}"
             evidence = ArticleEvidence(
-                law_title=law["title"],
-                source_type=law["source_type"],
-                article_no=label,
-                data_source=trace,
+                law_title=law["title"], source_type=law["source_type"],
+                article_no=item.structure.label, data_source=trace,
             )
             return LookupResult(trace.status, evidence, trace), [trace]
-
         trace.status = LookupStatus.RELEVANT_ARTICLES_FOUND
-        trace.metadata = {"candidate_count": len(candidates)}
+        trace.metadata["candidate_count"] = len(candidates)
         if len(candidates) == 1:
             node = candidates[0]
-            members = list_articles_in_structure(conn, int(node["id"]))
-            trace.message = f"已定位章节：{node['path_label']}（含 {len(members)} 条条文）"
-            excerpts = [
-                ArticleExcerpt(
-                    article_no=member["article_no"],
-                    article_text=member["text"][:200],
-                    relevance_score=1.0,
-                )
-                for member in members[:3]
-            ]
+            members = list_articles_in_structure(connection, int(node["id"]))
+            trace.message = f"已定位章节：{node['path_label']}"
             evidence = ArticleEvidence(
-                law_title=law["title"],
-                source_type=law["source_type"],
-                article_no=label,
-                version_status=law["status"],
-                source_metadata={"article_count": len(members)},
-                related_articles=excerpts,
-                structure_path=node["path_label"],
-                data_source=trace,
+                law_title=law["title"], source_type=law["source_type"],
+                article_no=item.structure.label, version_status=law["status"],
+                structure_path=node["path_label"], data_source=trace,
+                related_articles=[ArticleExcerpt(
+                    article_no=row["article_no"], article_text=row["text"][:200],
+                    relevance_score=1.0,
+                ) for row in members[:3]],
             )
             return LookupResult(trace.status, evidence, trace), [trace]
-
         paths = [row["path_label"] for row in candidates[:5]]
-        trace.message = (
-            f"{label} 在《{law['title']}》中存在 {len(candidates)} 个候选章节，"
-            "请人工确认或在文书中补充上级编号"
-        )
+        trace.message = f"存在 {len(candidates)} 个候选章节，请补充上级编号"
         evidence = ArticleEvidence(
-            law_title=law["title"],
-            source_type=law["source_type"],
-            article_no=label,
-            version_status=law["status"],
-            source_metadata={"candidate_count": len(candidates)},
-            structure_path="候选：" + "；".join(paths),
-            data_source=trace,
+            law_title=law["title"], source_type=law["source_type"],
+            article_no=item.structure.label, version_status=law["status"],
+            structure_path="候选：" + "；".join(paths), data_source=trace,
         )
         return LookupResult(trace.status, evidence, trace), [trace]
 
 
-def _structure_judgment(
-    item: _CheckItem,
-    lookup_result: LookupResult,
-) -> tuple[list[SemanticIssue], SemanticCheckResult | None]:
-    """章节引用为存在性核验：不存在→定位错误；多候选→转人工。"""
-    label = item.structure.label
-    if lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING:
-        return (
-            [
-                SemanticIssue(
-                    error_type=SemanticErrorType.LOCATION_ERROR,
-                    risk_level=RiskLevel.HIGH,
-                    diff_summary=(
-                        f"《{strip_version_annotation(item.law_title)}》现行章节结构中"
-                        f"不存在{label}"
-                    )[:300],
-                    suggestion="请核实章节编号；该章节在现行有效版本中不存在。",
-                )
-            ],
-            None,
+def _run_location_repairs(
+    source_chain: list[StatuteSource],
+    items: list[_CheckItem],
+    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
+) -> dict[int, StatuteLocationResolution]:
+    locator_source = next((
+        source
+        for source in source_chain
+        if callable(getattr(source, "locate_candidates", None))
+    ), None)
+    if locator_source is None:
+        return {}
+    repairs: dict[int, StatuteLocationResolution] = {}
+    for index, item in enumerate(items):
+        if item.lookup_key not in lookup_results or not _has_subarticle_locator(item):
+            continue
+        lookup_result, _ = lookup_results[item.lookup_key]
+        if _assess_item_location(item, lookup_result).status == LocationStatus.STRUCTURE_UNAVAILABLE:
+            continue
+        candidate_result = locator_source.locate_candidates(LookupRequest(
+            law_title=item.law_title,
+            source_type=item.source_type,
+            article_no=item.article_no,
+            context_text=item.document_quote,
+        ))
+        resolution = resolve_location_candidates(
+            item.document_quote, candidate_result.candidates
         )
-    candidate_count = int(
-        (lookup_result.trace.metadata or {}).get("candidate_count", 1)
-    )
-    if candidate_count > 1:
-        return [], skipped_semantic_result("structure_ambiguous")
-    return [], None
+        resolution.source_trace = candidate_result.trace
+        candidate_result.trace.metadata["location_candidates"] = [
+            candidate.model_dump(mode="json")
+            for candidate in resolution.candidates
+        ]
+        repairs[index] = resolution
+    return repairs
+
+
+def _location_suggestion(
+    resolution: StatuteLocationResolution | None,
+) -> str:
+    if resolution is None or resolution.status == "not_found":
+        return "请核实所引款、项编号。"
+    if resolution.status == "candidates_pending":
+        return "北大法宝返回了多个可能对应的位置，请结合上下文人工确认。"
+    locator = resolution.candidates[0].locator
+    target = "".join(filter(None, (
+        locator.article_no,
+        locator.paragraph_no,
+        locator.item_no,
+    )))
+    return f"经北大法宝候选原文核对，所述内容对应{target}，请更正引用位置。"
+
+
+def _has_subarticle_locator(item: _CheckItem) -> bool:
+    return bool(item.article and (item.article.paragraphs or item.article.items))
+
+
+def _resolved_to_other_location(
+    item: _CheckItem,
+    resolution: StatuteLocationResolution | None,
+) -> bool:
+    if resolution is None or resolution.status != "resolved":
+        return False
+    cited = {
+        (locator.article_no, locator.paragraph_no, locator.item_no)
+        for locator in _item_locators(item)
+    }
+    resolved = resolution.candidates[0].locator
+    return (resolved.article_no, resolved.paragraph_no, resolved.item_no) not in cited
 
 
 def _run_judgments(
@@ -356,9 +373,10 @@ def _run_judgments(
     items: list[_CheckItem],
     lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
     known_titles: list[str],
-    database_path: str | Path,
-) -> dict[int, tuple[list[SemanticIssue], SemanticCheckResult | None]]:
-    results: dict[int, tuple[list[SemanticIssue], SemanticCheckResult | None]] = {}
+    historical_versions: dict[tuple, list[StatuteVersion]],
+    location_repairs: dict[int, StatuteLocationResolution],
+) -> dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]]:
+    results: dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]] = {}
     semantic_jobs: list[tuple[int, _CheckItem, LookupResult]] = []
 
     for index, item in enumerate(items):
@@ -367,20 +385,49 @@ def _run_judgments(
             continue
         lookup_result, attempts = lookup_results[item.lookup_key]
         if item.structure is not None:
-            results[index] = _structure_judgment(item, lookup_result)
+            if lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING:
+                results[index] = ([StatuteFinding(
+                    code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+                    risk_level="HIGH",
+                    summary=lookup_result.trace.message,
+                    suggestion="请核实章节编号及其上级结构。",
+                )], None)
+            elif int(lookup_result.trace.metadata.get("candidate_count", 1)) > 1:
+                results[index] = (
+                    [], skipped_semantic_result("structure_ambiguous")
+                )
+            else:
+                results[index] = ([], None)
             continue
-        findings = build_rule_findings(
+        findings = assess_statute(
             item.law_title,
             item.article_no,
             lookup_result,
             attempts,
             known_titles,
-            paragraphs=list(item.article.paragraphs) if item.article else None,
+            historical_versions.get(item.lookup_key),
         )
-        if item.jurisdiction == "EU" and lookup_result.status != LookupStatus.ARTICLE_FOUND:
-            # 只提法名的欧盟引用：存在性/时效核验，无条文可比对。
-            # 取得具体 Article 原文的引用则继续走（跨语言）语义比对。
-            results[index] = (findings, None)
+        location = _assess_item_location(item, lookup_result)
+        if location.status == LocationStatus.INVALID:
+            repair = location_repairs.get(index)
+            findings.append(StatuteFinding(
+                code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+                risk_level="HIGH",
+                summary=location.message,
+                suggestion=_location_suggestion(repair),
+            ))
+        elif _resolved_to_other_location(item, location_repairs.get(index)):
+            findings.append(StatuteFinding(
+                code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+                risk_level="HIGH",
+                summary="文书所述内容与所引款项不对应",
+                suggestion=_location_suggestion(location_repairs[index]),
+            ))
+        elif location.status == LocationStatus.STRUCTURE_UNAVAILABLE:
+            results[index] = (
+                findings,
+                skipped_semantic_result("citation_structure_unavailable"),
+            )
             continue
         gate = decide_semantic_gate(
             lookup_result,
@@ -406,13 +453,6 @@ def _run_judgments(
                 unique_jobs,
                 pool.map(lambda job: _compare_job(semantic_checker, job[0], job[1]), unique_jobs.values()),
             ))
-        for job_id, (item, _) in unique_jobs.items():
-            _add_suggestion(
-                database_path,
-                semantic_checker,
-                item,
-                comparisons[job_id],
-            )
         salvage_ids = [
             job_id
             for job_id, comparison in comparisons.items()
@@ -428,51 +468,42 @@ def _run_judgments(
                     else "（打捞轮恢复）"
                 )
                 comparisons[job_id] = recovered
-                _add_suggestion(database_path, semantic_checker, item, recovered)
             else:
                 comparisons[job_id] = recovered
         for index, item, _ in semantic_jobs:
             comparison = comparisons[job_ids[index]].model_copy(deep=True)
-            comparison.semantic_job_id = job_ids[index]
+            comparison.job_id = job_ids[index]
             findings, _ = results[index]
             results[index] = (findings, comparison)
-        for index, item, lookup_result in semantic_jobs:
             if item.jurisdiction == "EU":
-                _append_eu_suggested_article(item, lookup_result, results[index][1])
+                _append_verified_eu_candidate(item, lookup_results[item.lookup_key][0], comparison)
     return results
 
 
-_EU_CN_ARTICLE_PATTERN = re.compile(r"第([一二三四五六七八九十百千零两0-9]+)条")
-_EU_EN_ARTICLE_PATTERN = re.compile(r"Article\s+(\d+)", re.IGNORECASE)
-
-
-def _append_eu_suggested_article(item, lookup_result, comparison) -> None:
-    """欧盟引用抓错且判定文本指向唯一的另一条时，补取该条原文并入参考条款。"""
-    if comparison is None or comparison.verdict != ComparisonVerdict.ISSUE:
-        return
+def _append_verified_eu_candidate(
+    item: _CheckItem,
+    lookup_result: LookupResult,
+    comparison: StatuteMeaningCheck,
+) -> None:
     evidence = lookup_result.evidence
-    if evidence is None:
+    if evidence is None or not comparison.findings:
         return
-    celex = (evidence.source_metadata or {}).get("celex")
+    celex = evidence.source_metadata.get("celex")
     if not celex:
         return
     cited = article_number_from_citation(item.article_no)
     numbers: set[int] = set()
-    for issue in comparison.issues:
-        text = f"{issue.diff_summary} {issue.suggestion}"
+    for finding in comparison.findings:
+        text = f"{finding.summary} {finding.suggestion}"
         for match in _EU_CN_ARTICLE_PATTERN.finditer(text):
             number = chinese_number_to_int(match.group(1))
             if number:
                 numbers.add(number)
-        for match in _EU_EN_ARTICLE_PATTERN.finditer(text):
-            numbers.add(int(match.group(1)))
+        numbers.update(int(match.group(1)) for match in _EU_EN_ARTICLE_PATTERN.finditer(text))
     numbers.discard(cited)
     if len(numbers) != 1:
         return
     number = numbers.pop()
-    label = f"Article {number}"
-    if any(excerpt.article_no == label for excerpt in evidence.related_articles):
-        return
     excerpt = fetch_article_excerpt(celex, number)
     if excerpt is not None:
         evidence.related_articles.append(excerpt)
@@ -482,99 +513,126 @@ def _compare_job(
     semantic_checker: SemanticChecker,
     item: _CheckItem,
     lookup_result: LookupResult,
-) -> SemanticCheckResult:
+) -> StatuteMeaningCheck:
     if lookup_result.evidence is None:
         raise ValueError("语义核查任务缺少法条证据")
+    evidence = lookup_result.evidence
+    location = _assess_item_location(item, lookup_result)
+    if location.status != LocationStatus.VALID:
+        raise ValueError("语义核查任务缺少已验证的条款项定位")
+    if location.authoritative_text:
+        evidence = evidence.model_copy(update={"article_text": location.authoritative_text})
     return compare_with_llm(
         semantic_checker,
         item.document_quote,
         item.claim.text,
         _cited_source(item),
-        lookup_result.evidence,
-        # 款级切片按中文条文的分款体例定位，外文条文不适用
-        paragraphs=(
-            list(item.article.paragraphs)
-            if item.article and item.jurisdiction != "EU"
-            else None
-        ),
+        evidence,
     )
 
 
-def _add_suggestion(
-    database_path: str | Path,
-    semantic_checker: SemanticChecker,
-    item: _CheckItem,
-    comparison: SemanticCheckResult,
-) -> None:
-    path = Path(database_path)
-    if not path.exists():
-        return
-    with connect(path) as connection:
-        articles = list_current_articles(connection, item.law_title)
-    excerpts = retrieve_relevant_articles(item.document_quote, articles) if articles else []
-    candidates = [
-        {"article_no": excerpt.article_no, "article_text": excerpt.article_text}
-        for excerpt in excerpts
+def _assess_item_location(item: _CheckItem, lookup_result: LookupResult):
+    if item.article and len(item.article.paragraphs) > 1 and item.article.items:
+        return LocationAssessment(
+            LocationStatus.STRUCTURE_UNAVAILABLE,
+            "抽取结果未记录各项分别属于哪一款",
+        )
+    evidence = lookup_result.evidence
+    structure = (
+        parse_article_structure(evidence.article_no or item.article_no or "", evidence.article_text)
+        if evidence is not None and evidence.article_text
+        else None
+    )
+    return assess_location(structure, _item_locators(item))
+
+
+def _item_locators(item: _CheckItem) -> list[StatuteLocator]:
+    if item.article is None:
+        return [StatuteLocator(article_no=item.article_no)] if item.article_no else []
+    paragraphs = item.article.paragraphs or [None]
+    items = item.article.items or [None]
+    return [
+        StatuteLocator(
+            article_no=item.article_no,
+            paragraph_no=paragraph,
+            item_no=subitem,
+        )
+        for paragraph in paragraphs
+        for subitem in items
     ]
-    add_article_suggestion(
-        semantic_checker,
-        item.document_quote,
-        item.article_no,
-        candidates,
-        comparison,
-    )
 
 
-def _build_reference_data(
+def _build_statute_results(
     items: list[_CheckItem],
     lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
-    judgments: dict[int, tuple[list[SemanticIssue], SemanticCheckResult | None]],
-) -> list[CitationReferenceData]:
-    data: list[CitationReferenceData] = []
+    judgments: dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]],
+) -> list[StatuteVerificationResult]:
+    results: list[StatuteVerificationResult] = []
+    card_ids: dict[str, str] = {}
     for index, item in enumerate(items):
         lookup_result = attempts = None
         if not item.skip_lookup:
             lookup_result, attempts = lookup_results[item.lookup_key]
-        findings, comparison = judgments[index]
-        data.append(
-            CitationReferenceData(
-                claim=item.claim,
+        elif item.out_of_scope:
+            attempts = [SourceTrace(
+                tier=SourceTier.LOCAL_SQLITE,
+                source_name="CCiteCheck 法域分类",
+                status=LookupStatus.OUT_OF_SCOPE,
+                message=item.out_of_scope,
+            )]
+        findings, meaning_check = judgments[index]
+        all_findings = [*findings, *(meaning_check.findings if meaning_check else [])]
+        card_id = card_ids.setdefault(
+            item.claim.claim_id, f"card_{len(card_ids) + 1:05d}"
+        )
+        results.append(
+            StatuteVerificationResult(
+                check_id=f"vc_{index + 1:05d}",
+                card_id=card_id,
+                claim_id=item.claim.claim_id,
+                claim_text=item.claim.text,
                 law_title=item.law_title,
-                article_no=item.article_no,
-                paragraphs=list(item.article.paragraphs) if item.article else [],
-                items=list(item.article.items) if item.article else [],
-                cited_text=(
-                    item.claim.text[item.article.citation_span[0]:item.article.citation_span[1]]
-                    if item.article and item.article.citation_span else _cited_source(item)
-                ),
-                reference_role=item.reference_role,
-                mention_span=item.article.mention_span if item.article else None,
-                citation_span=item.article.citation_span if item.article else None,
-                quote_span=item.article.quote_span if item.article else None,
-                not_verifiable=item.not_verifiable,
-                out_of_scope=item.out_of_scope,
-                lookup_status=(lookup_result.status if lookup_result else None),
-                evidence=(lookup_result.evidence if lookup_result else None),
-                source_attempts=attempts or [],
-                rule_findings=findings,
-                semantic_comparison=comparison,
-                verification_scope=(
-                    "existence_only"
-                    if item.reference_role == "nested"
-                    or item.structure is not None
-                    or (
-                        item.jurisdiction == "EU"
-                        and (
-                            lookup_result is None
-                            or lookup_result.status != LookupStatus.ARTICLE_FOUND
-                        )
-                    )
-                    else "full"
-                ),
                 jurisdiction=item.jurisdiction,
+                document_quote=item.document_quote,
+                cited_locators=_item_locators(item),
+                lookup_status=(
+                    lookup_result.status if lookup_result
+                    else LookupStatus.OUT_OF_SCOPE if item.out_of_scope
+                    else LookupStatus.NOT_VERIFIABLE
+                ),
+                evidence=(lookup_result.evidence if lookup_result else None),
+                findings=all_findings,
+                outcome=(
+                    "bug" if item.out_of_scope
+                    else _statute_outcome(all_findings, meaning_check, item.reference_role)
+                ),
+                message=(
+                    meaning_check.notes if meaning_check
+                    else item.out_of_scope or item.not_verifiable or ""
+                ),
+                meaning_check=meaning_check,
+                reference_role=item.reference_role,
+                source_locations=item.claim.source_locations,
+                source_attempts=attempts or [],
             )
         )
-    return data
+    return results
+
+
+def _statute_outcome(
+    findings: list[StatuteFinding],
+    meaning_check: StatuteMeaningCheck | None,
+    reference_role: str,
+) -> str:
+    if findings:
+        return "issue"
+    if reference_role == "nested":
+        return "pass"
+    if meaning_check is None:
+        return "pass"
+    if meaning_check.execution_status != ExecutionStatus.COMPLETED:
+        return "bug"
+    return "pass" if meaning_check.verdict == CheckVerdict.PASS else "bug"
 
 
 def _semantic_job_id(item: _CheckItem, lookup_result: LookupResult) -> str:
@@ -588,6 +646,7 @@ def _semantic_job_id(item: _CheckItem, lookup_result: LookupResult) -> str:
     material = "\0".join([
         item.law_title.strip(),
         item.article_no or "",
+        _cited_source(item),
         " ".join(item.document_quote.split()),
         evidence_digest,
     ])
@@ -600,6 +659,45 @@ def _load_known_titles(database_path: str | Path) -> list[str]:
         return []
     with connect(path) as connection:
         return list_law_titles(connection)
+
+
+def _load_historical_versions(
+    database_path: str | Path,
+    items: list[_CheckItem],
+    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
+) -> dict[tuple, list[StatuteVersion]]:
+    path = Path(database_path)
+    if not path.exists():
+        return {}
+    targets = {
+        item.lookup_key: item
+        for item in items
+        if item.article_no
+        and item.lookup_key in lookup_results
+        and lookup_results[item.lookup_key][0].status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+    }
+    if not targets:
+        return {}
+    result: dict[tuple, list[StatuteVersion]] = {}
+    with connect(path) as connection:
+        for key, item in targets.items():
+            rows = list_historical_article_versions(
+                connection, item.law_title, item.article_no or ""
+            )
+            if rows:
+                result[key] = [
+                    StatuteVersion(
+                        version_key=row["version_key"],
+                        version_label=row["version_label"],
+                        version_status=row["version_status"],
+                        effective_from=row["effective_from"],
+                        effective_to=row["effective_to"],
+                        article_no=row["article_no"],
+                        article_text=row["text"],
+                    )
+                    for row in rows
+                ]
+    return result
 
 
 def _cited_source(item: _CheckItem) -> str:

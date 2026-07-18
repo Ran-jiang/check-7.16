@@ -19,7 +19,6 @@ from ccitecheck.recognition.arbitration import (
 from ccitecheck.domain.citation import (
     Claim, ClaimCandidate, ClaimType,
     LegalSourceClaimEntities,
-    CaseCitationEntities, CaseRef, CaseReferenceType,
     LegalSource, LegalSourceType,
 )
 

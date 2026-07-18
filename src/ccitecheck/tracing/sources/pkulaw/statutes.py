@@ -18,7 +18,7 @@ from ...queries import (
     has_substantive_content,
 )
 from ...retrieval import retrieve_relevant_articles
-from ..base import LookupRequest, LookupResult
+from ..base import LocationCandidateResult, LookupRequest, LookupResult
 from .cache import CachedPkulawClient, cache_enabled
 from .client import (
     PkulawArticle,
@@ -41,6 +41,45 @@ class PkulawFallbackSource:
             self._lookup_article(request)
             if request.article_no
             else self._lookup_without_article(request)
+        )
+
+    def locate_candidates(self, request: LookupRequest) -> LocationCandidateResult:
+        """通过北大法宝语义检索召回同一法规的定位候选。"""
+        trace = self._trace()
+        trace.metadata["route_attempts"].append({
+            "service": "law_semantic",
+            "purpose": "citation_location",
+            "status": "started",
+        })
+        attempt = trace.metadata["route_attempts"][-1]
+        try:
+            articles = self._client().search_law_articles(
+                build_law_semantic_query(request.context_text, request.law_title)
+            )
+        except PkulawNotFoundError:
+            articles = []
+            attempt["status"] = "not_found"
+        except PkulawMcpError as exc:
+            attempt.update(status="error", message=str(exc))
+            trace.status = _pkulaw_error_status(exc)
+            trace.message = str(exc)
+            return LocationCandidateResult([], trace)
+
+        filtered = [
+            article
+            for article in articles
+            if match_law_record(request.law_title, [article]) is not None
+        ]
+        attempt.update(status="completed", candidate_count=len(filtered))
+        trace.status = (
+            LookupStatus.RELEVANT_ARTICLES_FOUND
+            if filtered
+            else LookupStatus.LAW_NOT_FOUND
+        )
+        trace.message = "定位候选检索完成"
+        return LocationCandidateResult(
+            candidates=[self._candidate_evidence(request, trace, article) for article in filtered],
+            trace=trace,
         )
 
     def _trace(self) -> SourceTrace:
@@ -270,6 +309,19 @@ class PkulawFallbackSource:
             effective_from=record.implement_date,
             source_metadata=_law_record_metadata(record),
             data_source=trace,
+        )
+
+    def _candidate_evidence(self, request, trace, article):
+        return ArticleEvidence(
+            law_title=article.title,
+            source_type=request.source_type,
+            article_no=article.article_no,
+            article_text=article.article_text,
+            version_label=_first(article.timeliness),
+            version_status=_first(article.timeliness),
+            effective_from=article.implement_date,
+            source_metadata=_article_metadata(article),
+            data_source=trace.model_copy(update={"source_url": article.url}),
         )
 
     def _error(self, trace, exc):

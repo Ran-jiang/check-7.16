@@ -116,7 +116,12 @@ button { cursor: pointer; }
 .status-pill { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: var(--success-bg); color: var(--success-fg); font-size: 12px; line-height: 18px; font-weight: 600; }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger-fg); }
 .status-pill.is-bug, .status-pill.is-review, .status-pill.is-stale { background: var(--warning-bg); color: var(--warning-fg); }
-.claim-quote { margin: 12px 0 0; padding: 0; border: 0; color: var(--fg-2); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.zone-label-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 18px; }
+.zone-label { color: var(--fg-3); font-size: 12px; line-height: 18px; }
+.zone-label-row .jump-button { margin-left: auto; min-height: 0; padding: 0 2px; color: var(--brand-fg); }
+.doc-quote { margin: 4px 0 0; padding: 8px 10px; border: 0; border-left: 3px solid var(--stroke-1); background: var(--bg-2); color: var(--fg-2); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.authority-quote { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--brand-bg); background: var(--brand-bg-tint); color: var(--fg-1); font-size: 12px; line-height: 18px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
+.authority-quote strong { font-weight: 600; }
 .reference-source { margin-top: 8px; color: var(--fg-1); font-size: 12px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
 .card-conf { margin-top: 10px; color: var(--fg-3); font-size: 12px; line-height: 18px; }
 .card-suggestion { margin: 6px 0 0; color: var(--fg-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
@@ -129,11 +134,20 @@ button { cursor: pointer; }
 .suggestion { margin-top: 8px; color: var(--fg-1); font-size: 14px; line-height: 22px; }
 .suggestion span { display: block; margin-bottom: 2px; color: var(--fg-3); font-size: 12px; line-height: 18px; }
 .citation-references { display: grid; gap: 8px; margin-top: 12px; }
-.citation-reference { padding: 12px; background: var(--bg-2); border: 1px solid var(--stroke-2); border-radius: 6px; }
-.citation-reference.is-issue { border-color: var(--danger-border); background: var(--danger-bg); }
-.citation-reference.is-bug, .citation-reference.is-review, .citation-reference.is-stale { border-color: var(--warning-border); background: var(--warning-bg); }
+.reference-row { padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: 4px; }
+.reference-row[open] { border-color: var(--brand-bg); }
+.reference-row-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.reference-row-summary::-webkit-details-marker { display: none; }
+.reference-row-summary::after { content: "▸"; color: var(--fg-3); order: 3; }
+.reference-row[open] .reference-row-summary::after { content: "▾"; }
+.reference-row-summary .reference-source { flex: 1; margin: 0; }
+.reference-role, .jurisdiction-label, .version-status { color: var(--fg-3); font-size: 12px; }
+.multi-counts { display: flex; gap: 8px; font-size: 12px; }
+.multi-counts .count-issue { color: var(--danger-fg); }
+.multi-counts .count-bug { color: var(--warning-fg); }
+.multi-counts .count-pass { color: var(--success-fg); }
 .reference-label { margin-bottom: 8px; color: var(--fg-3); font-size: 12px; line-height: 18px; font-weight: 600; }
-.action-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--stroke-2); }
+.action-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--stroke-2); }
 .card-action-row { justify-content: flex-start; }
 .action-button { min-height: 32px; border: 0; border-radius: 4px; padding: 5px 10px; background: transparent; color: var(--fg-2); font-size: 12px; transition: background var(--duration-fast) var(--curve); }
 .action-button:hover { background: var(--bg-subtle-hover); color: var(--fg-1); }

@@ -11,39 +11,9 @@ from ccitecheck.tracing.sources.pkulaw.client import (
     PkulawMcpClient,
     PkulawMcpError,
     PkulawNotFoundError,
-    _parse_anhao_response,
     normalize_article_no,
 )
 from ccitecheck.tracing.sources.pkulaw.statutes import PkulawFallbackSource
-
-
-def test_anhao_response_accepts_nested_results_and_deduplicates():
-    item = {
-        "caseNumber": "（2023）浙民终1113号",
-        "gid": "case-1",
-        "title": "甲公司诉乙公司案",
-    }
-    parsed = _parse_anhao_response(
-        {"Message": "成功", "Data": {"results": [item, item]}}
-    )
-    assert len(parsed) == 1
-    assert parsed[0].case_flag == "（2023）浙民终1113号"
-
-
-def test_case_number_at_start_preserves_zero_position():
-    parsed = _parse_anhao_response(
-        {
-            "anhaoname": [
-                {
-                    "text": "（2023）浙民终1113号",
-                    "start": 0,
-                    "end": 15,
-                    "caseFlag": "（2023）浙民终1113号",
-                }
-            ]
-        }
-    )
-    assert parsed[0].start == 0
 
 
 class FakePkulawClient(PkulawMcpClient):
@@ -148,35 +118,6 @@ def test_get_law_list_discards_obsolete_lar_mcp_url():
     assert client.get_law_list(title="商标法")[0].url is None
 
 
-def test_recognize_case_numbers_parses_anhaoname_array():
-    client = FakePkulawClient(
-        _mcp_text_payload(
-            {
-                "anhaoname": [
-                    {
-                        "text": "（2024）浙0114破1-6号之二",
-                        "start": 20,
-                        "end": 38,
-                        "gid": "08df102e7c10f206b6d395298deef3e4750099a86672ec1ebdfb",
-                        "caseFlag": "（2024）浙0114破1-6号之二",
-                        "court": "浙江省杭州市钱塘区人民法院",
-                        "title": "指导性案例252号：浙江某新材料股份有限公司系列执行实施案",
-                        "lastInstanceDate": "2024.06.18",
-                        "url": "https://www.pkulaw.com/pfnl/08df102e7c10f206.html",
-                    }
-                ]
-            }
-        )
-    )
-
-    cases = client.recognize_case_numbers("……（2024）浙0114破1-6号之二……")
-
-    assert len(cases) == 1
-    assert cases[0].case_flag == "（2024）浙0114破1-6号之二"
-    assert cases[0].court == "浙江省杭州市钱塘区人民法院"
-    assert cases[0].gid.startswith("08df102e")
-
-
 class CapturingPkulawClient(FakePkulawClient):
     def __init__(self, payload):
         super().__init__(payload)
@@ -202,7 +143,7 @@ class CapturingPkulawClient(FakePkulawClient):
             ("指导案例262号", "平台 责任"),
             MCP_ENDPOINTS["case_keyword"],
             "get_case_list",
-            {"title": "指导案例262号", "fulltext": "平台 责任"},
+            {"caseInput": {"Title": "指导案例262号", "FullText": "平台 责任"}},
         ),
     ],
 )
@@ -342,6 +283,20 @@ def test_numbered_exact_hit_enriches_timeliness_and_records_route_order():
     assert (
         result.trace.metadata["route_attempts"][1]["purpose"] == "timeliness_enrichment"
     )
+
+
+def test_location_candidate_query_returns_same_law_articles():
+    client = RoutingClient(semantic=[
+        _article("第二条", "第一款。\n第二款正确内容。"),
+        _article("第三条", "其他内容。", title="其他法"),
+    ])
+
+    result = PkulawFallbackSource(client).locate_candidates(
+        _request("第二条", "第二款正确内容。")
+    )
+
+    assert [candidate.article_no for candidate in result.candidates] == ["第二条"]
+    assert result.trace.metadata["route_attempts"][0]["purpose"] == "citation_location"
 
 
 def test_numbered_mismatched_exact_result_is_ignored_and_uses_semantic():

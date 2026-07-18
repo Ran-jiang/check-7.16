@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from ccitecheck.domain.result import FrontendVerificationDocument
 from ccitecheck.parsing.feishu import FeishuDocumentSnapshot
@@ -61,27 +61,3 @@ class DebugEventRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=64)
     event: str = Field(min_length=1, max_length=64)
     payload: dict = Field(default_factory=dict)
-
-
-class ReportRequest(BaseModel):
-    """由前端回传核查结果与用户标记，生成可交付的核查报告。"""
-
-    file_name: str = Field(min_length=1, max_length=255)
-    semantic_check: bool = True
-    summary: CheckSummary
-    verification: FrontendVerificationDocument
-    # 核查编号对应人工处理状态：接受或忽略。
-    decisions: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("decisions")
-    @classmethod
-    def validate_decisions(cls, decisions: dict[str, str]) -> dict[str, str]:
-        invalid = sorted(set(decisions.values()) - {"accepted", "ignored"})
-        if invalid:
-            raise ValueError(f"不支持的人工处理状态：{', '.join(invalid)}")
-        return decisions
-
-
-class ReportResponse(BaseModel):
-    report_id: str
-    url: str

@@ -9,14 +9,19 @@ from ccitecheck.infrastructure.http import (
     RetryPolicy,
     post_json_with_retry,
 )
-from ccitecheck.domain.result import (
+from ccitecheck.domain.evidence import (
     ArticleEvidence,
-    ComparisonVerdict,
     LookupStatus,
     SourceTier,
     SourceTrace,
 )
-from ccitecheck.judgment.semantic import DEFAULT_BASE_URL, PROMPT_PATH, QwenSemanticChecker
+from ccitecheck.domain.checks import CheckVerdict
+from ccitecheck.judgment.semantic import (
+    DEFAULT_BASE_URL,
+    PROMPT_PATH,
+    QwenSemanticChecker,
+    SemanticResponseError,
+)
 
 
 def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
@@ -25,6 +30,8 @@ def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
     assert '"verdict": "bug"' not in prompt
     assert "上述五种错误类型之一" not in prompt
     assert "法律渊源不存在" not in prompt
+    assert "条款编号或引用定位错误" not in prompt
+    assert "引用内容与权威文本无实质对应" not in prompt
     assert "结论是否必然成立" not in prompt
 
 
@@ -68,7 +75,7 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
         evidence,
     )
 
-    assert result.verdict == ComparisonVerdict.PASS
+    assert result.verdict == CheckVerdict.PASS
     assert captured["url"] == f"{DEFAULT_BASE_URL}/responses"
     assert captured["payload"]["model"] == "qwen3.7-plus"
     assert captured["payload"]["enable_thinking"] is False
@@ -104,19 +111,57 @@ def test_qwen_diff_summary_is_preserved_for_display_layer(monkeypatch):
         ),
     )
     result = checker.compare("文书表述", "上下文", "《网络数据安全管理条例》第十八条", evidence)
-    assert len(result.issues[0].diff_summary) == 120
+    assert len(result.findings[0].summary) == 120
+
+
+def test_qwen_revision_requires_backend_approval_protocol(monkeypatch):
+    response = json.dumps({
+        "verdict": "issue",
+        "issues": [{
+            "error_type": "曲解权威文本原意",
+            "risk_level": "MEDIUM",
+            "diff_summary": "文书写了无条件义务，原文要求满足前提",
+            "suggestion": "补充适用前提。",
+            "revised_text": "满足前提时，应当履行义务。",
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+    _install_mock_client(
+        monkeypatch,
+        lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="示例法",
+        source_type="law",
+        article_no="第一条",
+        article_text="满足前提时，应当履行义务。",
+        data_source=SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="test",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+
+    result = checker.compare("应当履行义务。", "上下文", "《示例法》第一条", evidence)
+
+    revision = result.findings[0].revision
+    assert revision is not None
+    assert revision.strategy == "replace_exact_text"
+    assert revision.original_text == "应当履行义务。"
+    assert revision.machine_applicable is True
 
 
 def test_qwen_malformed_json_is_repaired_once(monkeypatch):
     responses = iter([
-        '{"verdict":"issue","issues":[{"error_type":"条款编号或引用定位错误" "risk_level":"HIGH"}]}',
+        '{"verdict":"issue","issues":[{"error_type":"曲解权威文本原意" "risk_level":"HIGH"}]}',
         json.dumps({
             "verdict": "issue",
             "issues": [{
-                "error_type": "条款编号或引用定位错误",
+                "error_type": "曲解权威文本原意",
                 "risk_level": "HIGH",
-                "diff_summary": "文书所述内容与现行第二十七条不对应",
-                "suggestion": "核对现行法条编号。",
+                "diff_summary": "文书写了无条件义务，原文规定了适用前提",
+                "suggestion": "补充原文规定的适用前提。",
                 "auto_fixable": False,
             }],
             "notes": "",
@@ -144,8 +189,64 @@ def test_qwen_malformed_json_is_repaired_once(monkeypatch):
 
     result = checker.compare("任何个人不得非法侵入网络。", "上下文", "《网络安全法》第二十七条", evidence)
 
-    assert result.verdict == ComparisonVerdict.ISSUE
+    assert result.verdict == CheckVerdict.ISSUE
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error_type", [
+    "条款编号或引用定位错误",
+    "引用内容与权威文本无实质对应",
+])
+def test_statute_llm_rejects_deterministic_error_types(monkeypatch, error_type):
+    response = json.dumps({
+        "verdict": "issue",
+        "issues": [{
+            "error_type": error_type,
+            "risk_level": "HIGH",
+            "diff_summary": "不应由模型判断",
+            "suggestion": "不应由模型建议定位。",
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+    _install_mock_client(
+        monkeypatch,
+        lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="某法",
+        source_type="law",
+        article_no="第一条",
+        article_text="权威文本。",
+        data_source=SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="test",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+
+    with pytest.raises(SemanticResponseError, match="reserved for deterministic checks"):
+        checker.compare("文书表述", "上下文", "《某法》第一条", evidence)
+
+
+def test_case_llm_rejects_separate_misrepresentation_type(monkeypatch):
+    response = json.dumps({
+        "verdict": "issue",
+        "issues": [{
+            "error_type": "裁判观点转述失真",
+            "risk_level": "HIGH",
+            "diff_summary": "文书与裁判观点相反",
+            "suggestion": "按裁判观点改写。",
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+    _install_mock_client(
+        monkeypatch,
+        lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+
+    with pytest.raises(SemanticResponseError, match="invalid case holding error_type"):
+        QwenSemanticChecker(api_key="test-key").compare_holding("文书观点", "权威观点", "某案")
 
 
 def test_retry_after_429_then_success(monkeypatch):

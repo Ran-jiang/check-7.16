@@ -118,8 +118,8 @@ test("seedSourceBookmarks replaces old markers and jumpToSource selects the book
   const details = await seedSourceBookmarks({
     document_key: "sha256:test",
     verification: {
-      citation_cards: [{ card_id: "card_1", source_locations: [location] }],
-      case_checks: [],
+      statute_results: [{ card_id: "card_1", source_locations: [location] }],
+      case_results: [],
     },
   })
   assert.equal(details.requested, 1)
@@ -147,31 +147,33 @@ test("search planner keeps short anchors whole, splits long and multiline anchor
   assert.equal(validateSearchSpan(`第一段。${"无关文字".repeat(20)}第二段。`, ["第一段。", "第二段。"], "第一段。\n第二段。"), false)
 })
 
-test("seedSourceBookmarks uses body search and table-cell coordinates for table anchors", async () => {
+test("seedSourceBookmarks searches inside the target table cell", async () => {
   globalThis.Office = { context: { requirements: { isSetSupported() { return false } } } }
   const calls = []
-  const matchedRange = {
-    parentTableCellOrNullObject: {
-      isNullObject: false,
-      rowIndex: 2,
-      cellIndex: 1,
-      load(properties) {
-        assert.equal(properties, "isNullObject,rowIndex,cellIndex")
-      },
-    },
-    insertBookmark(name) { calls.push(["insert", name]) },
-  }
-  const bodyRange = {
-    getBookmarks() { return { value: [] } },
+  const matchedRange = { insertBookmark(name) { calls.push(["insert", name]) } }
+  const cellRange = {
     search(text, options) {
       assert.equal(text, "表格中的完整引用句。")
       assert.equal(options.matchWildcards, false)
+      calls.push(["cell-search", text])
       return { items: [matchedRange], load() {} }
     },
   }
+  const table = {
+    rowCount: 3,
+    columnCount: 2,
+    getCell(row, column) {
+      assert.deepEqual([row, column], [2, 1])
+      return { body: { getRange() { return cellRange } } }
+    },
+  }
+  const bodyRange = {
+    getBookmarks() { return { value: [] } },
+    search() { throw new Error("table anchors must not use document body search") },
+  }
   const body = {
     paragraphs: { items: [], load() {} },
-    tables: { items: [{ rowCount: 3, columnCount: 2 }], load() {} },
+    tables: { items: [table], load() {} },
     footnotes: { items: [], load() {} },
     endnotes: { items: [], load() {} },
     getRange() { return bodyRange },
@@ -185,29 +187,29 @@ test("seedSourceBookmarks uses body search and table-cell coordinates for table 
   const details = await seedSourceBookmarks({
     document_key: "sha256:table",
     verification: {
-      citation_cards: [{
+      statute_results: [{
         card_id: "card_table",
         source_locations: [{
           platform: "docx",
-          block_id: "word:t:9:2:1",
-          table_index: 9,
+          block_id: "word:t:0:2:1",
+          table_index: 0,
           row_index: 2,
           cell_index: 1,
           anchor_text: "表格中的完整引用句。",
         }],
       }],
-      case_checks: [],
+      case_results: [],
     },
   })
   assert.equal(details.seeded, 1)
   assert.deepEqual(details.failed, [])
-  assert.equal(details.methods[0].method, "full_search")
+  assert.equal(details.methods[0].method, "cell_search")
   assert.deepEqual(details.table_inventory, {
     status: "ok",
     count: 1,
     tables: [{ index: 0, rows: 3, columns: 2 }],
   })
-  assert.equal(calls[0][0], "insert")
+  assert.deepEqual(calls.map(call => call[0]), ["cell-search", "insert"])
 })
 
 test("clearSourceBookmarks is case-insensitive and disables automatic repair", async () => {
@@ -281,7 +283,7 @@ test("jumpToSource repairs a missing bookmark with search and occurrence", async
   globalThis.window = { Word }
   await seedSourceBookmarks({
     document_key: "sha256:repair",
-    verification: { citation_cards: [], case_checks: [] },
+    verification: { statute_results: [], case_results: [] },
   })
   const result = await jumpToSource({
     card_id: "card_repair",
@@ -295,6 +297,63 @@ test("jumpToSource repairs a missing bookmark with search and occurrence", async
   assert.equal(result.method, "text_repair")
   assert.equal(result.search_method, "block_search")
   assert.deepEqual(calls, ["insert", "select"])
+})
+
+test("jumpToSource repairs a missing table bookmark with an exact cell range", async () => {
+  globalThis.Office = { context: { requirements: { isSetSupported() { return false } } } }
+  const calls = []
+  const match = {
+    insertBookmark() { calls.push("insert") },
+    select() { calls.push("select") },
+  }
+  const cellRange = {
+    search(text) {
+      assert.equal(text, "只定位这一句。")
+      calls.push("cell-search")
+      return { items: [match], load() {} }
+    },
+  }
+  const table = {
+    rowCount: 1,
+    columnCount: 1,
+    getCell(row, column) {
+      assert.deepEqual([row, column], [0, 0])
+      return { body: { getRange() { return cellRange } } }
+    },
+  }
+  const body = {
+    paragraphs: { items: [], load() {} },
+    tables: { items: [table], load() {} },
+    footnotes: { items: [], load() {} },
+    endnotes: { items: [], load() {} },
+    getRange() { return {
+      getBookmarks() { return { value: [] } },
+      search() { throw new Error("must not search the whole document") },
+    } },
+  }
+  const Word = { async run(callback) { return callback({
+    document: {
+      body,
+      getBookmarkRangeOrNullObject() { return { isNullObject: true, load() {} } },
+    },
+    async sync() {},
+  }) } }
+  globalThis.Word = Word
+  globalThis.window = { Word }
+  const result = await jumpToSource({
+    card_id: "card_table_repair",
+    source_locations: [{
+      platform: "docx",
+      block_id: "word:t:0:0:0",
+      table_index: 0,
+      row_index: 0,
+      cell_index: 0,
+      anchor_text: "只定位这一句。",
+    }],
+  }, "sha256:table-repair")
+  assert.equal(result.method, "text_repair")
+  assert.equal(result.search_method, "cell_search")
+  assert.deepEqual(calls, ["cell-search", "insert", "select"])
 })
 
 test("jumpToSource requires structured Word coordinates", async () => {

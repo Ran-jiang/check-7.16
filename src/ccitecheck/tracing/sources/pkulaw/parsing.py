@@ -7,7 +7,6 @@ from typing import Any, Optional
 
 from .models import (
     PkulawArticle,
-    PkulawCaseNumber,
     PkulawCaseRecord,
     PkulawLawRecord,
     PkulawMcpError,
@@ -34,22 +33,6 @@ def parse_exact_article(data: Any, requested_article_no: str) -> PkulawArticle:
     )
 
 
-def parse_case_numbers(data: Any) -> list[PkulawCaseNumber]:
-    value = response_data(data)
-    if isinstance(value, dict):
-        value = value.get("anhaoname", value.get("results"))
-    if value in (None, {}):
-        return []
-    if not isinstance(value, list):
-        raise PkulawMcpError("Unexpected anhao_recognition response shape")
-    parsed = [parse_case_number(item) for item in value if isinstance(item, dict)]
-    unique: dict[tuple[str, str], PkulawCaseNumber] = {}
-    for item in parsed:
-        key = (compact_case_number(item.case_flag or item.text), item.gid)
-        unique.setdefault(key, item)
-    return list(unique.values())
-
-
 def parse_case_records(data: Any) -> list[PkulawCaseRecord]:
     return [
         parsed
@@ -62,36 +45,20 @@ def parse_case_records(data: Any) -> list[PkulawCaseRecord]:
 def parse_case_record(item: dict[str, Any]) -> PkulawCaseRecord | None:
     record = flatten_metadata(item)
     title = first_value(record, "Title", "title")
-    case_number = first_value(record, "CaseNO", "case_number")
+    case_number = first_value(record, "CaseNO", "CaseFlag", "case_number")
     if not title and not case_number:
         return None
     return PkulawCaseRecord(
         title=str(title or case_number),
         case_number=str(case_number or ""),
         gid=str(first_value(record, "Gid", "gid") or ""),
-        court=str(first_value(record, "Court", "court") or ""),
+        court=str(first_value(record, "Court", "court", "courthouse_name") or ""),
         last_instance_date=optional_text(
             first_value(record, "LastInstanceDate", "lastInstanceDate")
         ),
         url=usable_mcp_url(optional_text(first_value(record, "Url", "url"))),
         fulltext=optional_text(first_value(record, "FullText", "fulltext")),
-    )
-
-
-def parse_case_number(item: dict[str, Any]) -> PkulawCaseNumber:
-    record = flatten_metadata(item)
-    return PkulawCaseNumber(
-        text=str(first_value(record, "text", "matched_text") or ""),
-        start=optional_int(first_value(record, "start", "startIndex"), -1),
-        end=optional_int(first_value(record, "end", "endIndex"), -1),
-        gid=str(first_value(record, "gid", "Gid") or ""),
-        case_flag=str(first_value(record, "caseFlag", "CaseFlag", "caseNumber") or ""),
-        court=str(first_value(record, "court", "Court") or ""),
-        title=str(first_value(record, "title", "Title") or ""),
-        last_instance_date=optional_text(
-            first_value(record, "lastInstanceDate", "LastInstanceDate")
-        ),
-        url=usable_mcp_url(optional_text(first_value(record, "url", "Url"))),
+        holding=optional_text(first_value(record, "CaseGist", "Identified", "identified")),
     )
 
 
@@ -233,7 +200,6 @@ def compact_case_number(value: str) -> str:
 
 __all__ = [
     "parse_article_records",
-    "parse_case_numbers",
     "parse_case_records",
     "parse_exact_article",
     "parse_law_records",

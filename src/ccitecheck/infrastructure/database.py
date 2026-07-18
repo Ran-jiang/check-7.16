@@ -215,6 +215,52 @@ def list_current_articles(
     return list(latest_by_article.values())
 
 
+def list_article_versions(
+    conn: sqlite3.Connection,
+    title: str,
+    article_no: str,
+) -> list[sqlite3.Row]:
+    """按生效时间倒序返回指定条文的全部已存版本。"""
+    law = find_law(conn, title)
+    if not law:
+        return []
+    normalized_key = normalize_article_key(article_no)
+    rows = conn.execute(
+        """
+        SELECT
+          l.title, l.source_type, l.status AS law_status,
+          a.article_no, a.article_key, a.text, a.version_key,
+          a.version_label, a.version_status, a.source_name, a.source_url,
+          a.source_fetched_at, a.timeliness, a.effectiveness, a.issued_at,
+          a.effective_from, a.effective_to, a.effective_at
+        FROM articles a
+        JOIN laws l ON l.id = a.law_id
+        WHERE a.law_id = ?
+        ORDER BY a.effective_from DESC, a.id DESC
+        """,
+        (law["id"],),
+    ).fetchall()
+    return [
+        row for row in rows
+        if normalize_article_key(row["article_no"] or row["article_key"]) == normalized_key
+    ]
+
+
+def list_historical_article_versions(
+    conn: sqlite3.Connection,
+    title: str,
+    article_no: str,
+    as_of: str | date | None = None,
+) -> list[sqlite3.Row]:
+    """返回在指定日期前已经终止效力的条文版本。"""
+    as_of_text = _date_text(as_of) or date.today().isoformat()
+    return [
+        row
+        for row in list_article_versions(conn, title, article_no)
+        if row["effective_to"] is not None and row["effective_to"] <= as_of_text
+    ]
+
+
 def upsert_law(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
     now = _now()
     title = record["title"].strip()

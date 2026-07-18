@@ -115,11 +115,12 @@ def test_foreign_statute_is_intercepted_without_lookup(tmp_path: Path):
     frontend_doc = verify_claim_document(
         _statute_claim_doc("FOREIGN"), db_path, include_cases=False
     )
-    check = frontend_doc.citation_cards[0].references[0]
+    check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.OUT_OF_SCOPE
     assert check.evidence is None
-    assert not check.rule_findings
-    assert check.source_attempts[0].source_name == "CCiteheck 法域分类"
+    assert not check.findings
+    assert check.outcome == "bug"
+    assert check.source_attempts[0].source_name == "CCiteCheck 法域分类"
     assert "超出本产品核查边界" in check.source_attempts[0].message
 
 
@@ -133,8 +134,8 @@ def test_eu_statute_without_gateway_reports_not_configured(
     frontend_doc = verify_claim_document(
         _statute_claim_doc("EU", "通用数据保护条例"), db_path, include_cases=False
     )
-    check = frontend_doc.citation_cards[0].references[0]
-    assert check.lookup_status == LookupStatus.OUT_OF_SCOPE
+    check = frontend_doc.statute_results[0]
+    assert check.lookup_status == LookupStatus.SOURCE_NOT_CONFIGURED
     assert "欧盟法规数据源未配置" in check.source_attempts[0].message
 
 
@@ -172,4 +173,4 @@ def test_foreign_case_is_intercepted_without_recognizer_calls():
     checks = verify_case_claims(claim_doc, ExplodingRecognizer())
     assert len(checks) == 1
     assert checks[0].lookup_status == CaseLookupStatus.OUT_OF_SCOPE
-    assert "超出本产品核查边界" in checks[0].message
+    assert "不支持的外国法域" in checks[0].message

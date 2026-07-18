@@ -1,375 +1,302 @@
-"""司法案例引用的检索与判定。
-
-本模块负责案号识别、无案号案例检索、候选匹配以及案例核查结果组装。
-它不负责法规查询、法规语义比较或整份文档的总流程编排。
-"""
+"""司法案例的两级检索、身份确认与裁判观点核查。"""
 
 from __future__ import annotations
 
-import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
-from ..domain.citation import ClaimDocument
-from ..domain.evidence import (
-    CaseEvidence,
-    CaseLookupStatus,
-    CaseSourceTrace,
+from ..domain.citation import ClaimDocument, ClaimType
+from ..domain.evidence import CaseEvidence, CaseLookupStatus, CaseSourceTrace
+from ..domain.case_results import (
+    CaseErrorCode,
+    CaseFinding,
+    CaseHoldingCheck,
+    CaseVerificationResult,
 )
-from ..domain.result import CaseCheck
+from ..domain.checks import ExecutionStatus
 from ..tracing.queries import build_case_keyword_query, build_case_semantic_query
-from ..tracing.sources.pkulaw.cases import CaseNumberRecognizer
+from ..tracing.sources.pkulaw.cases import CaseSearcher
 from ..tracing.sources.pkulaw.client import (
     PkulawCaseRecord,
     PkulawMcpError,
     PkulawNotConfiguredError,
     PkulawNotFoundError,
 )
+from .case_identity import (
+    compare_case_identity,
+    guiding_case_id as _guiding_case_id,
+    normalize_case_name as _normalize_case_name,
+    normalize_case_number as _normalize_case_number,
+    normalize_court as _normalize_court,
+    same_court as _same_court,
+)
 
-# 案例关键词检索和语义检索均为 IO 密集调用，使用独立线程池。
 _CASE_LOOKUP_WORKERS = 6
-
-_OUT_OF_SCOPE_NOTE = "外国判例，超出本产品核查边界，请人工核验"
-
-
-def _is_foreign(ref) -> bool:
-    return getattr(ref, "jurisdiction", "CN") == "FOREIGN"
+@dataclass(frozen=True)
+class _RouteOutcome:
+    records: list[PkulawCaseRecord]
+    trace: CaseSourceTrace
+    completed: bool
 
 
 def verify_case_claims(
     claim_doc: ClaimDocument,
-    recognizer: CaseNumberRecognizer,
-) -> list[CaseCheck]:
-    """核查案例引用，并保留共享块坐标供输出端定位。"""
-    raw_refs = [
-        (claim, ref)
-        for claim in claim_doc.claims
-        for ref in getattr(claim.entities, "case_refs", [])
-    ]
-    refs = []
-    seen_refs: set[tuple[str, str]] = set()
-    for claim, ref in raw_refs:
-        identity = (
-            _normalize_case_number(ref.case_number)
-            if ref.case_number
-            else _normalize_case_name(ref.case_name or "")
-        )
-        key = (claim.claim_id, identity)
-        if key in seen_refs:
-            continue
-        seen_refs.add(key)
-        refs.append((claim, ref))
+    searcher: CaseSearcher,
+    semantic_checker=None,
+) -> list[CaseVerificationResult]:
+    """按精准检索、语义补查的顺序核查案例引用。"""
+    refs = _unique_case_refs(claim_doc)
     if not refs:
         return []
-
-    # 全篇合并为一次案号识别调用（法宝接口本身支持批量），节省额度与往返
-    claims_with_numbers = [
-        claim for claim, ref in refs if ref.case_number and not _is_foreign(ref)
-    ]
-    if claims_with_numbers:
-        joined_text = "\n".join(
-            dict.fromkeys(claim.text for claim in claims_with_numbers)
+    with ThreadPoolExecutor(max_workers=_CASE_LOOKUP_WORKERS) as pool:
+        outcomes = list(
+            pool.map(
+                lambda pair: _verify_case_reference(searcher, pair[0], pair[1]),
+                refs,
+            )
         )
-        recognized, error_status, message = _recognize_case_numbers(
-            recognizer, joined_text
+    checks: list[CaseVerificationResult] = []
+    for next_id, ((claim, ref), outcome) in enumerate(zip(refs, outcomes), start=1):
+        status, evidence, message, traces = outcome
+        holding_check = (
+            _check_holding(claim, evidence, semantic_checker)
+            if status == CaseLookupStatus.VERIFIED
+            else None
         )
-    else:
-        recognized, error_status, message = [], None, ""
-
-    search_jobs = {
-        _case_search_key(claim, ref): (claim, ref)
-        for claim, ref in refs
-        if not ref.case_number and not _is_foreign(ref)
-    }
-    if search_jobs:
-        keys = list(search_jobs)
-        with ThreadPoolExecutor(max_workers=_CASE_LOOKUP_WORKERS) as pool:
-            outcomes = list(
-                pool.map(
-                    lambda key: _search_case_reference(recognizer, *search_jobs[key]),
-                    keys,
-                )
-            )
-        search_results = dict(zip(keys, outcomes))
-    else:
-        search_results = {}
-
-    checks: list[CaseCheck] = []
-    for next_id, (claim, ref) in enumerate(refs, start=1):
-        if _is_foreign(ref):
-            status = CaseLookupStatus.OUT_OF_SCOPE
-            evidence = None
-            note = _OUT_OF_SCOPE_NOTE
-            traces = []
-            trace = CaseSourceTrace(
-                source_name="CCiteheck 法域分类",
-                status=status,
-                message=note,
-            )
-        elif ref.case_number:
-            evidence = (
-                _match_case_number(ref.case_number, recognized)
-                if recognized is not None
-                else None
-            )
-            status, note = _case_status(recognized, evidence, error_status, message)
-            trace = CaseSourceTrace(
-                source_name="北大法宝 MCP：案号识别",
-                source_url=evidence.url if evidence else None,
-                status=status,
-                message=note,
-            )
-        else:
-            status, evidence, note, traces = search_results[
-                _case_search_key(claim, ref)
-            ]
-            trace = (
-                traces[-1]
-                if traces
-                else CaseSourceTrace(
-                    source_name="CCiteheck 案例检索路由",
-                    status=status,
-                    message=note,
-                )
-            )
-        checks.append(
-            CaseCheck(
-                check_id=f"cc_{next_id:05d}",
-                claim_id=claim.claim_id,
-                claim_text=claim.text,
-                anchor_ids=list(claim.anchor_ids),
-                source_locations=list(claim.source_locations),
+        findings = list(holding_check.findings) if holding_check else []
+        if evidence is not None:
+            identity = compare_case_identity(
                 cited_case_number=ref.case_number,
                 cited_case_name=ref.case_name,
-                lookup_status=status,
+                cited_court=ref.court,
                 evidence=evidence,
-                message=note,
-                source_attempts=([trace] if ref.case_number else traces or [trace]),
             )
-        )
+            if identity is not None:
+                findings.insert(0, identity)
+        elif status == CaseLookupStatus.NOT_FOUND:
+            findings.append(CaseFinding(
+                code=CaseErrorCode.CASE_NOT_FOUND,
+                risk_level="HIGH",
+                summary=message,
+                suggestion="请核对案名、案号、法院或裁判日期。",
+            ))
+        checks.append(CaseVerificationResult(
+            check_id=f"cc_{next_id:05d}",
+            claim_id=claim.claim_id,
+            claim_text=claim.text,
+            jurisdiction=ref.jurisdiction,
+            anchor_ids=list(claim.anchor_ids),
+            source_locations=list(claim.source_locations),
+            cited_case_number=ref.case_number,
+            cited_case_name=ref.case_name,
+            cited_court=ref.court,
+            lookup_status=status,
+            evidence=evidence,
+            message=message,
+            source_attempts=traces,
+            findings=findings,
+            outcome=("issue" if findings or status == CaseLookupStatus.NOT_FOUND else "pass" if status == CaseLookupStatus.VERIFIED else "bug"),
+            holding_check=holding_check,
+        ))
     return checks
 
 
-def _recognize_case_numbers(recognizer: CaseNumberRecognizer, text: str):
-    try:
-        return recognizer.recognize(text), None, ""
-    except PkulawMcpError as exc:
-        status = _case_error_status(exc)
-        return None, status, str(exc)
+def _unique_case_refs(claim_doc: ClaimDocument):
+    result = []
+    seen: set[tuple[str, str]] = set()
+    for claim in claim_doc.claims:
+        for ref in getattr(claim.entities, "case_refs", []):
+            identity = _normalize_case_number(ref.case_number or "") or _normalize_case_name(ref.case_name or "")
+            key = (claim.claim_id, identity)
+            if key not in seen:
+                seen.add(key)
+                result.append((claim, ref))
+    return result
 
 
-def _case_search_key(claim, ref) -> tuple[str, str, str]:
-    return (
-        ref.case_name or "",
-        ref.court or "",
-        claim.context_text or claim.text,
+def _verify_case_reference(searcher: CaseSearcher, claim, ref):
+    if ref.jurisdiction != "CN":
+        message = "该案例属于当前不支持的外国法域，请人工核验。"
+        trace = CaseSourceTrace(
+            source_name="CCiteCheck 案例法域分类",
+            status=CaseLookupStatus.OUT_OF_SCOPE,
+            message=message,
+        )
+        return CaseLookupStatus.OUT_OF_SCOPE, None, message, [trace]
+    title, fulltext = _exact_query(claim, ref)
+    if not title and not fulltext:
+        message = "现有引用信息不足以构造案例检索条件。"
+        trace = CaseSourceTrace(
+            source_name="CCiteheck 案例检索路由",
+            status=CaseLookupStatus.MANUAL_REVIEW,
+            message=message,
+        )
+        return CaseLookupStatus.MANUAL_REVIEW, None, message, [trace]
+
+    exact = _run_route(
+        "北大法宝 MCP：get_case_list",
+        lambda: searcher.search_keyword(title, fulltext),
+        {"route": "get_case_list", "title_query": title, "fulltext_query": fulltext},
+    )
+    traces = [exact.trace]
+    if not exact.completed:
+        return exact.trace.status, None, exact.trace.message, traces
+
+    match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, exact.records)
+    if match is not None:
+        if claim.claim_type == ClaimType.CASE_HOLDING_PARAPHRASE and not match.holding:
+            supplemented = _semantic_route(searcher, claim, ref)
+            traces.append(supplemented.trace)
+            if not supplemented.completed:
+                return supplemented.trace.status, None, supplemented.trace.message, traces
+            same = _same_case(match, supplemented.records)
+            if same is not None and same.holding:
+                match = same
+        return _verified(match, ref.case_name, basis, traces)
+
+    semantic = _semantic_route(searcher, claim, ref)
+    traces.append(semantic.trace)
+    if not semantic.completed:
+        return semantic.trace.status, None, semantic.trace.message, traces
+
+    match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, semantic.records)
+    if match is None:
+        match = _cross_route_match(exact.records, semantic.records)
+        basis = "cross_route_case_number" if match is not None else None
+    if match is not None:
+        return _verified(match, ref.case_name, basis, traces)
+
+    candidates = _unique_records([*exact.records, *semantic.records])
+    if candidates:
+        metadata = [_candidate_metadata(record) for record in candidates[:10]]
+        traces[-1].metadata["candidates"] = metadata
+        message = "北大法宝返回了案例，但现有引用信息不足以证明是哪一份裁判文书。可参考案例如下。"
+        return (
+            CaseLookupStatus.MANUAL_REVIEW,
+            None,
+            message,
+            traces,
+        )
+    message = "北大法宝精准检索和语义检索均未找到文书引用的案例，请核对案名、案号、法院或裁判日期。"
+    return CaseLookupStatus.NOT_FOUND, None, message, traces
+
+
+def _exact_query(claim, ref) -> tuple[str, str]:
+    title = (ref.case_name or "").strip()
+    if ref.case_number:
+        return title, ref.case_number.strip()
+    _, fulltext = build_case_keyword_query(ref.case_name, claim.context_text or claim.text, ref.court)
+    return title, fulltext
+
+
+def _semantic_route(searcher, claim, ref) -> _RouteOutcome:
+    query = build_case_semantic_query(ref.case_name, claim.context_text or claim.text, ref.court)
+    return _run_route(
+        "北大法宝 MCP：search_case",
+        lambda: searcher.search_semantic(query),
+        {"route": "search_case", "semantic_query": query},
     )
 
 
-def _search_case_reference(recognizer, claim, ref):
-    search_keyword = getattr(recognizer, "search_keyword", None)
-    search_semantic = getattr(recognizer, "search_semantic", None)
-    if not callable(search_keyword) and not callable(search_semantic):
-        note = "该案例线索未附案号，当前案例源不支持案名或语义检索，请人工核验"
-        return (
-            CaseLookupStatus.MANUAL_REVIEW,
-            None,
-            note,
-            [
-                CaseSourceTrace(
-                    source_name="CCiteheck 案例检索路由",
-                    status=CaseLookupStatus.MANUAL_REVIEW,
-                    message=note,
-                )
-            ],
-        )
-
-    context = claim.context_text or claim.text
-    title, fulltext = build_case_keyword_query(ref.case_name, context, ref.court)
-    routes = []
-    if callable(search_keyword) and (title or fulltext):
-        routes.append(
-            (
-                "北大法宝 MCP：检索司法案例-关键词",
-                "关键词检索",
-                lambda: search_keyword(title, fulltext),
-                {"title_query": title, "fulltext_query": fulltext},
-            )
-        )
-    if callable(search_semantic):
-        semantic_query = build_case_semantic_query(ref.case_name, context, ref.court)
-        routes.append(
-            (
-                "北大法宝 MCP：检索司法案例-语义",
-                "语义检索",
-                lambda: search_semantic(semantic_query),
-                {"semantic_query": semantic_query},
-            )
-        )
-
-    traces: list[CaseSourceTrace] = []
-    candidates: list[PkulawCaseRecord] = []
-    completed = False
-    error_statuses: list[CaseLookupStatus] = []
-    for source_name, route_label, operation, metadata in routes:
-        records, match, trace, route_completed, error_status = _execute_case_route(
-            source_name, operation, metadata, ref
-        )
-        traces.append(trace)
-        completed = completed or route_completed
-        if error_status is not None:
-            error_statuses.append(error_status)
-        if match:
-            return (
-                CaseLookupStatus.VERIFIED,
-                _case_record_evidence(match, ref.case_name),
-                f"案名已通过北大法宝{route_label}核验",
-                traces,
-            )
-        candidates.extend(records)
-
-    if candidates:
-        top = candidates[0]
-        note = "北大法宝已返回相关候选，但无法确定唯一对应案例，请人工确认"
-        return (
-            CaseLookupStatus.MANUAL_REVIEW,
-            _case_record_evidence(top, ref.case_name),
-            note,
-            traces,
-        )
-    if error_statuses:
-        status = (
-            CaseLookupStatus.SOURCE_NOT_CONFIGURED
-            if all(
-                item == CaseLookupStatus.SOURCE_NOT_CONFIGURED
-                for item in error_statuses
-            )
-            else CaseLookupStatus.SOURCE_ERROR
-        )
-        return status, None, "北大法宝案例检索未完成，无法判断", traces
-    if completed and ref.case_name:
-        return (
-            CaseLookupStatus.NOT_FOUND,
-            None,
-            "北大法宝关键词与语义检索均未命中该案例线索，疑似名称有误或不存在",
-            traces,
-        )
-    note = "案例线索不足，无法构造可验证的检索条件，请人工核验"
-    return CaseLookupStatus.MANUAL_REVIEW, None, note, traces
-
-
-def _execute_case_route(source_name, operation, metadata, ref):
+def _run_route(source_name, operation, metadata) -> _RouteOutcome:
     try:
         records = operation()
     except PkulawNotFoundError:
-        return (
-            [],
-            None,
-            CaseSourceTrace(
-                source_name=source_name,
-                status=CaseLookupStatus.NOT_FOUND,
-                message="检索完成，未命中案例",
-                metadata=metadata,
-            ),
-            True,
-            None,
-        )
+        records = []
     except PkulawMcpError as exc:
-        error_status = _case_error_status(exc)
-        return (
-            [],
-            None,
-            CaseSourceTrace(
-                source_name=source_name,
-                status=error_status,
-                message=str(exc),
-                metadata=metadata,
-            ),
-            False,
-            error_status,
-        )
-
-    match = _match_case_record(ref.case_name, ref.court, records)
-    status = (
-        CaseLookupStatus.VERIFIED
-        if match
-        else CaseLookupStatus.MANUAL_REVIEW
-        if records
-        else CaseLookupStatus.NOT_FOUND
-    )
-    message = (
-        "案名已在检索候选中精确匹配"
-        if match
-        else "检索完成，返回相关候选但未确定唯一同名案例"
-        if records
-        else "检索完成，未命中案例"
-    )
-    return (
-        records,
-        match,
-        CaseSourceTrace(
+        status = _case_error_status(exc)
+        return _RouteOutcome([], CaseSourceTrace(
             source_name=source_name,
-            source_url=match.url if match else None,
             status=status,
-            message=message,
-            metadata={**metadata, "candidate_count": len(records)},
-        ),
-        True,
-        None,
+            message=("数据源未配置" if status == CaseLookupStatus.SOURCE_NOT_CONFIGURED else "数据源调用失败"),
+            metadata={**metadata, "error": str(exc)},
+        ), False)
+    status = CaseLookupStatus.MANUAL_REVIEW if records else CaseLookupStatus.NOT_FOUND
+    return _RouteOutcome(records, CaseSourceTrace(
+        source_name=source_name,
+        status=status,
+        message=("检索完成，返回案例候选" if records else "检索完成，未命中案例"),
+        metadata={**metadata, "candidate_count": len(records)},
+    ), True)
+
+
+def _match_case_record(case_number, case_name, court, records):
+    if case_number:
+        target = _normalize_case_number(case_number)
+        matches = [record for record in records if _normalize_case_number(record.case_number) == target]
+        if len(matches) == 1:
+            return matches[0], "exact_case_number"
+    target_title = _normalize_case_name(case_name or "")
+    if target_title:
+        matches = [record for record in records if _normalize_case_name(record.title) == target_title]
+        if len(matches) > 1 and court:
+            matches = [record for record in matches if _same_court(court, record.court)]
+            if len(matches) == 1:
+                return matches[0], "exact_title_and_court"
+        if len(matches) == 1:
+            return matches[0], "exact_case_title"
+        guiding_id = _guiding_case_id(target_title)
+        if guiding_id:
+            matches = [record for record in records if _guiding_case_id(_normalize_case_name(record.title)) == guiding_id]
+            if len(matches) == 1:
+                return matches[0], "exact_case_title"
+    return None, None
+
+
+def _verified(record, cited_name, basis, traces):
+    traces[-1].status = CaseLookupStatus.VERIFIED
+    traces[-1].source_url = record.url
+    traces[-1].message = "案例身份匹配通过"
+    traces[-1].metadata["match_basis"] = basis
+    return (
+        CaseLookupStatus.VERIFIED,
+        _case_record_evidence(record, cited_name),
+        "",
+        traces,
     )
 
 
-def _case_error_status(exc: PkulawMcpError) -> CaseLookupStatus:
-    if isinstance(exc, PkulawNotConfiguredError):
-        return CaseLookupStatus.SOURCE_NOT_CONFIGURED
-    return CaseLookupStatus.SOURCE_ERROR
+def _same_case(reference: PkulawCaseRecord, records: list[PkulawCaseRecord]):
+    if reference.case_number:
+        number = _normalize_case_number(reference.case_number)
+        matches = [record for record in records if _normalize_case_number(record.case_number) == number]
+    else:
+        title = _normalize_case_name(reference.title)
+        matches = [record for record in records if _normalize_case_name(record.title) == title]
+    return matches[0] if len(matches) == 1 else None
 
 
-def _match_case_record(
-    case_name: str | None,
-    court: str | None,
-    records: list[PkulawCaseRecord],
-) -> PkulawCaseRecord | None:
-    target = _normalize_case_name(case_name or "")
-    if not target:
-        return None
-    normalized_court = _normalize_case_name(court or "")
+def _cross_route_match(left, right):
+    left_by_number = {_normalize_case_number(record.case_number): record for record in left if record.case_number}
+    overlaps = {
+        number: record for number, record in left_by_number.items()
+        if any(_normalize_case_number(item.case_number) == number for item in right)
+    }
+    return next(iter(overlaps.values())) if len(overlaps) == 1 else None
+
+
+def _unique_records(records):
+    result = []
+    seen = set()
     for record in records:
-        candidate = _normalize_case_name(record.title)
-        target_guiding_id = _guiding_case_id(target)
-        candidate_guiding_id = _guiding_case_id(candidate)
-        title_matches = (
-            target == candidate
-            or (
-                target_guiding_id is not None
-                and target_guiding_id == candidate_guiding_id
-            )
-            or (
-                min(len(target), len(candidate)) >= 6
-                and (target in candidate or candidate in target)
-            )
-        )
-        court_matches = (
-            not normalized_court
-            or normalized_court in _normalize_case_name(record.court)
-        )
-        if title_matches and court_matches:
-            return record
-    return None
+        key = _normalize_case_number(record.case_number) or f"{_normalize_case_name(record.title)}|{_normalize_court(record.court)}"
+        if key not in seen:
+            seen.add(key)
+            result.append(record)
+    return result
 
 
-def _normalize_case_name(value: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", value)
-    return normalized.replace("指导性案例", "指导案例")
+def _candidate_metadata(record):
+    return {
+        "title": record.title,
+        "case_number": record.case_number,
+        "court": record.court,
+        "last_instance_date": record.last_instance_date,
+        "url": record.url,
+    }
 
 
-def _guiding_case_id(value: str) -> str | None:
-    match = re.match(r"^指导案例(\d+)号", value)
-    return match.group(1) if match else None
-
-
-def _case_record_evidence(
-    record: PkulawCaseRecord, cited_name: str | None
-) -> CaseEvidence:
+def _case_record_evidence(record, cited_name):
     return CaseEvidence(
         matched_text=cited_name or record.title,
         case_number=record.case_number,
@@ -378,44 +305,41 @@ def _case_record_evidence(
         title=record.title,
         last_instance_date=record.last_instance_date,
         url=record.url,
+        holding=record.holding,
     )
 
 
-def _match_case_number(cited: str, recognized) -> CaseEvidence | None:
-    target = _normalize_case_number(cited)
-    for item in recognized:
-        if target in (
-            _normalize_case_number(item.text),
-            _normalize_case_number(item.case_flag),
-        ):
-            return CaseEvidence(
-                matched_text=item.text,
-                case_number=item.case_flag or item.text,
-                gid=item.gid,
-                court=item.court,
-                title=item.title,
-                last_instance_date=item.last_instance_date,
-                url=item.url,
-            )
-    return None
+def _check_holding(claim, evidence, semantic_checker):
+    if claim.claim_type != ClaimType.CASE_HOLDING_PARAPHRASE:
+        return None
+    if evidence is None or not evidence.holding:
+        return CaseHoldingCheck(
+            execution_status=ExecutionStatus.SKIPPED,
+            skipped_reason="holding_unavailable",
+            notes="案例身份已经确认，但北大法宝 MCP 中未收录裁判观点。",
+        )
+    compare = getattr(semantic_checker, "compare_holding", None)
+    if not callable(compare):
+        return CaseHoldingCheck(
+            execution_status=ExecutionStatus.SKIPPED,
+            skipped_reason="semantic_disabled",
+        )
+    paraphrase = getattr(claim.entities, "holding_text", "") or claim.text
+    try:
+        return compare(paraphrase, evidence.holding, evidence.title)
+    except Exception as exc:
+        from .semantic import SemanticCheckError
+        if not isinstance(exc, SemanticCheckError):
+            raise
+        return CaseHoldingCheck(
+            execution_status=ExecutionStatus.LLM_ERROR,
+            notes=str(exc),
+            error_code=getattr(exc, "error_code", "semantic_error"),
+        )
 
 
-def _case_status(recognized, evidence, error_status, message):
-    if recognized is None:
-        return error_status, message
-    if evidence is not None:
-        return CaseLookupStatus.VERIFIED, ""
-    return (
-        CaseLookupStatus.NOT_FOUND,
-        "文书案号未在北大法宝案例库命中，疑似有误或不存在",
-    )
-
-
-def _normalize_case_number(value: str) -> str:
-    table = str.maketrans(
-        {"（": "(", "）": ")", "〔": "(", "〕": ")", "　": "", " ": ""}
-    )
-    return value.translate(table)
+def _case_error_status(exc: PkulawMcpError) -> CaseLookupStatus:
+    return CaseLookupStatus.SOURCE_NOT_CONFIGURED if isinstance(exc, PkulawNotConfiguredError) else CaseLookupStatus.SOURCE_ERROR
 
 
 __all__ = ["verify_case_claims"]

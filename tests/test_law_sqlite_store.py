@@ -3,6 +3,8 @@ from pathlib import Path
 from ccitecheck.infrastructure.database import (
     find_current_article,
     init_db,
+    list_article_versions,
+    list_historical_article_versions,
     seed_common_laws,
     connect,
     upsert_article,
@@ -113,3 +115,35 @@ def test_find_current_article_selects_version_by_effective_date(tmp_path: Path):
     assert current["version_key"] == "2019-04-23"
     assert future["text"] == "未来版本。"
     assert future["version_status"] == "future_effective"
+
+
+def test_list_article_versions_separates_historical_from_current(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    with connect(db_path) as conn:
+        law_id = upsert_law(conn, {
+            "title": "中华人民共和国示例法",
+            "source_type": "law",
+            "status": "has_articles",
+        })
+        upsert_article(conn, law_id, {
+            "article_no": "第二条",
+            "text": "历史版本第二条。",
+            "version_key": "2018",
+            "effective_from": "2018-01-01",
+            "effective_to": "2020-01-01",
+        })
+        upsert_article(conn, law_id, {
+            "article_no": "第二条",
+            "text": "现行版本第二条。",
+            "version_key": "2020",
+            "effective_from": "2020-01-01",
+        })
+
+        versions = list_article_versions(conn, "示例法", "第二条")
+        historical = list_historical_article_versions(
+            conn, "示例法", "第二条", as_of="2026-01-01"
+        )
+
+    assert [row["version_key"] for row in versions] == ["2020", "2018"]
+    assert [row["version_key"] for row in historical] == ["2018"]

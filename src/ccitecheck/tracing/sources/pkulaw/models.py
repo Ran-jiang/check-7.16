@@ -26,19 +26,6 @@ class PkulawArticle(PkulawLawRecord):
 
 
 @dataclass(frozen=True)
-class PkulawCaseNumber:
-    text: str
-    start: int
-    end: int
-    gid: str
-    case_flag: str
-    court: str
-    title: str
-    last_instance_date: Optional[str] = None
-    url: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class PkulawCaseRecord:
     title: str
     case_number: str = ""
@@ -47,6 +34,7 @@ class PkulawCaseRecord:
     last_instance_date: Optional[str] = None
     url: Optional[str] = None
     fulltext: Optional[str] = None
+    holding: Optional[str] = None
 
 
 class PkulawMcpError(RuntimeError):
@@ -63,7 +51,6 @@ class PkulawNotFoundError(PkulawMcpError):
 
 __all__ = [
     "PkulawArticle",
-    "PkulawCaseNumber",
     "PkulawCaseRecord",
     "PkulawLawRecord",
     "PkulawMcpError",
