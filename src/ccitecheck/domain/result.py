@@ -115,6 +115,7 @@ class CitationReferenceCheck(BaseModel):
     rule_findings: list[SemanticIssue] = Field(default_factory=list)
     semantic_comparison: Optional[SemanticComparison] = None
     verification_scope: Literal["full", "existence_only"] = "full"
+    jurisdiction: str = "CN"
     source_attempts: list[SourceTrace] = Field(default_factory=list)
 
 

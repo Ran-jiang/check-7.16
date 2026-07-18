@@ -14,7 +14,10 @@ from ..domain.legal_numbers import chinese_number_to_int
 from .paths import PROJECT_ROOT
 
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
+
+# 章节层级：编=0 分编=1 章=2 节=3
+STRUCTURE_LEVELS = {"编": 0, "分编": 1, "章": 2, "节": 3}
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -91,6 +94,7 @@ def find_current_article(
     row = conn.execute(
         """
         SELECT
+          a.id AS article_id,
           l.title,
           l.source_type,
           l.status AS law_status,
@@ -131,6 +135,7 @@ def find_current_article(
     candidates = conn.execute(
         """
         SELECT
+          a.id AS article_id,
           l.title, l.source_type, l.status AS law_status,
           a.article_no, a.article_key, a.text, a.version_key,
           a.version_label, a.version_status, a.source_name, a.source_url,
@@ -341,6 +346,215 @@ def upsert_article(conn: sqlite3.Connection, law_id: int, record: dict[str, Any]
     return int(row["id"])
 
 
+# ============================================================
+# 章节结构（schema 1.2）
+# ============================================================
+
+def delete_structures_for_law(
+    conn: sqlite3.Connection, law_id: int, version_key: str
+) -> None:
+    """重建前清空某法某版本的全部章节节点（级联删除条文归属）。"""
+    conn.execute(
+        "DELETE FROM law_structures WHERE law_id = ? AND version_key = ?",
+        (law_id, version_key),
+    )
+
+
+def upsert_structure_node(
+    conn: sqlite3.Connection,
+    law_id: int,
+    record: dict[str, Any],
+) -> int:
+    """插入一个章节节点并计算物化路径；父节点必须先入库。"""
+    node_type = record["node_type"]
+    level = STRUCTURE_LEVELS[node_type]
+    parent_id = record.get("parent_id")
+    parent_path_ids, parent_path_label = "/", ""
+    if parent_id is not None:
+        parent = conn.execute(
+            "SELECT path_ids, path_label FROM law_structures WHERE id = ?",
+            (parent_id,),
+        ).fetchone()
+        if parent is None:
+            raise ValueError(f"structure parent {parent_id} not found")
+        parent_path_ids = parent["path_ids"]
+        parent_path_label = parent["path_label"]
+    label = " ".join(
+        part for part in (record.get("number_text"), record.get("title")) if part
+    ) or record["heading_text"]
+    path_label = f"{parent_path_label} / {label}" if parent_path_label else label
+    cursor = conn.execute(
+        """
+        INSERT INTO law_structures (
+          law_id, version_key, parent_id, node_type, level, number,
+          number_text, title, heading_text, seq, path_ids, path_label,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+        """,
+        (
+            law_id,
+            record.get("version_key", "current"),
+            parent_id,
+            node_type,
+            level,
+            record.get("number"),
+            record.get("number_text"),
+            record.get("title"),
+            record["heading_text"],
+            record["seq"],
+            path_label,
+            _now(),
+        ),
+    )
+    node_id = int(cursor.lastrowid)
+    conn.execute(
+        "UPDATE law_structures SET path_ids = ? WHERE id = ?",
+        (f"{parent_path_ids}{node_id}/", node_id),
+    )
+    return node_id
+
+
+def upsert_article_membership(
+    conn: sqlite3.Connection,
+    article_id: int,
+    structure_id: int,
+    law_id: int,
+    version_key: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO article_structure_memberships (
+          article_id, structure_id, law_id, version_key, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(article_id) DO UPDATE SET
+          structure_id = excluded.structure_id,
+          law_id = excluded.law_id,
+          version_key = excluded.version_key,
+          updated_at = excluded.updated_at
+        """,
+        (article_id, structure_id, law_id, version_key, _now()),
+    )
+
+
+def find_structure_candidates(
+    conn: sqlite3.Connection,
+    law_id: int,
+    node_type: str,
+    number: int | None,
+    version_key: str | None = None,
+    parent_id: int | None = None,
+) -> list[sqlite3.Row]:
+    """按类型与序号查节点；章号只在父节点内唯一，裸查天然返回多候选。"""
+    sql = ["SELECT * FROM law_structures WHERE law_id = ? AND node_type = ?"]
+    params: list[Any] = [law_id, node_type]
+    if number is None:
+        sql.append("AND number IS NULL")
+    else:
+        sql.append("AND number = ?")
+        params.append(number)
+    if version_key is not None:
+        sql.append("AND version_key = ?")
+        params.append(version_key)
+    if parent_id is not None:
+        sql.append("AND parent_id = ?")
+        params.append(parent_id)
+    sql.append("ORDER BY seq")
+    return conn.execute(" ".join(sql), params).fetchall()
+
+
+def resolve_structure_path(
+    conn: sqlite3.Connection,
+    law_id: int,
+    tokens: list[tuple[str, int | None]],
+    version_key: str | None = None,
+) -> list[sqlite3.Row]:
+    """链式定位章节，如 [('编',3),('章',4)]；多候选原样返回，不猜测。"""
+    current: list[sqlite3.Row] | None = None
+    for node_type, number in tokens:
+        if current is None:
+            current = find_structure_candidates(
+                conn, law_id, node_type, number, version_key
+            )
+        else:
+            narrowed: dict[int, sqlite3.Row] = {}
+            for ancestor in current:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM law_structures
+                    WHERE law_id = ? AND node_type = ?
+                      AND (? IS NULL OR version_key = ?)
+                      AND ((? IS NULL AND number IS NULL) OR number = ?)
+                      AND path_ids LIKE ? || '%'
+                    ORDER BY seq
+                    """,
+                    (
+                        law_id,
+                        node_type,
+                        version_key,
+                        version_key,
+                        number,
+                        number,
+                        ancestor["path_ids"],
+                    ),
+                ).fetchall()
+                for row in rows:
+                    narrowed.setdefault(int(row["id"]), row)
+            current = sorted(narrowed.values(), key=lambda row: row["seq"])
+        if not current:
+            return []
+    return current or []
+
+
+def list_articles_in_structure(
+    conn: sqlite3.Connection, structure_id: int
+) -> list[sqlite3.Row]:
+    """列出节点（含全部子孙）下的成员条文，按条号排序。"""
+    node = conn.execute(
+        "SELECT path_ids FROM law_structures WHERE id = ?", (structure_id,)
+    ).fetchone()
+    if node is None:
+        return []
+    rows = conn.execute(
+        """
+        SELECT a.*
+        FROM articles a
+        JOIN article_structure_memberships m ON m.article_id = a.id
+        JOIN law_structures s ON s.id = m.structure_id
+        WHERE s.path_ids LIKE ? || '%'
+        """,
+        (node["path_ids"],),
+    ).fetchall()
+
+    def order(row: sqlite3.Row) -> tuple[int, int]:
+        # article_key 可能是 1.1 以前的中文遗留键，归一化后按数值排序
+        key = normalize_article_key(row["article_no"] or row["article_key"])
+        base, _, suffix = key.partition("-")
+        try:
+            return (int(base), int(suffix or 0))
+        except ValueError:
+            return (10**9, 0)
+
+    return sorted(rows, key=order)
+
+
+def get_structure_path_for_article(
+    conn: sqlite3.Connection, article_id: int
+) -> Optional[str]:
+    """返回条文所属章节的完整路径标签，如'第三编 合同 / 第一章 一般规定'。"""
+    row = conn.execute(
+        """
+        SELECT s.path_label
+        FROM article_structure_memberships m
+        JOIN law_structures s ON s.id = m.structure_id
+        WHERE m.article_id = ?
+        """,
+        (article_id,),
+    ).fetchone()
+    return row["path_label"] if row else None
+
+
 def normalize_title(title: str) -> str:
     return "".join(title.split()).replace("《", "").replace("》", "").replace("〈", "").replace("〉", "")
 
@@ -433,8 +647,42 @@ def _create_schema(conn: sqlite3.Connection) -> None:
           UNIQUE(law_id, article_key, version_key)
         );
 
+        CREATE TABLE IF NOT EXISTS law_structures (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          law_id        INTEGER NOT NULL REFERENCES laws(id) ON DELETE CASCADE,
+          version_key   TEXT NOT NULL DEFAULT 'current',
+          parent_id     INTEGER REFERENCES law_structures(id) ON DELETE CASCADE,
+          node_type     TEXT NOT NULL,
+          level         INTEGER NOT NULL,
+          number        INTEGER,
+          number_text   TEXT,
+          title         TEXT,
+          heading_text  TEXT NOT NULL,
+          seq           INTEGER NOT NULL,
+          path_ids      TEXT NOT NULL,
+          path_label    TEXT NOT NULL,
+          start_article_key TEXT,
+          end_article_key   TEXT,
+          article_count INTEGER NOT NULL DEFAULT 0,
+          updated_at    TEXT NOT NULL,
+          UNIQUE(law_id, version_key, parent_id, node_type, number)
+        );
+
+        CREATE TABLE IF NOT EXISTS article_structure_memberships (
+          article_id   INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+          structure_id INTEGER NOT NULL REFERENCES law_structures(id) ON DELETE CASCADE,
+          law_id       INTEGER NOT NULL REFERENCES laws(id) ON DELETE CASCADE,
+          version_key  TEXT NOT NULL DEFAULT 'current',
+          updated_at   TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_laws_priority ON laws(priority);
         CREATE INDEX IF NOT EXISTS idx_articles_law_key ON articles(law_id, article_key, effective_from);
+        CREATE INDEX IF NOT EXISTS idx_structures_lookup ON law_structures(law_id, version_key, node_type, number);
+        CREATE INDEX IF NOT EXISTS idx_structures_parent ON law_structures(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_structures_path ON law_structures(law_id, version_key, path_ids);
+        CREATE INDEX IF NOT EXISTS idx_membership_structure ON article_structure_memberships(structure_id);
+        CREATE INDEX IF NOT EXISTS idx_membership_law ON article_structure_memberships(law_id, version_key);
 
         INSERT OR REPLACE INTO schema_meta (key, value)
         VALUES ('schema_version', '{SCHEMA_VERSION}');

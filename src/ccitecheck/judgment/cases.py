@@ -28,6 +28,12 @@ from ..tracing.sources.pkulaw.client import (
 # 案例关键词检索和语义检索均为 IO 密集调用，使用独立线程池。
 _CASE_LOOKUP_WORKERS = 6
 
+_OUT_OF_SCOPE_NOTE = "外国判例，超出本产品核查边界，请人工核验"
+
+
+def _is_foreign(ref) -> bool:
+    return getattr(ref, "jurisdiction", "CN") == "FOREIGN"
+
 
 def verify_case_claims(
     claim_doc: ClaimDocument,
@@ -56,7 +62,9 @@ def verify_case_claims(
         return []
 
     # 全篇合并为一次案号识别调用（法宝接口本身支持批量），节省额度与往返
-    claims_with_numbers = [claim for claim, ref in refs if ref.case_number]
+    claims_with_numbers = [
+        claim for claim, ref in refs if ref.case_number and not _is_foreign(ref)
+    ]
     if claims_with_numbers:
         joined_text = "\n".join(
             dict.fromkeys(claim.text for claim in claims_with_numbers)
@@ -70,7 +78,7 @@ def verify_case_claims(
     search_jobs = {
         _case_search_key(claim, ref): (claim, ref)
         for claim, ref in refs
-        if not ref.case_number
+        if not ref.case_number and not _is_foreign(ref)
     }
     if search_jobs:
         keys = list(search_jobs)
@@ -87,7 +95,17 @@ def verify_case_claims(
 
     checks: list[CaseCheck] = []
     for next_id, (claim, ref) in enumerate(refs, start=1):
-        if ref.case_number:
+        if _is_foreign(ref):
+            status = CaseLookupStatus.OUT_OF_SCOPE
+            evidence = None
+            note = _OUT_OF_SCOPE_NOTE
+            traces = []
+            trace = CaseSourceTrace(
+                source_name="CCiteheck 法域分类",
+                status=status,
+                message=note,
+            )
+        elif ref.case_number:
             evidence = (
                 _match_case_number(ref.case_number, recognized)
                 if recognized is not None

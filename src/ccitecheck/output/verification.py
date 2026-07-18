@@ -31,12 +31,14 @@ class CitationReferenceData:
     citation_span: tuple[int, int] | None = None
     quote_span: tuple[int, int] | None = None
     not_verifiable: str | None = None
+    out_of_scope: str | None = None
     lookup_status: LookupStatus | None = None
     evidence: ArticleEvidence | None = None
     source_attempts: list[SourceTrace] = field(default_factory=list)
     rule_findings: list[SemanticIssue] = field(default_factory=list)
     semantic_comparison: SemanticComparison | None = None
     verification_scope: str = "full"
+    jurisdiction: str = "CN"
 
 
 def build_verification_document(
@@ -83,6 +85,17 @@ def _build_reference_check(index: int, data: CitationReferenceData) -> CitationR
         ]
         lookup_status = LookupStatus.NOT_VERIFIABLE
         evidence = None
+    elif data.out_of_scope is not None:
+        attempts = [
+            SourceTrace(
+                tier=SourceTier.LOCAL_SQLITE,
+                source_name="CCiteheck 法域分类",
+                status=LookupStatus.OUT_OF_SCOPE,
+                message=data.out_of_scope,
+            )
+        ]
+        lookup_status = LookupStatus.OUT_OF_SCOPE
+        evidence = None
     else:
         if data.lookup_status is None:
             raise ValueError("可核查法规缺少溯源结果")
@@ -106,6 +119,7 @@ def _build_reference_check(index: int, data: CitationReferenceData) -> CitationR
         rule_findings=data.rule_findings,
         semantic_comparison=data.semantic_comparison,
         verification_scope=data.verification_scope,
+        jurisdiction=data.jurisdiction,
         source_attempts=attempts,
     )
 

@@ -260,3 +260,75 @@ def test_retry_budget_stops_attempts_without_exceeding_deadline(monkeypatch):
     assert caught.value.error_code == "timeout"
     assert calls == 2
     assert now[0] <= 90.0
+
+
+def test_prompt_contains_paragraph_level_instructions():
+    prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    assert "target_paragraph" in prompt
+    assert "款级定位核对" in prompt
+    assert "未指明款号时，只引条文的部分款、项不构成问题" in prompt
+
+
+def test_qwen_payload_includes_target_paragraph_when_cited(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json=_qwen_response())
+
+    _install_mock_client(monkeypatch, handler)
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="中华人民共和国专利法",
+        source_type="law",
+        article_no="第九条",
+        article_text=(
+            "同样的发明创造只能授予一项专利权。\n"
+            "两个以上的申请人分别就同样的发明创造申请专利的，专利权授予最先申请的人。"
+        ),
+        data_source=SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="test",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+    checker.compare(
+        "中国专利权取得采取申请在先原则。",
+        "上下文",
+        "《专利法》第九条第一款",
+        evidence,
+        paragraphs=["第一款"],
+    )
+
+    user_content = json.loads(captured["payload"]["input"][1]["content"])
+    target = user_content["target_paragraph"]
+    assert target["cited"] == "第一款"
+    assert target["number"] == 1
+    assert target["total_paragraphs"] == 2
+    assert target["text"].startswith("同样的发明创造只能授予一项专利权")
+
+
+def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json=_qwen_response())
+
+    _install_mock_client(monkeypatch, handler)
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="中华人民共和国专利法",
+        source_type="law",
+        article_no="第九条",
+        article_text="同样的发明创造只能授予一项专利权。",
+        data_source=SourceTrace(
+            tier=SourceTier.LOCAL_SQLITE,
+            source_name="test",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+    checker.compare("文书表述", "上下文", "《专利法》第九条", evidence)
+
+    user_content = json.loads(captured["payload"]["input"][1]["content"])
+    assert "target_paragraph" not in user_content

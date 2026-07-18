@@ -75,6 +75,7 @@ def summarize_verification(
             CaseLookupStatus.MANUAL_REVIEW,
             CaseLookupStatus.SOURCE_NOT_CONFIGURED,
             CaseLookupStatus.SOURCE_ERROR,
+            CaseLookupStatus.OUT_OF_SCOPE,
         }
         for check in verification.case_checks
     )

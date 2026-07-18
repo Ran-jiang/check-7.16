@@ -56,6 +56,16 @@ if allowed_origins:
         allow_methods=["POST", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
+@app.middleware("http")
+async def revalidate_static_assets(request, call_next):
+    """Office WebView 磁盘缓存极顽固；静态资源强制每次向服务端校验新鲜度。"""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets") or path.endswith((".html", ".css", ".js")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/assets", StaticFiles(directory=ADDIN_ROOT / "assets"), name="assets")
 app.mount(
     "/feishu-addon",

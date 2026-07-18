@@ -19,6 +19,7 @@ from ..domain.result import (
     SemanticIssue,
 )
 from ..tracing.sources.base import LookupResult
+from .paragraphs import resolve_paragraph
 
 _GB_STANDARD_PATTERN = re.compile(r"GB\s*/?\s*[TZ]?\s*\d{3,6}")
 _REPEALED_PATTERN = re.compile(r"废止|失效")
@@ -41,6 +42,7 @@ def build_rule_findings(
     result: LookupResult,
     attempts: list[SourceTrace],
     known_titles: list[str],
+    paragraphs: Optional[list[str]] = None,
 ) -> list[SemanticIssue]:
     """依据溯源结果生成无需大模型参与的确定性问题。"""
     findings: list[SemanticIssue] = []
@@ -84,6 +86,19 @@ def build_rule_findings(
                 diff_summary=f"北大法宝已收录该法规，但未检索到{article_no}"[:80],
                 suggestion="请人工核实该条文编号是否存在。",
             ))
+
+    # 规则四：引用的款号超出该条实际款数。
+    if paragraphs and evidence is not None and evidence.article_text:
+        for paragraph_field in paragraphs:
+            location = resolve_paragraph(paragraph_field, evidence.article_text)
+            if location is not None and location.text is None:
+                findings.append(SemanticIssue(
+                    error_type=SemanticErrorType.LOCATION_ERROR,
+                    risk_level=RiskLevel.HIGH,
+                    diff_summary=(f"《{strip_version_annotation(law_title)}》{article_no or ''}"
+                                  f"共{location.total}款，其中不存在{paragraph_field}")[:80],
+                    suggestion="请核实款项编号；该款在所引条文的现行文本中不存在。",
+                ))
 
     # 规则三：所有权威来源均未找到法源，或法名疑似存在拼写错误。
     if result.status == LookupStatus.LAW_NOT_FOUND:

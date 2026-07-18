@@ -67,6 +67,18 @@ NAMED_CASE_PATTERN = re.compile(
     r"[^。！？；，\n]{1,60}?(?:纠纷)?(?<![预方草议答备提立档])案[）)]?"
 )
 
+# 外国判例引用 — 英文案名（Roe v. Wade）与美式判例汇编引注（347 U.S. 483）。
+# 这类案例不在中文案例库核查范围内，识别后标记 jurisdiction=FOREIGN，
+# 由判定层显式告知"超出核查边界"，避免静默丢弃。
+FOREIGN_CASE_NAME_PATTERN = re.compile(
+    r"\b[A-Z][\w.&'’\-]*(?:\s+[A-Z][\w.&'’\-]*){0,4}"
+    r"\s+vs?\.\s+"
+    r"[A-Z][\w.&'’\-]*(?:\s+[A-Z][\w.&'’\-]*){0,4}"
+)
+FOREIGN_REPORTER_PATTERN = re.compile(
+    r"\b\d{1,4}\s+(?:U\.\s?S\.|S\.\s?Ct\.|F\.(?:\s?[23]d)?|F\.\s?Supp\.?)\s+\d{1,4}\b"
+)
+
 # 指代词（指向当前文书内部，不可外部检索）— 显式排除
 PRONOUN_PATTERNS = [
     re.compile(r"本案"),
@@ -245,6 +257,20 @@ def extract_case_refs(text: str) -> list[CaseRef]:
                 case_number=None,
                 case_name=case_name,
                 court=None,
+            ))
+
+    # 5. 外国判例（英文案名 / 美式判例引注）→ 标记超出核查边界
+    for pattern in (FOREIGN_CASE_NAME_PATTERN, FOREIGN_REPORTER_PATTERN):
+        for m in pattern.finditer(text):
+            clue = m.group(0).strip()
+            if any(c.case_name == clue for c in case_refs):
+                continue
+            case_refs.append(CaseRef(
+                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+                case_number=None,
+                case_name=clue,
+                court=None,
+                jurisdiction="FOREIGN",
             ))
 
     return case_refs

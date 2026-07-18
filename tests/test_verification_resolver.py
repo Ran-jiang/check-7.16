@@ -114,7 +114,7 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
 
 
 class FakeSemanticChecker:
-    def compare(self, doc_quote, quote_context, cited_source, evidence):
+    def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
         return SemanticComparison(
             verdict=ComparisonVerdict.ISSUE,
             issues=[
@@ -733,7 +733,7 @@ class FailOncePerQuoteChecker:
     def __init__(self):
         self.calls = {}
 
-    def compare(self, doc_quote, quote_context, cited_source, evidence):
+    def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
         count = self.calls.get(doc_quote, 0) + 1
         self.calls[doc_quote] = count
         if count == 1:
@@ -1012,7 +1012,7 @@ def test_llm_issue_appends_alternative_article_suggestion(tmp_path: Path):
     class MismatchChecker:
         suggestion_calls = 0
 
-        def compare(self, doc_quote, quote_context, cited_source, evidence):
+        def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
             return SemanticComparison(
                 verdict=ComparisonVerdict.ISSUE,
                 issues=[

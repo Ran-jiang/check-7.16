@@ -29,6 +29,13 @@ def build_default_sources(db_path: str | Path) -> list[StatuteSource]:
     return [LocalSQLiteSource(db_path), PkulawFallbackSource()]
 
 
+def build_eu_sources() -> list[StatuteSource]:
+    """创建欧盟法规溯源链：只走 EUR-Lex，不进中国法链白查。"""
+    from .sources.eurlex import EurLexSource
+
+    return [EurLexSource()]
+
+
 def lookup_with_chain(
     sources: list[StatuteSource],
     request: LookupRequest,

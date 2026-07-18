@@ -265,30 +265,64 @@ label.scope-row { cursor: pointer; }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger-fg); }
 .status-pill.is-bug { background: var(--warning-bg); color: var(--warning-fg); }
 .status-pill.is-not-run { background: var(--bg-subtle-hover); color: var(--fg-3); }
-.claim-quote { margin: 12px 0 0; padding: 0; border: 0; color: var(--fg-2); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
-.reference-source { margin-top: 8px; color: var(--fg-1); font-size: 12px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
+/* 区块标签：每个分区上方的 caption 小字（文书原文/核查对象/权威原文） */
+.zone-label-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 18px; }
+.zone-label { font-size: 12px; line-height: 18px; color: var(--fg-3); }
+.zone-label-row .jump-button { margin-left: auto; min-height: 0; padding: 0 2px; color: var(--brand-fg); }
+.zone-label-row .jump-button:hover { background: transparent; color: var(--brand-bg-hover); text-decoration: underline; }
+
+/* 文书原文（灰）与权威原文（蓝）的固定视觉身份 */
+.doc-quote {
+  margin: 4px 0 0; padding: 8px 10px; border: 0; border-left: 3px solid var(--stroke-1);
+  border-radius: 0; background: var(--bg-2);
+  color: var(--fg-2); font-size: 14px; line-height: 22px; overflow-wrap: anywhere;
+}
+.authority-quote {
+  margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--brand-bg);
+  border-radius: 0; background: var(--brand-bg-tint);
+  color: var(--fg-1); font-size: 12px; line-height: 18px;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 240px; overflow-y: auto;
+}
+.authority-quote strong { font-weight: 600; }
+
+.reference-source { color: var(--fg-1); font-size: 13px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.version-status { margin-left: auto; flex: 0 0 auto; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+.version-status.is-effective { color: var(--success-fg); }
+.reference-body-topline { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
+.reference-body-topline .card-type { flex: 1; margin-top: 0; }
+
+/* 多引卡：引文一次 + 紧凑子行（收起白底，展开恢复状态着色） */
+.multi-counts { display: flex; gap: 8px; font-size: 12px; line-height: 18px; }
+.multi-counts .count-issue { color: var(--danger-fg); }
+.multi-counts .count-bug { color: var(--warning-fg); }
+.multi-counts .count-pass { color: var(--success-fg); }
 .citation-references { display: grid; gap: 8px; margin-top: 12px; }
-.citation-reference { border: 1px solid var(--stroke-2); border-radius: 6px; padding: 12px; background: var(--bg-2); }
-.citation-reference.is-issue { border-color: var(--danger-border); background: var(--danger-bg); }
-.citation-reference.is-bug { border-color: var(--warning-border); background: var(--warning-bg); }
-.reference-label { margin-bottom: 8px; color: var(--fg-3); font-size: 12px; line-height: 18px; font-weight: 600; }
-.citation-reference .result-topline { align-items: center; }
-.citation-reference .action-row { justify-content: flex-end; }
+.reference-row { border: 1px solid var(--stroke-2); border-radius: 4px; padding: 8px 10px; background: var(--bg-1); }
+.reference-row-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.reference-row-summary::-webkit-details-marker { display: none; }
+.reference-row-summary::after { content: "▸"; color: var(--fg-3); font-size: 12px; }
+.reference-row[open] .reference-row-summary::after { content: "▾"; }
+.reference-row-summary .reference-source { flex: 1; }
+.reference-role { flex: 0 0 auto; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+/* 展开态：白底 + 品牌蓝描边"浮起"，状态语义由徽章承担，不整块着色 */
+.reference-row[open] { border-color: var(--brand-bg); }
+.reference-row-body .action-row { border-top: 0; padding-top: 0; }
+
 .card-conf { margin-top: 12px; font-size: 12px; line-height: 18px; color: var(--fg-3); }
 .card-suggestion { margin: 4px 0 0; font-size: 14px; line-height: 22px; color: var(--fg-1); }
 
-/* 法条原文折叠 */
+/* ⑤区：权威原文折叠 */
 .result-details { margin-top: 12px; border-top: 1px solid var(--stroke-2); padding-top: 12px; }
-.result-details summary { cursor: pointer; font-size: 12px; line-height: 18px; color: var(--fg-2); }
+.result-details summary { cursor: pointer; font-size: 12px; line-height: 18px; color: var(--brand-fg); }
 .statute-line { margin-top: 8px; font-size: 12px; line-height: 18px; color: var(--fg-2); word-break: break-all; }
 .statute-link { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--brand-fg); text-decoration: none; }
 .statute-link:hover { text-decoration: underline; }
 .statute-line .statute-link { margin: 0; }
-.statute-text-inline { color: var(--fg-3); white-space: pre-wrap; word-break: break-word; }
 
-/* 卡片操作行：定位/忽略 = subtle，接受 = 品牌描边，选中后填充 */
+/* ⑥区：单个决策按钮（接受修订 ⇄ 取消修订），右对齐 */
 .action-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  display: flex; justify-content: flex-end; align-items: center; gap: 8px;
   margin-top: 12px; border-top: 1px solid var(--stroke-2); padding-top: 8px;
 }
 .action-button {
@@ -299,20 +333,12 @@ label.scope-row { cursor: pointer; }
 .action-button:hover { background: var(--bg-subtle-hover); color: var(--fg-1); }
 .jump-button { font-weight: 500; }
 .jump-button.has-warning { color: var(--warning-fg); }
-.card-action-row { justify-content: flex-start; }
-.decision-group { display: flex; gap: 4px; }
-.decision-button.is-active { background: var(--fg-2); color: #fff; }
-.decision-button.is-active:hover { background: var(--fg-2); color: #fff; }
-.decision-button[data-decision="accepted"],
-.decision-group .decision-button:last-child {
+.decision-button[data-decision="accepted"] {
   border: 1px solid var(--brand-bg); color: var(--brand-fg); font-weight: 500;
 }
-.decision-button[data-decision="accepted"]:hover,
-.decision-group .decision-button:last-child:hover { background: var(--brand-bg-tint); color: var(--brand-fg); }
-.decision-button[data-decision="accepted"].is-active,
-.decision-group .decision-button:last-child.is-active { background: var(--brand-bg); border-color: var(--brand-bg); color: #fff; }
-.decision-button[data-decision="accepted"].is-active:hover,
-.decision-group .decision-button:last-child.is-active:hover { background: var(--brand-bg-hover); color: #fff; }
+.decision-button[data-decision="accepted"]:hover { background: var(--brand-bg-tint); color: var(--brand-fg); }
+.decision-button[data-decision="accepted"].is-active { background: var(--brand-bg); border-color: var(--brand-bg); color: #fff; }
+.decision-button[data-decision="accepted"].is-active:hover { background: var(--brand-bg-hover); color: #fff; }
 
 .empty-results {
   background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: 8px;

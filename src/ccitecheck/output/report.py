@@ -23,6 +23,7 @@ LOOKUP_STATUS_LABELS = {
     "source_not_configured": "数据源未配置",
     "source_error": "数据源调用失败",
     "not_verifiable": "非法条类文件，不做条文核验",
+    "out_of_scope": "超出核查边界",
 }
 
 CASE_STATUS_LABELS = {
@@ -31,6 +32,7 @@ CASE_STATUS_LABELS = {
     "manual_review": "候选案例需人工确认",
     "source_not_configured": "数据源未配置",
     "source_error": "数据源调用失败",
+    "out_of_scope": "超出核查边界",
 }
 
 DECISION_LABELS = {
@@ -103,7 +105,7 @@ def render_report_html(request: Any) -> str:
 <div class="summary">
   共识别引用句 <b>{summary.card_total}</b> 处，核查具体引用 <b>{summary.reference_total}</b> 条：
   通过 <b>{summary.passed}</b>，
-  需核实 <b>{summary.issues}</b>，无法判断 <b>{summary.bugs}</b>；
+  未通过 <b>{summary.issues}</b>，待核实 <b>{summary.bugs}</b>；
   案号验证通过 <b>{summary.cases_verified}</b>，案号未命中 <b>{summary.cases_not_found}</b>。<br>
   人工处理记录：接受 <b>{decision_counts["accepted"]}</b>，
   忽略 <b>{decision_counts["ignored"]}</b>。
@@ -141,17 +143,19 @@ def _legal_check_section(check, decision: str | None) -> str:
     )
     verdict = check.semantic_comparison.verdict.value if check.semantic_comparison and check.semantic_comparison.verdict else None
     if findings:
-        pill_class, pill_text = "issue", "需核实"
+        pill_class, pill_text = "issue", "未通过"
     elif verdict == "pass":
         pill_class, pill_text = "pass", "语义通过"
     elif check.semantic_comparison and check.semantic_comparison.execution_status.value == "llm_error":
-        pill_class, pill_text = "", "无法判断"
+        pill_class, pill_text = "", "待核实"
     elif check.verification_scope == "existence_only" and check.lookup_status.value in {
         "article_found", "relevant_articles_found"
     }:
         pill_class, pill_text = "pass", "仅核验存在性"
     elif verdict == "insufficient_input":
         pill_class, pill_text = "", "输入不足"
+    elif check.lookup_status.value == "out_of_scope":
+        pill_class, pill_text = "", "超出核查边界"
     else:
         pill_class, pill_text = "", "未做语义核查"
 
@@ -177,6 +181,10 @@ def _legal_check_section(check, decision: str | None) -> str:
             parts.append(
                 f'<div class="field"><b>时效状态：</b>'
                 f"{_esc(evidence.version_label or evidence.version_status or '')}</div>"
+            )
+        if getattr(evidence, "structure_path", None):
+            parts.append(
+                f'<div class="field"><b>章节位置：</b>{_esc(evidence.structure_path)}</div>'
             )
     for finding in findings:
         parts.append(

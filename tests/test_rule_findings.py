@@ -158,3 +158,83 @@ def testsuggest_similar_title_rejects_weak_matches():
         "中华人民共和国印章管理办法", ["中华人民共和国税收征收管理法"]
     )
     assert suggestion is None
+
+
+# ---------- A4 款级越界与款切分 ----------
+
+def _article_found_result(law_title: str, article_no: str, article_text: str):
+    trace = SourceTrace(
+        tier=SourceTier.LOCAL_SQLITE,
+        source_name="本地库",
+        status=LookupStatus.ARTICLE_FOUND,
+    )
+    evidence = ArticleEvidence(
+        law_title=law_title,
+        source_type="law",
+        article_no=article_no,
+        article_text=article_text,
+        data_source=trace,
+    )
+    return LookupResult(trace.status, evidence, trace), [trace]
+
+
+_PATENT_ARTICLE_9 = (
+    "同样的发明创造只能授予一项专利权。但是，同一申请人同日对同样的发明创造"
+    "既申请实用新型专利又申请发明专利，先获得的实用新型专利权尚未终止，且申请人"
+    "声明放弃该实用新型专利权的，可以授予发明专利权。\n"
+    "两个以上的申请人分别就同样的发明创造申请专利的，专利权授予最先申请的人。"
+)
+
+
+def test_paragraph_out_of_range_produces_high_finding():
+    result, attempts = _article_found_result(
+        "中华人民共和国专利法", "第九条", _PATENT_ARTICLE_9
+    )
+    findings = build_rule_findings(
+        "中华人民共和国专利法", "第九条", result, attempts, [],
+        paragraphs=["第五款"],
+    )
+    assert any(
+        f.error_type == SemanticErrorType.LOCATION_ERROR
+        and f.risk_level == RiskLevel.HIGH
+        and "第五款" in f.diff_summary
+        for f in findings
+    )
+
+
+def test_paragraph_in_range_produces_no_finding():
+    result, attempts = _article_found_result(
+        "中华人民共和国专利法", "第九条", _PATENT_ARTICLE_9
+    )
+    findings = build_rule_findings(
+        "中华人民共和国专利法", "第九条", result, attempts, [],
+        paragraphs=["第二款"],
+    )
+    assert not findings
+
+
+def test_split_paragraphs_merges_item_lines():
+    from ccitecheck.judgment.paragraphs import split_paragraphs
+
+    text = (
+        "本法所称的作品，是指文学、艺术和科学领域内具有独创性并能以一定形式表现的智力成果，包括：\n"
+        "（一）文字作品；\n"
+        "（二）口述作品；\n"
+        "符合作品特征的其他智力成果依照本法规定保护。"
+    )
+    segments = split_paragraphs(text)
+    assert len(segments) == 2
+    assert "（二）口述作品" in segments[0]
+
+
+def test_resolve_paragraph_locates_target_and_reports_total():
+    from ccitecheck.judgment.paragraphs import resolve_paragraph
+
+    location = resolve_paragraph("第二款", _PATENT_ARTICLE_9)
+    assert location is not None
+    assert location.number == 2
+    assert location.total == 2
+    assert "最先申请的人" in location.text
+
+    overflow = resolve_paragraph("第三款", _PATENT_ARTICLE_9)
+    assert overflow.text is None and overflow.total == 2

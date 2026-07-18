@@ -39,7 +39,11 @@ def decide_semantic_gate(
     blocking = {SemanticErrorType.LOCATION_ERROR, SemanticErrorType.SOURCE_NOT_FOUND}
     if any(f.error_type in blocking for f in findings):
         return SemanticGate(False, "blocked_by_rule_finding")
-    if lookup_result.status in {LookupStatus.SOURCE_ERROR, LookupStatus.LAW_NOT_FOUND}:
+    if lookup_result.status in {
+        LookupStatus.SOURCE_ERROR,
+        LookupStatus.LAW_NOT_FOUND,
+        LookupStatus.OUT_OF_SCOPE,
+    }:
         return SemanticGate(False, "retrieval_incomplete")
     if reference_role == "nested":
         if lookup_result.status in {LookupStatus.ARTICLE_FOUND, LookupStatus.RELEVANT_ARTICLES_FOUND}:
@@ -65,9 +69,12 @@ def compare_with_llm(
     context_text: str,
     cited_source: str,
     evidence: ArticleEvidence,
+    paragraphs: list[str] | None = None,
 ) -> SemanticCheckResult:
     try:
-        return semantic_checker.compare(document_quote, context_text, cited_source, evidence)
+        return semantic_checker.compare(
+            document_quote, context_text, cited_source, evidence, paragraphs=paragraphs
+        )
     except SemanticCheckError as exc:
         error_code = getattr(exc, "error_code", "semantic_error")
         return SemanticCheckResult(

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class SourceTier(str, Enum):
     LOCAL_SQLITE = "local_sqlite"
     PKULAW_FALLBACK = "pkulaw_fallback"
+    EURLEX = "eurlex"
 
 
 class LookupStatus(str, Enum):
@@ -23,6 +24,7 @@ class LookupStatus(str, Enum):
     SOURCE_NOT_CONFIGURED = "source_not_configured"
     SOURCE_ERROR = "source_error"
     NOT_VERIFIABLE = "not_verifiable"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class CaseLookupStatus(str, Enum):
@@ -31,6 +33,7 @@ class CaseLookupStatus(str, Enum):
     MANUAL_REVIEW = "manual_review"
     SOURCE_NOT_CONFIGURED = "source_not_configured"
     SOURCE_ERROR = "source_error"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class SourceTrace(BaseModel):
@@ -62,6 +65,7 @@ class ArticleEvidence(BaseModel):
     effective_to: Optional[str] = None
     source_metadata: dict[str, Any] = Field(default_factory=dict)
     related_articles: list[ArticleExcerpt] = Field(default_factory=list)
+    structure_path: Optional[str] = None
     data_source: SourceTrace
 
 

@@ -18,6 +18,7 @@ from ..infrastructure.http import (
 
 from ..domain.evidence import ArticleEvidence
 from ..domain.result import SemanticComparison
+from .paragraphs import resolve_paragraph
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -48,6 +49,7 @@ class SemanticChecker(Protocol):
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
+        paragraphs: list[str] | None = None,
     ) -> SemanticComparison: ...
 
 
@@ -106,9 +108,21 @@ class QwenSemanticChecker:
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
+        paragraphs: list[str] | None = None,
     ) -> SemanticComparison:
         if not evidence.article_text:
             raise SemanticCheckError("未取得法条原文，无法进行语义对比")
+
+        user_content: dict[str, Any] = {
+            "doc_quote": doc_quote,
+            "quote_context": quote_context,
+            "cited_source": cited_source,
+            "statute_text": evidence.article_text,
+            "source_metadata": _source_metadata(evidence),
+        }
+        target = _target_paragraph(paragraphs, evidence.article_text)
+        if target is not None:
+            user_content["target_paragraph"] = target
 
         payload = {
             "model": self.model,
@@ -116,16 +130,7 @@ class QwenSemanticChecker:
                 {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {
-                            "doc_quote": doc_quote,
-                            "quote_context": quote_context,
-                            "cited_source": cited_source,
-                            "statute_text": evidence.article_text,
-                            "source_metadata": _source_metadata(evidence),
-                        },
-                        ensure_ascii=False,
-                    ),
+                    "content": json.dumps(user_content, ensure_ascii=False),
                 },
             ],
             "enable_thinking": False,
@@ -226,6 +231,23 @@ class QwenSemanticChecker:
             raise SemanticResponseError(
                 f"Qwen returned invalid response JSON: {exc}", "invalid_json"
             ) from exc
+
+
+def _target_paragraph(
+    paragraphs: list[str] | None, article_text: str
+) -> dict[str, Any] | None:
+    """当引用指明具体款时，为语义比对定位目标款的原文切片。"""
+    if not paragraphs:
+        return None
+    location = resolve_paragraph(paragraphs[0], article_text)
+    if location is None or location.text is None:
+        return None
+    return {
+        "cited": paragraphs[0],
+        "number": location.number,
+        "total_paragraphs": location.total,
+        "text": location.text,
+    }
 
 
 def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:

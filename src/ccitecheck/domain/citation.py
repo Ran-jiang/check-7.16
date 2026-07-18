@@ -101,6 +101,19 @@ class ArticleRef(BaseModel):
     span_status: Literal["located", "fallback", "error"] = "fallback"
 
 
+class StructureUnit(BaseModel):
+    """章节链中的一级，如（编, 3）。"""
+    unit: str = Field(description="编/分编/章/节")
+    number: Optional[int] = Field(default=None, description="序号；无号节点为 None")
+    number_text: str = Field(description="原文标签，如'第三编'")
+
+
+class StructureRef(BaseModel):
+    """章节引用，如《民法典》第三编第四章（无条号）。"""
+    label: str = Field(description="原文章节标签连写，如'第三编第四章'")
+    units: list[StructureUnit] = Field(default_factory=list)
+
+
 class LegalSource(BaseModel):
     """
     法律规范来源。
@@ -116,9 +129,17 @@ class LegalSource(BaseModel):
     """
     title: str = Field(description="法规名称，不含书名号")
     source_type: LegalSourceType = Field(description="规范类型")
+    jurisdiction: str = Field(
+        default="CN",
+        description="法域：CN（中国）、EU（欧盟）或 FOREIGN（其他外国法域）"
+    )
     articles: list[ArticleRef] = Field(
         default_factory=list,
         description="条款引用列表"
+    )
+    structures: list[StructureRef] = Field(
+        default_factory=list,
+        description="章节引用列表（如第三编第四章；仅在无条款引用时抽取）"
     )
     resolution: str = Field(
         default="explicit",
@@ -154,6 +175,10 @@ class CaseRef(BaseModel):
     court: Optional[str] = Field(
         default=None,
         description="法院名称"
+    )
+    jurisdiction: str = Field(
+        default="CN",
+        description="法域：CN（中国）或 FOREIGN（外国判例，超出核查边界）"
     )
 
 

@@ -12,6 +12,7 @@ from ...infrastructure.database import (
     connect,
     find_current_article,
     find_law,
+    get_structure_path_for_article,
     list_current_articles,
 )
 
@@ -62,6 +63,9 @@ class LocalSQLiteSource:
                             "effective_to": article["effective_to"],
                             "effective_at": article["effective_at"],
                         },
+                        structure_path=get_structure_path_for_article(
+                            conn, int(article["article_id"])
+                        ),
                         data_source=trace,
                     )
                     return LookupResult(trace.status, evidence, trace)

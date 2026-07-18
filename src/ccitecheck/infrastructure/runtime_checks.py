@@ -25,6 +25,7 @@ def check_runtime(law_db: str | Path) -> list[CheckResult]:
         _check_law_database(db_path),
         _check_qwen_key(),
         _check_pkulaw_token(),
+        _check_eurlex_gateway(),
     ]
     return results
 
@@ -61,6 +62,14 @@ def _check_pkulaw_token() -> CheckResult:
     if os.getenv("PKULAW_ACCESS_TOKEN"):
         return CheckResult("pkulaw", True, "statute and case MCP sources configured")
     return CheckResult("pkulaw", True, "optional fallback not configured")
+
+
+def _check_eurlex_gateway() -> CheckResult:
+    if os.getenv("EURLEX_MCP_GATEWAY"):
+        return CheckResult("eurlex", True, "EU statute source configured")
+    return CheckResult(
+        "eurlex", True, "optional EU source not configured (EU citations marked out of scope)"
+    )
 
 
 def _check_qwen_key() -> CheckResult:

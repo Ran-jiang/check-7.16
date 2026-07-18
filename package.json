@@ -7,6 +7,7 @@
     "certs": "office-addin-dev-certs install",
     "start": "PYTHONPATH=src python3 -m apps.api.server --cert ~/.office-addin-dev-certs/localhost.crt --key ~/.office-addin-dev-certs/localhost.key",
     "start:http": "PYTHONPATH=src python3 -m apps.api.server",
+    "eurlex": "MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 npx -y @cyanheads/eur-lex-mcp-server",
     "validate:manifest": "office-addin-manifest validate apps/word_addin/manifest.xml",
     "test:js": "node --test apps/word_addin/tests/*.test.mjs apps/feishu/tests/*.test.mjs"
   },

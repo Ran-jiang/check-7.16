@@ -20,7 +20,14 @@ import re
 
 from ..domain.legal_numbers import chinese_number_to_int
 
-from ..domain.citation import ArticleRef, LegalSource, LegalSourceType
+from ..domain.citation import (
+    ArticleRef,
+    LegalSource,
+    LegalSourceType,
+    StructureRef,
+    StructureUnit,
+)
+from .jurisdiction import detect_jurisdiction
 
 
 # ============================================================
@@ -485,7 +492,12 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
             legal_sources.append(LegalSource(
                 title=title,
                 source_type=source_type,
+                jurisdiction=detect_jurisdiction(title, text[:m.start()]),
                 articles=articles,
+                # 章节引用只在无条款引用时抽取（有条号时章节仅是定位前缀）
+                structures=(
+                    _extract_structure_refs(segment) if not articles else []
+                ),
             ))
             seen_titles.add(title)
 
@@ -502,6 +514,34 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
     legal_sources.extend(standard_sources)
 
     return legal_sources
+
+
+# 章节引用链：紧跟在《法名》之后的 第X编/分编/章/节 连写（无条号时）
+_STRUCTURE_CHAIN_PATTERN = re.compile(
+    r"^[\s　的]*((?:第[一二三四五六七八九十百千零两0-9]+(?:编|分编|章|节))+)"
+)
+_STRUCTURE_UNIT_PATTERN = re.compile(
+    r"第([一二三四五六七八九十百千零两0-9]+)(编|分编|章|节)"
+)
+
+
+def _extract_structure_refs(segment: str) -> list[StructureRef]:
+    """从法名后的紧邻文本抽取章节引用（如"第三编第四章"）。"""
+    match = _STRUCTURE_CHAIN_PATTERN.match(segment)
+    if not match:
+        return []
+    chain = match.group(1)
+    units = []
+    for unit_match in _STRUCTURE_UNIT_PATTERN.finditer(chain):
+        number = chinese_number_to_int(unit_match.group(1))
+        units.append(StructureUnit(
+            unit=unit_match.group(2),
+            number=number,
+            number_text=unit_match.group(0),
+        ))
+    if not units:
+        return []
+    return [StructureRef(label=chain, units=units)]
 
 
 # ============================================================
