@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="CCiteheck 法律引用核查：上传 Word 或粘贴文本，核查法规与司法案例引用。">
+  <title>CCiteheck 法律引用核查</title>
+  <link rel="stylesheet" href="/web-assets/web.css">
+</head>
+<body>
+  <header class="site-header">
+    <button id="home-button" class="wordmark" type="button" aria-label="返回首页"><span></span>CCiteheck</button>
+    <div class="header-copy">法律引用核查</div>
+  </header>
+
+  <main>
+    <section id="landing" class="landing">
+      <div class="intro">
+        <p class="eyebrow">可验证的法律写作</p>
+        <h1>每一处法律引用，<br>都应经得起追溯。</h1>
+        <p class="intro-copy">上传法律文书，核查法规法源、条款项定位、历史版本，以及司法案例身份与裁判观点。</p>
+        <ol class="steps" aria-label="核查步骤">
+          <li><em>01</em>识别文书引用</li><li><em>02</em>连接权威来源</li><li><em>03</em>审阅并下载修订版</li>
+        </ol>
+      </div>
+
+      <div class="entry-panel">
+        <div class="entry-tabs" role="tablist">
+          <button class="entry-tab is-active" data-entry="file" role="tab" aria-selected="true">上传 Word</button>
+          <button class="entry-tab" data-entry="text" role="tab" aria-selected="false">粘贴文本</button>
+        </div>
+        <div id="file-entry" class="entry-body">
+          <label id="drop-zone" class="drop-zone" for="docx-file">
+            <input id="docx-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+            <span class="file-mark" aria-hidden="true">W</span>
+            <strong id="file-label">选择或拖入 DOCX 文书</strong>
+            <small>单个文件不超过 25 MB</small>
+          </label>
+        </div>
+        <div id="text-entry" class="entry-body is-hidden">
+          <label class="text-label" for="source-text">待核查文本</label>
+          <textarea id="source-text" maxlength="200000" placeholder="例如：根据《中华人民共和国民法典》第五百七十七条规定……"></textarea>
+        </div>
+        <fieldset class="scope-options">
+          <legend>核查范围</legend>
+          <label><input id="web-statutes" type="checkbox" checked><span>法律法规引用</span></label>
+          <label><input id="web-cases" type="checkbox" checked><span>司法案例引用</span></label>
+        </fieldset>
+        <button id="check-button" class="primary-button" type="button">开始核查</button>
+        <p class="privacy-note">文书仅用于本次核查，临时副本将在 1 小时后自动清除。请勿上传国家秘密或依法不得传输的材料。</p>
+      </div>
+    </section>
+
+    <section id="progress" class="progress is-hidden" aria-live="polite">
+      <div class="progress-line"><span></span></div>
+      <p class="eyebrow">正在核查</p>
+      <h1 id="progress-title">正在解析文书结构</h1>
+      <p>法规与案例将沿不同链路连接权威来源，请保持页面打开。</p>
+    </section>
+
+    <section id="workspace" class="workspace is-hidden">
+      <header class="workspace-header">
+        <div><p class="eyebrow">核查工作台</p><h1 id="document-title">文书核查结果</h1><p id="summary-line"></p></div>
+        <div class="workspace-actions"><button id="new-check" class="secondary-button" type="button">核查新文书</button><a id="download-button" class="primary-button is-disabled" href="#">下载修订版</a></div>
+      </header>
+      <nav class="filters" aria-label="筛选核查结果">
+        <div id="status-filters" class="filter-group"></div>
+        <div class="filter-group kind-filters">
+          <button class="filter-button is-active" data-kind="all">全部引用</button>
+          <button class="filter-button" data-kind="statute">法规</button>
+          <button class="filter-button" data-kind="case">案例</button>
+        </div>
+      </nav>
+      <div class="workbench">
+        <section class="document-pane" aria-labelledby="preview-title">
+          <div class="pane-heading"><h2 id="preview-title">文书原文</h2><span>点击高亮查看核查结果</span></div>
+          <article id="document-preview" class="paper"></article>
+        </section>
+        <aside class="results-pane" aria-labelledby="result-list-title">
+          <div class="pane-heading"><h2 id="result-list-title">核查结果</h2><span id="visible-count"></span></div>
+          <div id="web-results" class="web-results"></div>
+        </aside>
+      </div>
+      <footer class="workspace-privacy">核查会话与上传文件在 1 小时后自动失效。下载修订版不会覆盖原文件。</footer>
+    </section>
+  </main>
+  <div id="toast" class="toast is-hidden" role="alert"></div>
+  <script type="module" src="/web-assets/web.js"></script>
+</body>
+</html>

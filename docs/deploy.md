@@ -53,7 +53,8 @@ PYTHONPATH=src python3 -m apps.cli.main doctor --law-db data/laws.sqlite
 
 ## 场景二：服务器部署（团队使用）
 
-架构：服务器跑后端 + EUR-Lex 服务，API key 全部留在服务器；用户 Word 里装指向服务器域名的插件，零配置。
+架构：服务器跑网页版、统一后端与 EUR-Lex 服务，API key 全部留在服务器；
+普通用户直接访问域名，Word 用户安装指向同一域名 `/taskpane.html` 的插件。
 
 ### 1. 起服务
 
@@ -120,6 +121,7 @@ npm run validate:manifest
 - [ ] 服务器上 `doctor` 四项 OK（law_db / qwen / pkulaw / eurlex）
 - [ ] `curl https://check.example.com/api/health` 返回 `{"status":"ok"}`
 - [ ] `CCITECHECK_DEBUG_CAPTURE=0` 已设置（多用户文书原文不落盘）
+- [ ] 网页上传、粘贴核查、接受/撤销修订和修订版 DOCX 下载均已验收
 - [ ] **访问控制**：当前 API 无鉴权，任何拿到域名的人都能消耗千问/法宝额度。
       内部使用至少在 nginx 限 IP 段或加 Basic Auth；开放公网前必须给 API
       增加认证层（待办）。

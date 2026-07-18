@@ -56,6 +56,63 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
     assert payload["summary"]["total"] == 1
 
 
+def test_web_document_check_returns_preview_session_and_download(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+    document = Document()
+    document.add_paragraph("依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。")
+    buffer = BytesIO()
+    document.save(buffer)
+
+    api_module = importlib.import_module("apps.api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module, "create_run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("web uploads must not be debug-captured")))
+    client = TestClient(api_module.app)
+    response = client.post("/api/web/checks", json={
+        "file_name": "网页测试.docx",
+        "docx_base64": base64.b64encode(buffer.getvalue()).decode(),
+        "semantic_check": False,
+    })
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"]
+    assert payload["preview_blocks"][0]["block_id"] == "word:p:0"
+    assert payload["preview_blocks"][0]["text"].startswith("依据《中华人民共和国民法典》")
+    download = client.get(f"/api/web/sessions/{payload['session_id']}/document")
+    assert download.status_code == 200
+    assert download.content.startswith(b"PK")
+
+
+def test_web_text_check_uses_same_pipeline(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+    api_module = importlib.import_module("apps.api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    client = TestClient(api_module.app)
+
+    response = client.post("/api/web/checks/text", json={
+        "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
+        "semantic_check": False,
+    })
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["total"] == 1
+    assert response.json()["preview_blocks"][0]["block_id"] == "word:p:0"
+
+
+def test_web_page_has_public_security_and_cache_headers():
+    api_module = importlib.import_module("apps.api.app")
+    client = TestClient(api_module.app)
+
+    response = client.get("/web/")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def _seed_law_db(db_path):
     init_db(db_path)
     with connect(db_path) as connection:

@@ -1,0 +1,213 @@
+import { normalizeCaseResult, normalizeStatuteResult, findingLabel } from "/assets/result-models.js"
+import { caseViewOf } from "/assets/case-view-model.js"
+import { statuteViewOf } from "/assets/statute-view-model.js"
+
+const state = { entry: "file", file: null, result: null, status: "all", kind: "all", accepted: new Set(), selected: null }
+const $ = id => document.getElementById(id)
+
+document.querySelectorAll(".entry-tab").forEach(button => button.addEventListener("click", () => switchEntry(button.dataset.entry)))
+document.querySelectorAll(".kind-filters button").forEach(button => button.addEventListener("click", () => { state.kind = button.dataset.kind; syncKindButtons(); renderResults() }))
+$("docx-file").addEventListener("change", event => selectFile(event.target.files[0]))
+$("drop-zone").addEventListener("dragover", event => { event.preventDefault(); event.currentTarget.classList.add("is-dragging") })
+$("drop-zone").addEventListener("dragleave", event => event.currentTarget.classList.remove("is-dragging"))
+$("drop-zone").addEventListener("drop", event => { event.preventDefault(); event.currentTarget.classList.remove("is-dragging"); selectFile(event.dataTransfer.files[0]) })
+$("check-button").addEventListener("click", runCheck)
+$("home-button").addEventListener("click", showLanding)
+$("new-check").addEventListener("click", showLanding)
+
+function switchEntry(entry) {
+  state.entry = entry
+  document.querySelectorAll(".entry-tab").forEach(button => {
+    const active = button.dataset.entry === entry
+    button.classList.toggle("is-active", active)
+    button.setAttribute("aria-selected", String(active))
+  })
+  $("file-entry").classList.toggle("is-hidden", entry !== "file")
+  $("text-entry").classList.toggle("is-hidden", entry !== "text")
+}
+
+function selectFile(file) {
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith(".docx")) return toast("请选择 DOCX 格式文书")
+  if (file.size > 25 * 1024 * 1024) return toast("文档超过 25 MB 限制")
+  state.file = file
+  $("file-label").textContent = file.name
+  $("drop-zone").classList.add("has-file")
+}
+
+async function runCheck() {
+  const scope = { include_statutes: $("web-statutes").checked, include_cases: $("web-cases").checked, semantic_check: true }
+  if (!scope.include_statutes && !scope.include_cases) return toast("请至少选择一种核查范围")
+  let path, payload
+  if (state.entry === "file") {
+    if (!state.file) return toast("请先选择 DOCX 文书")
+    path = "/api/web/checks"
+    payload = { file_name: state.file.name, docx_base64: await fileBase64(state.file), ...scope }
+  } else {
+    const text = $("source-text").value.trim()
+    if (!text) return toast("请先粘贴待核查文本")
+    path = "/api/web/checks/text"
+    payload = { file_name: "粘贴文本.docx", text, ...scope }
+  }
+  showOnly("progress")
+  cycleProgress()
+  try {
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || `核查服务返回 ${response.status}`)
+    state.result = data
+    state.status = "all"
+    state.kind = "all"
+    state.accepted = new Set()
+    state.selected = null
+    renderWorkspace()
+  } catch (error) {
+    showLanding()
+    toast(error.message || "核查失败")
+  }
+}
+
+function renderWorkspace() {
+  const { result } = state
+  $("document-title").textContent = result.file_name
+  const s = result.summary
+  $("summary-line").textContent = `共 ${s.reference_total} 条引用 · ${s.passed} 处通过 · ${s.issues} 处未通过 · ${s.bugs} 处待核实`
+  $("download-button").href = `/api/web/sessions/${result.session_id}/document`
+  $("download-button").classList.remove("is-disabled")
+  renderStatusFilters()
+  syncKindButtons()
+  renderPreview()
+  renderResults()
+  showOnly("workspace")
+}
+
+function checks() {
+  if (!state.result) return []
+  return [
+    ...state.result.verification.statute_results.map(item => ({ ...normalizeStatuteResult(item), check_kind: "statute" })),
+    ...state.result.verification.case_results.map(item => ({ ...normalizeCaseResult(item), check_kind: "case" })),
+  ].sort((a, b) => locationOrder(a) - locationOrder(b))
+}
+
+function renderStatusFilters() {
+  const counts = { all: checks().length, issue: 0, bug: 0, pass: 0 }
+  checks().forEach(check => counts[check.outcome] = (counts[check.outcome] || 0) + 1)
+  $("status-filters").replaceChildren(...[["all", "全部"], ["issue", "未通过"], ["bug", "待核实"], ["pass", "已通过"]].map(([value, label]) => {
+    const button = el("button", `filter-button${state.status === value ? " is-active" : ""}`)
+    button.type = "button"
+    button.append(label, el("em", "", String(counts[value] || 0)))
+    button.addEventListener("click", () => { state.status = value; renderStatusFilters(); renderResults() })
+    return button
+  }))
+}
+
+function renderResults() {
+  const visible = checks().filter(check => (state.status === "all" || check.outcome === state.status) && (state.kind === "all" || check.check_kind === state.kind))
+  $("visible-count").textContent = `${visible.length} 条`
+  $("web-results").replaceChildren(...visible.map(createResultCard))
+  if (!visible.length) $("web-results").append(el("div", "empty-state", "当前筛选条件下没有核查结果。"))
+}
+
+function createResultCard(check) {
+  const view = check.check_kind === "case" ? caseViewOf(check, { compact: true }) : statuteViewOf(check, { compact: true })
+  const card = el("article", `web-result-card is-${check.outcome}${state.selected === check.check_id ? " is-selected" : ""}`)
+  card.dataset.checkId = check.check_id
+  const top = el("button", "result-card-top")
+  top.type = "button"
+  top.append(el("span", "result-kind", check.check_kind === "case" ? "司法案例" : "法律法规"), el("span", `result-status is-${check.outcome}`, view.badge.text))
+  top.addEventListener("click", () => selectCheck(check))
+  card.append(top, el("h3", "", view.refLine.text || check.claim_text))
+  const tags = el("div", "result-tags")
+  ;(check.findings || []).forEach(finding => tags.append(el("span", "", findingLabel(finding, check.check_kind))))
+  if (tags.childNodes.length) card.append(tags)
+  if (view.verdict?.suggestion) card.append(el("p", "result-suggestion", view.verdict.suggestion))
+  if (view.evidence) card.append(createEvidence(view.evidence))
+  const proposal = revisionOf(check)
+  if (proposal) {
+    const accepted = state.accepted.has(check.check_id)
+    const button = el("button", `revision-button${accepted ? " is-accepted" : ""}`, accepted ? "撤销修订" : "接受修订")
+    button.type = "button"
+    button.addEventListener("click", () => toggleRevision(check, accepted))
+    card.append(button)
+  }
+  return card
+}
+
+function createEvidence(evidence) {
+  const details = el("details", "web-evidence")
+  details.append(el("summary", "", evidence.summaryLabel))
+  if (evidence.structurePath) details.append(el("p", "evidence-path", `章节位置：${evidence.structurePath}`))
+  if (evidence.articleText) details.append(el("blockquote", "", `${evidence.articleHeading ? `${evidence.articleHeading}　` : ""}${evidence.articleText}`))
+  if (evidence.url) {
+    const link = el("a", "source-link", "查看权威来源")
+    link.href = evidence.url; link.target = "_blank"; link.rel = "noopener noreferrer"
+    details.append(link)
+  }
+  return details
+}
+
+async function toggleRevision(check, accepted) {
+  const url = `/api/web/sessions/${state.result.session_id}/revisions${accepted ? `/${check.check_id}` : ""}`
+  const response = await fetch(url, accepted ? { method: "DELETE" } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ check_id: check.check_id }) })
+  const data = await response.json()
+  if (!response.ok) return toast(data.detail || "修订操作失败")
+  state.accepted = new Set(data.accepted_check_ids)
+  renderPreview()
+  renderResults()
+  toast(accepted ? "已撤销该项修订" : "已加入修订版，可随时撤销")
+}
+
+function renderPreview() {
+  const blocks = state.result.preview_blocks || []
+  $("document-preview").replaceChildren(...blocks.map(block => {
+    const tag = block.block_type === "heading" ? "h3" : "p"
+    const node = el(tag, `preview-block is-${block.block_type}`)
+    node.dataset.blockId = block.block_id
+    let text = revisedBlockText(block.text)
+    const related = checks().filter(check => (check.source_locations || []).some(location => location.block_id === block.block_id))
+    if (!related.length) node.textContent = text
+    else appendHighlightedText(node, text, related)
+    node.addEventListener("click", () => related.length && selectCheck(related[0]))
+    return node
+  }))
+}
+
+function appendHighlightedText(node, text, related) {
+  const ranges = related.map(check => {
+    const needle = revisedClaim(check)
+    const start = text.indexOf(needle)
+    return start >= 0 ? { start, end: start + needle.length, check } : null
+  }).filter(Boolean).sort((a, b) => a.start - b.start)
+  if (!ranges.length) { node.textContent = text; return }
+  let cursor = 0
+  for (const range of ranges) {
+    if (range.start < cursor) continue
+    node.append(text.slice(cursor, range.start))
+    const mark = el("mark", `citation-mark is-${range.check.outcome}${state.selected === range.check.check_id ? " is-selected" : ""}`, text.slice(range.start, range.end))
+    mark.dataset.checkId = range.check.check_id
+    node.append(mark)
+    cursor = range.end
+  }
+  node.append(text.slice(cursor))
+}
+
+function selectCheck(check) {
+  state.selected = check.check_id
+  renderPreview(); renderResults()
+  const preview = document.querySelector(`mark[data-check-id="${CSS.escape(check.check_id)}"]`) || document.querySelector(`[data-block-id="${CSS.escape(check.source_locations?.[0]?.block_id || "")}"]`)
+  const card = document.querySelector(`.web-result-card[data-check-id="${CSS.escape(check.check_id)}"]`)
+  preview?.scrollIntoView({ behavior: "smooth", block: "center" })
+  card?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+}
+
+function revisedBlockText(text) { for (const check of checks()) if (state.accepted.has(check.check_id)) { const r = revisionOf(check); if (r && text.includes(r.original_text)) text = text.replace(r.original_text, r.revised_text) } return text }
+function revisedClaim(check) { const r = revisionOf(check); return state.accepted.has(check.check_id) && r ? r.revised_text : check.claim_text }
+function revisionOf(check) { const revisions = (check.findings || []).map(item => item.revision).filter(item => item?.machine_applicable && item.revised_text); return revisions.length === 1 ? revisions[0] : null }
+function locationOrder(check) { return Number(String(check.source_locations?.[0]?.block_id || "").match(/\d+/)?.[0] || Number.MAX_SAFE_INTEGER) }
+function syncKindButtons() { document.querySelectorAll(".kind-filters button").forEach(button => button.classList.toggle("is-active", button.dataset.kind === state.kind)) }
+function showLanding() { showOnly("landing") }
+function showOnly(id) { for (const section of ["landing", "progress", "workspace"]) $(section).classList.toggle("is-hidden", section !== id); window.scrollTo({ top: 0, behavior: "smooth" }) }
+function cycleProgress() { const messages = ["正在解析文书结构", "正在连接权威法律来源", "正在核对法规与案例引用"]; let i = 0; $("progress-title").textContent = messages[0]; const timer = setInterval(() => { if ($("progress").classList.contains("is-hidden")) return clearInterval(timer); $("progress-title").textContent = messages[++i % messages.length] }, 2400) }
+function fileBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(new Error("文件读取失败")); reader.readAsDataURL(file) }) }
+function toast(message) { $("toast").textContent = message; $("toast").classList.remove("is-hidden"); clearTimeout(toast.timer); toast.timer = setTimeout(() => $("toast").classList.add("is-hidden"), 5000) }
+function el(tag, className = "", text = "") { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node }

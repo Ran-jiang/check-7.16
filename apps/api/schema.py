@@ -61,3 +61,28 @@ class DebugEventRequest(BaseModel):
     run_id: str = Field(min_length=1, max_length=64)
     event: str = Field(min_length=1, max_length=64)
     payload: dict = Field(default_factory=dict)
+
+
+class WebTextCheckRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+    file_name: str = Field(default="粘贴文本.docx", min_length=1, max_length=255)
+    semantic_check: bool = True
+    include_statutes: bool = True
+    include_cases: bool = True
+
+
+class WebPreviewBlock(BaseModel):
+    block_id: str
+    block_type: str
+    text: str
+    order: int
+
+
+class WebCheckResponse(DocumentCheckResponse):
+    session_id: str
+    expires_at: str
+    preview_blocks: list[WebPreviewBlock]
+
+
+class WebRevisionRequest(BaseModel):
+    check_id: str = Field(min_length=1, max_length=64)
