@@ -301,15 +301,22 @@ export class CheckUi {
   }
 
   // ②区：区块标签行（文书原文 + 定位原文）+ 灰色引文块
+  // 同一问题聚合多处出现时，按出现位置逐个给出定位按钮
   createQuoteZone(quoteText, jumpTarget, locateId) {
     const labelRow = element("div", "zone-label-row")
     labelRow.append(element("span", "zone-label", "文书原文"))
     if (jumpTarget) {
-      const jump = element("button", "action-button jump-button", "定位原文")
-      jump.type = "button"
-      jump.dataset.locateId = locateId
-      jump.addEventListener("click", () => this.handlers.onJump?.(jumpTarget))
-      labelRow.append(jump)
+      const locationCount = (jumpTarget.source_locations || []).length
+      const buttons = locationCount > 1
+        ? Array.from({ length: locationCount }, (_, index) => ({ text: `定位 ${index + 1}`, index }))
+        : [{ text: "定位原文", index: 0 }]
+      for (const { text, index } of buttons) {
+        const jump = element("button", "action-button jump-button", text)
+        jump.type = "button"
+        jump.dataset.locateId = locateId
+        jump.addEventListener("click", () => this.handlers.onJump?.(jumpTarget, index))
+        labelRow.append(jump)
+      }
     }
     return [labelRow, element("blockquote", "doc-quote", quoteText || "")]
   }

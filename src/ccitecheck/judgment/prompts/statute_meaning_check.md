@@ -28,6 +28,7 @@
 6. `doc_quote` 与 `statute_text` 内容不一致，是本任务需要比较的对象，不能因此输出 `insufficient_input`。只有 `statute_text` 为空、明显截断、不可读，或元数据与文本标题存在显式内部冲突时，才输出 `insufficient_input`。
 7. 必须把 `statute_text` 视为 `cited_source` 对应的权威文本。禁止根据模型记忆声称它实际属于另一条，也禁止用模型记忆补写其他条文。认为文书内容可能出自其他条款时，只能在修改建议中称其为“待重新检索核验的候选”，不得直接形成定位结论或修改条号。
 8. `location_recheck_required` 只有在文书所述规则与 `statute_text` 的规范对象、主题和法律效果完全无关，因而高度疑似引用了错误条号时才为 `true`。遗漏前提、扩大范围、缩小范围、省略但书、改变法律后果等仍可与本条文进行语义比较的情形必须为 `false`。
+9. `location_recheck_required` 为 `true` 时，`candidate_article_no` 为必填字段：给出你判断文书内容实际对应的同一部法律中**最可能的一个**条号，格式必须严格为“第X条”（X 用与法规原文一致的汉字数字，如“第一百八十八条”）；确实无法判断时必须为 `null`。`location_recheck_required` 为 `false` 时省略该字段或给 `null`。该候选仅是系统二次核查的首轮线索，系统会取回条文原文验证后才采用，验证不符时会另行向你索取新候选。
 
 ## 语言规范
 
@@ -53,7 +54,7 @@
 
 - `pass`：`issues` 为空数组，`notes` 为空字符串。
 - `issue`：`issues` 至少一项，每项为：
-  `{"error_type":"曲解权威文本原意","risk_level":"HIGH|MEDIUM","diff_summary":"...","suggestion":"...","location_recheck_required":true|false,"revised_text":"..."|null}`。
+  `{"error_type":"曲解权威文本原意","risk_level":"HIGH|MEDIUM","diff_summary":"...","suggestion":"...","location_recheck_required":true|false,"candidate_article_no":"第X条"|null,"revised_text":"..."|null}`。
 - `diff_summary` 不超过 120 字，必须包含“文书写了什么、原文是什么”的具体对照。
 - `insufficient_input`：`issues` 为空数组，`notes` 具体说明缺失或冲突。
 

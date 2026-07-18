@@ -1,0 +1,373 @@
+{
+  "schema_version": "0.5",
+  "generated_at": "2026-07-18T18:13:48.565983+00:00",
+  "source_claim_doc_id": "d43c259e-37f5-40b4-b74f-9ffa09bd07e0",
+  "statute_results": [
+    {
+      "check_id": "vc_00001",
+      "card_id": "card_00001",
+      "claim_id": "cl_00001",
+      "claim_text": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+      "law_title": "中华人民共和国劳动合同法",
+      "jurisdiction": "CN",
+      "document_quote": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+      "cited_locators": [],
+      "lookup_status": "relevant_articles_found",
+      "evidence": {
+        "law_title": "中华人民共和国劳动合同法",
+        "source_type": "law",
+        "article_no": null,
+        "article_text": "第八十二条　用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。\n\n第九十七条　本法施行前已依法订立且在本法施行之日存续的劳动合同，继续履行；本法第十四条第二款第三项规定连续订立固定期限劳动合同的次数，自本法施行后续订固定期限劳动合同时开始计算。\n本法施行前已建立劳动关系，尚未订立书面劳动合同的，应当自本法施行之日起一个月内订立。\n本法施行之日存续的劳动合同在本法施行后解除或者终止，依照本法第四十六条规定应当支付经济补偿的，经济补偿年限自本法施行之日起计算；本法施行前按照当时有关规定，用人单位应当向劳动者支付经济补偿的，按照当时有关规定执行。\n\n第十条　建立劳动关系，应当订立书面劳动合同。\n已建立劳动关系，未同时订立书面劳动合同的，应当自用工之日起一个月内订立书面劳动合同。\n用人单位与劳动者在用工前订立劳动合同的，劳动关系自用工之日起建立。",
+        "version_label": null,
+        "version_status": "has_articles",
+        "effective_from": null,
+        "effective_to": null,
+        "source_metadata": {
+          "authority": "全国人大常委会",
+          "category": "劳动用工",
+          "retrieval_method": "local_article_lexical_retrieval"
+        },
+        "related_articles": [
+          {
+            "article_no": "第八十二条",
+            "article_text": "用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。",
+            "relevance_score": 92.534103
+          },
+          {
+            "article_no": "第九十七条",
+            "article_text": "本法施行前已依法订立且在本法施行之日存续的劳动合同，继续履行；本法第十四条第二款第三项规定连续订立固定期限劳动合同的次数，自本法施行后续订固定期限劳动合同时开始计算。\n本法施行前已建立劳动关系，尚未订立书面劳动合同的，应当自本法施行之日起一个月内订立。\n本法施行之日存续的劳动合同在本法施行后解除或者终止，依照本法第四十六条规定应当支付经济补偿的，经济补偿年限自本法施行之日起计算；本法施行前按照当时有关规定，用人单位应当向劳动者支付经济补偿的，按照当时有关规定执行。",
+            "relevance_score": 42.837197
+          },
+          {
+            "article_no": "第十条",
+            "article_text": "建立劳动关系，应当订立书面劳动合同。\n已建立劳动关系，未同时订立书面劳动合同的，应当自用工之日起一个月内订立书面劳动合同。\n用人单位与劳动者在用工前订立劳动合同的，劳动关系自用工之日起建立。",
+            "relevance_score": 33.244657
+          }
+        ],
+        "structure_path": null,
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:13:42.631393+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "pass",
+        "findings": [],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_3a6c242090a0bd3a"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:1",
+          "char_start": 0,
+          "char_end": 64,
+          "anchor_text": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:13:42.631393+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00002",
+      "card_id": "card_00001",
+      "claim_id": "cl_00001",
+      "claim_text": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+      "law_title": "劳动合同法",
+      "jurisdiction": "CN",
+      "document_quote": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+      "cited_locators": [],
+      "lookup_status": "relevant_articles_found",
+      "evidence": {
+        "law_title": "中华人民共和国劳动合同法",
+        "source_type": "law",
+        "article_no": null,
+        "article_text": "第八十二条　用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。\n\n第九十七条　本法施行前已依法订立且在本法施行之日存续的劳动合同，继续履行；本法第十四条第二款第三项规定连续订立固定期限劳动合同的次数，自本法施行后续订固定期限劳动合同时开始计算。\n本法施行前已建立劳动关系，尚未订立书面劳动合同的，应当自本法施行之日起一个月内订立。\n本法施行之日存续的劳动合同在本法施行后解除或者终止，依照本法第四十六条规定应当支付经济补偿的，经济补偿年限自本法施行之日起计算；本法施行前按照当时有关规定，用人单位应当向劳动者支付经济补偿的，按照当时有关规定执行。\n\n第十条　建立劳动关系，应当订立书面劳动合同。\n已建立劳动关系，未同时订立书面劳动合同的，应当自用工之日起一个月内订立书面劳动合同。\n用人单位与劳动者在用工前订立劳动合同的，劳动关系自用工之日起建立。",
+        "version_label": null,
+        "version_status": "has_articles",
+        "effective_from": null,
+        "effective_to": null,
+        "source_metadata": {
+          "authority": "全国人大常委会",
+          "category": "劳动用工",
+          "retrieval_method": "local_article_lexical_retrieval"
+        },
+        "related_articles": [
+          {
+            "article_no": "第八十二条",
+            "article_text": "用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。",
+            "relevance_score": 92.534103
+          },
+          {
+            "article_no": "第九十七条",
+            "article_text": "本法施行前已依法订立且在本法施行之日存续的劳动合同，继续履行；本法第十四条第二款第三项规定连续订立固定期限劳动合同的次数，自本法施行后续订固定期限劳动合同时开始计算。\n本法施行前已建立劳动关系，尚未订立书面劳动合同的，应当自本法施行之日起一个月内订立。\n本法施行之日存续的劳动合同在本法施行后解除或者终止，依照本法第四十六条规定应当支付经济补偿的，经济补偿年限自本法施行之日起计算；本法施行前按照当时有关规定，用人单位应当向劳动者支付经济补偿的，按照当时有关规定执行。",
+            "relevance_score": 42.837197
+          },
+          {
+            "article_no": "第十条",
+            "article_text": "建立劳动关系，应当订立书面劳动合同。\n已建立劳动关系，未同时订立书面劳动合同的，应当自用工之日起一个月内订立书面劳动合同。\n用人单位与劳动者在用工前订立劳动合同的，劳动关系自用工之日起建立。",
+            "relevance_score": 33.244657
+          }
+        ],
+        "structure_path": null,
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:13:42.631506+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "pass",
+        "findings": [],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_71f684cf79f46a16"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:1",
+          "char_start": 0,
+          "char_end": 64,
+          "anchor_text": "一、根据《中华人民共和国劳动合同法》（以下简称《劳动合同法》）的规定，用人单位应当自用工之日起一个月内与劳动者订立书面劳动合同。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:13:42.631506+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00003",
+      "card_id": "card_00002",
+      "claim_id": "cl_00002",
+      "claim_text": "二、依据《劳动合同法》第八十二条，用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资。",
+      "law_title": "劳动合同法",
+      "jurisdiction": "CN",
+      "document_quote": "用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资",
+      "cited_locators": [
+        {
+          "article_no": "第八十二条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国劳动合同法",
+        "source_type": "law",
+        "article_no": "第八十二条",
+        "article_text": "用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2013-07-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2013-07-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2012-12-28",
+          "effective_from": "2013-07-01",
+          "effective_to": null,
+          "effective_at": "2013-07-01"
+        },
+        "related_articles": [],
+        "structure_path": "第七章 法律责任",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:13:42.631573+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [
+        {
+          "code": "meaning_distorted",
+          "risk_level": "HIGH",
+          "summary": "文书称用人单位未订立书面劳动合同应支付三倍工资，而《劳动合同法》第八十二条明确规定为支付二倍工资。文书将法定赔偿标准由二倍篡改为三倍，实质改变了法律后果。",
+          "suggestion": "将“三倍的工资”修正为“二倍的工资”，以符合《劳动合同法》第八十二条关于未签书面合同双倍工资的法定标准。",
+          "cited_locator": null,
+          "resolved_locator": null,
+          "historical_version": null,
+          "location_recheck_required": false,
+          "candidate_article_no": null,
+          "revision": {
+            "strategy": "replace_exact_text",
+            "original_text": "用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资",
+            "revised_text": "用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付二倍的工资",
+            "rationale": "将“三倍的工资”修正为“二倍的工资”，以符合《劳动合同法》第八十二条关于未签书面合同双倍工资的法定标准。",
+            "machine_applicable": true,
+            "preconditions": [
+              "original_text_unique",
+              "document_unchanged"
+            ]
+          }
+        }
+      ],
+      "outcome": "issue",
+      "message": "该问题在文书中共出现 3 处，已合并为一条，可逐处定位。",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "meaning_distorted",
+            "risk_level": "HIGH",
+            "summary": "文书称用人单位未订立书面劳动合同应支付三倍工资，而《劳动合同法》第八十二条明确规定为支付二倍工资。文书将法定赔偿标准由二倍篡改为三倍，实质改变了法律后果。",
+            "suggestion": "将“三倍的工资”修正为“二倍的工资”，以符合《劳动合同法》第八十二条关于未签书面合同双倍工资的法定标准。",
+            "cited_locator": null,
+            "resolved_locator": null,
+            "historical_version": null,
+            "location_recheck_required": false,
+            "candidate_article_no": null,
+            "revision": {
+              "strategy": "replace_exact_text",
+              "original_text": "用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资",
+              "revised_text": "用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付二倍的工资",
+              "rationale": "将“三倍的工资”修正为“二倍的工资”，以符合《劳动合同法》第八十二条关于未签书面合同双倍工资的法定标准。",
+              "machine_applicable": true,
+              "preconditions": [
+                "original_text_unique",
+                "document_unchanged"
+              ]
+            }
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_7ebd88304507b927"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:2",
+          "char_start": 0,
+          "char_end": 57,
+          "anchor_text": "二、依据《劳动合同法》第八十二条，用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        },
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:3",
+          "char_start": 0,
+          "char_end": 67,
+          "anchor_text": "三、对于分公司用工，同样依据《劳动合同法》第八十二条，用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        },
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:4",
+          "char_start": 0,
+          "char_end": 67,
+          "anchor_text": "四、外包转自营人员亦同：依据《劳动合同法》第八十二条，用人单位超过一个月不满一年未订立书面劳动合同的，应当向劳动者每月支付三倍的工资。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:13:42.631573+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    }
+  ],
+  "case_results": []
+}

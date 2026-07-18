@@ -278,24 +278,110 @@ def test_statute_llm_rejects_deterministic_error_types(monkeypatch, error_type):
         checker.compare("文书表述", "上下文", "《某法》第一条", evidence)
 
 
-def test_case_llm_rejects_separate_misrepresentation_type(monkeypatch):
+_REASONING_TEXT = "公司章程可以限制股权转让。该约定系公司自治的体现。该约定不违反公司法的禁止性规定。"
+
+
+def _reasoning_response(assertions):
+    return json.dumps(
+        {"verdict": "issue", "assertions": assertions, "notes": ""},
+        ensure_ascii=False,
+    )
+
+
+def test_case_distorted_with_valid_hits_returns_excerpt_from_source(monkeypatch):
+    response = _reasoning_response([{
+        "id": 1, "judgment": "distorted", "hit_sentence_ids": [1, 2],
+        "risk_level": "HIGH",
+        "diff_summary": "文书将章程限制股权转让扩张为股东失权。",
+        "suggestion": "按说理原句改写为章程限制转让。",
+    }])
+    _install_mock_client(
+        monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+
+    check = QwenSemanticChecker(api_key="test-key").compare_holding(
+        "法院认可章程对股东失权的安排。", _REASONING_TEXT, "某案",
+    )
+
+    assert check.verdict == CheckVerdict.ISSUE
+    finding = check.findings[0]
+    assert finding.code.value == "holding_distorted"
+    assert finding.matched_excerpt == "……公司章程可以限制股权转让。该约定系公司自治的体现。……"
+
+
+def test_case_distorted_with_fabricated_hits_downgrades_to_manual(monkeypatch):
+    response = _reasoning_response([{
+        "id": 1, "judgment": "distorted", "hit_sentence_ids": [99],
+        "risk_level": "HIGH", "diff_summary": "编造的定位", "suggestion": "改写。",
+    }])
+    _install_mock_client(
+        monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+
+    check = QwenSemanticChecker(api_key="test-key").compare_holding(
+        "法院认可章程对股东失权的安排。", _REASONING_TEXT, "某案",
+    )
+
+    finding = check.findings[0]
+    assert finding.code.value == "holding_unsupported"
+    assert finding.matched_excerpt is None
+    assert "人工核对" in finding.suggestion
+
+
+def test_case_unsupported_reports_missing_basis(monkeypatch):
+    response = _reasoning_response([{
+        "id": 1, "judgment": "unsupported", "hit_sentence_ids": [],
+        "risk_level": "MEDIUM",
+        "diff_summary": "说理只讨论股权转让限制，未涉及公司解散。",
+        "suggestion": "删除该观点或核对案例来源。",
+    }])
+    _install_mock_client(
+        monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+
+    check = QwenSemanticChecker(api_key="test-key").compare_holding(
+        "法院认为公司应当解散。", _REASONING_TEXT, "某案",
+    )
+
+    assert check.verdict == CheckVerdict.ISSUE
+    assert check.findings[0].code.value == "holding_unsupported"
+
+
+def test_case_unsupported_on_truncated_reasoning_defers_to_manual(monkeypatch):
+    truncated_reasoning = "公司章程可以限制股权转让。损失赔偿额应当相当于因违约所造"
+    response = _reasoning_response([{
+        "id": 1, "judgment": "unsupported", "hit_sentence_ids": [],
+        "risk_level": "MEDIUM", "diff_summary": "未讨论", "suggestion": "核对。",
+    }])
+    _install_mock_client(
+        monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)),
+    )
+
+    check = QwenSemanticChecker(api_key="test-key").compare_holding(
+        "法院认为公司应当解散。", truncated_reasoning, "某案",
+    )
+
+    assert check.verdict == CheckVerdict.INSUFFICIENT_INPUT
+    assert check.findings == []
+    assert "截断" in check.notes and "人工核对" in check.notes
+
+
+def test_case_all_supported_passes(monkeypatch):
     response = json.dumps({
-        "verdict": "issue",
-        "issues": [{
-            "error_type": "裁判观点转述失真",
-            "risk_level": "HIGH",
-            "diff_summary": "文书与裁判观点相反",
-            "suggestion": "按裁判观点改写。",
-        }],
+        "verdict": "pass",
+        "assertions": [{"id": 1, "judgment": "supported", "hit_sentence_ids": [2]}],
         "notes": "",
     }, ensure_ascii=False)
     _install_mock_client(
-        monkeypatch,
-        lambda request: httpx.Response(200, json=_qwen_response(response)),
+        monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)),
     )
 
-    with pytest.raises(SemanticResponseError, match="invalid case holding error_type"):
-        QwenSemanticChecker(api_key="test-key").compare_holding("文书观点", "权威观点", "某案")
+    check = QwenSemanticChecker(api_key="test-key").compare_holding(
+        "章程限制转让系公司自治。", _REASONING_TEXT, "某案",
+    )
+
+    assert check.verdict == CheckVerdict.PASS
+    assert check.findings == []
 
 
 def test_retry_after_429_then_success(monkeypatch):

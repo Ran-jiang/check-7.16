@@ -641,6 +641,8 @@ def test_party_style_case_name_is_cleaned_and_sent_as_party_keywords(tmp_path: P
         calls = []
         def search_keyword(self, title, fulltext):
             self.calls.append((title, fulltext))
+            if title:
+                return []
             return [PkulawCaseRecord(
                 title="庄羽与郭敬明等侵犯著作权纠纷上诉案",
                 case_number="(2005)高民终字第539号",
@@ -650,7 +652,7 @@ def test_party_style_case_name_is_cleaned_and_sent_as_party_keywords(tmp_path: P
 
     searcher = PartySearcher()
     verify_claim_document(claim_doc, db_path, case_searcher=searcher)
-    assert searcher.calls == [("", "庄羽 郭敬明")]
+    assert searcher.calls == [("庄羽诉郭敬明案", ""), ("", "庄羽 郭敬明")]
 
 
 def test_case_name_containment_requires_manual_review(tmp_path: Path):
@@ -1100,7 +1102,7 @@ def test_ordinary_meaning_distortion_does_not_trigger_secondary_locator_scan():
         location_recheck_required=False,
     )
     meaning = StatuteMeaningCheck(verdict=CheckVerdict.ISSUE, findings=[finding])
-    _verify_semantic_locator_candidates([source], [item], {0: ([], meaning)})
+    _verify_semantic_locator_candidates([source], [item], {0: ([], meaning)}, {}, None)
     assert source.calls == 0
 
 
@@ -1140,3 +1142,179 @@ def test_bare_multi_law_listing_passes_existence_check_without_article_text(tmp_
     )
     assert [item.outcome for item in result.statute_results] == ["pass", "pass"]
     assert all(item.evidence.article_text is None for item in result.statute_results)
+
+
+def _loop_item(quote="向人民法院请求保护民事权利的诉讼时效期间为三年。"):
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        jurisdiction="CN", law_title="中华人民共和国民法典", source_type="law",
+        article=None, article_no="第一百九十六条", document_quote=quote,
+        claim=SimpleNamespace(text=f"根据《中华人民共和国民法典》第一百九十六条，{quote}"),
+        lookup_key=("中华人民共和国民法典", "law", "第一百九十六条"),
+    )
+
+
+def _loop_evidence(article_no, text):
+    from ccitecheck.domain.evidence import ArticleEvidence, SourceTier, SourceTrace, LookupStatus
+    return ArticleEvidence(
+        law_title="中华人民共和国民法典", source_type="law", article_no=article_no,
+        article_text=text,
+        data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test",
+                                status=LookupStatus.ARTICLE_FOUND),
+    )
+
+
+class _LoopLocator:
+    def __init__(self, articles):
+        self.articles = articles
+        self.lookups = []
+
+    def locate_candidates(self, request):
+        raise AssertionError("有候选线索时不应走语义召回")
+
+    def lookup(self, request):
+        from types import SimpleNamespace
+        from ccitecheck.domain.evidence import LookupStatus
+        self.lookups.append(request.article_no)
+        text = self.articles.get(request.article_no)
+        if text is None:
+            return SimpleNamespace(status=LookupStatus.LAW_FOUND_ARTICLE_MISSING, evidence=None)
+        return SimpleNamespace(
+            status=LookupStatus.ARTICLE_FOUND,
+            evidence=_loop_evidence(request.article_no, text),
+        )
+
+
+def _recheck_finding(candidate):
+    from ccitecheck.domain.statute_results import StatuteFinding
+    return StatuteFinding(
+        code=StatuteErrorCode.MEANING_DISTORTED, risk_level="HIGH",
+        summary="文书内容与所引条文无关", suggestion="请核实条号。",
+        location_recheck_required=True, candidate_article_no=candidate,
+    )
+
+
+def _run_loop(source, finding, checker, item=None):
+    from ccitecheck.application.verify_claims import _verify_semantic_locator_candidates
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteMeaningCheck
+    meaning = StatuteMeaningCheck(verdict=CheckVerdict.ISSUE, findings=[finding])
+    _verify_semantic_locator_candidates(
+        [source], [item or _loop_item()], {0: ([], meaning)}, {}, checker,
+    )
+    return finding
+
+
+def test_locator_loop_confirms_reproposed_candidate_by_semantic_compare():
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteMeaningCheck
+
+    source = _LoopLocator({
+        "第二百条": "无关条文的文本。",
+        "第一百八十八条": "向人民法院请求保护民事权利的诉讼时效期间为三年。法律另有规定的，依照其规定。",
+    })
+
+    class Checker:
+        proposals = []
+        def compare(self, doc_quote, quote_context, cited_source, evidence):
+            verdict = CheckVerdict.PASS if evidence.article_no == "第一百八十八条" else CheckVerdict.ISSUE
+            return StatuteMeaningCheck(verdict=verdict)
+        def propose_locator_candidate(self, **kwargs):
+            self.proposals.append(kwargs)
+            return "第一百八十八条"
+
+    checker = Checker()
+    finding = _run_loop(source, _recheck_finding("第二百条"), checker)
+
+    assert source.lookups == ["第二百条", "第一百八十八条"]
+    assert checker.proposals[0]["tried"][0]["article_no"] == "第二百条"
+    assert finding.resolved_locator.article_no == "第一百八十八条"
+    assert finding.revision is not None
+    assert "第一百八十八条" in finding.revision.revised_text
+    assert "更正引用条号" in finding.suggestion
+
+
+def test_locator_loop_exhaustion_reports_tried_articles():
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteMeaningCheck
+
+    source = _LoopLocator({"第二百条": "无关一。", "第二百零一条": "无关二。", "第二百零二条": "无关三。"})
+
+    class Checker:
+        def __init__(self):
+            self.queue = ["第二百零一条", "第二百零二条"]
+        def compare(self, *args, **kwargs):
+            return StatuteMeaningCheck(verdict=CheckVerdict.ISSUE)
+        def propose_locator_candidate(self, **kwargs):
+            return self.queue.pop(0) if self.queue else None
+
+    finding = _run_loop(source, _recheck_finding("第二百条"), Checker())
+
+    assert finding.resolved_locator is None
+    assert "已复查第二百条、第二百零一条、第二百零二条" in finding.suggestion
+    assert "请人工确认实际引用条款" in finding.suggestion
+
+
+def test_locator_loop_deterministic_containment_needs_no_checker():
+    source = _LoopLocator({
+        "第一百八十八条": "向人民法院请求保护民事权利的诉讼时效期间为三年。",
+    })
+    finding = _run_loop(source, _recheck_finding("第一百八十八条"), None)
+
+    assert finding.resolved_locator.article_no == "第一百八十八条"
+    assert finding.revision is not None
+
+
+def test_duplicate_statute_issues_merge_into_single_card_with_all_locations():
+    from ccitecheck.application.verify_claims import _aggregate_duplicate_statute_results
+    from ccitecheck.domain.citation import SourceLocation
+    from ccitecheck.domain.evidence import LookupStatus
+    from ccitecheck.domain.statute_results import (
+        StatuteFinding, StatuteLocator, StatuteVerificationResult,
+    )
+
+    def make(check_id, block_id):
+        return StatuteVerificationResult(
+            check_id=check_id, card_id=f"card_{check_id}", claim_id=f"cl_{check_id}",
+            claim_text="依据《劳动合同法》第八十二条，应支付三倍工资。",
+            law_title="中华人民共和国劳动合同法",
+            lookup_status=LookupStatus.ARTICLE_FOUND,
+            cited_locators=[StatuteLocator(article_no="第八十二条")],
+            findings=[StatuteFinding(
+                code=StatuteErrorCode.MEANING_DISTORTED, risk_level="HIGH",
+                summary="三倍应为二倍", suggestion="将三倍更正为二倍。",
+            )],
+            outcome="issue",
+            source_locations=[SourceLocation(block_id=block_id, char_start=0, char_end=10)],
+        )
+
+    results = [make("a", "blk-1"), make("b", "blk-2"), make("c", "blk-3")]
+    merged = _aggregate_duplicate_statute_results(results)
+
+    assert len(merged) == 1
+    assert [loc.block_id for loc in merged[0].source_locations] == ["blk-1", "blk-2", "blk-3"]
+    assert "共出现 3 处" in merged[0].message
+
+
+def test_locator_loop_accepts_candidate_with_comparable_residual_issue():
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteFinding, StatuteMeaningCheck
+
+    source = _LoopLocator({
+        "第一百八十八条": "向人民法院请求保护民事权利的诉讼时效期间为三年。"
+        "诉讼时效期间自权利人知道或者应当知道权利受到损害以及义务人之日起计算。",
+    })
+
+    class Checker:
+        def compare(self, doc_quote, quote_context, cited_source, evidence):
+            return StatuteMeaningCheck(verdict=CheckVerdict.ISSUE, findings=[StatuteFinding(
+                code=StatuteErrorCode.MEANING_DISTORTED, risk_level="MEDIUM",
+                summary="遗漏起算要件中的义务人", suggestion="补写“以及义务人”。",
+                location_recheck_required=False,
+            )])
+
+    finding = _run_loop(source, _recheck_finding("第一百八十八条"), Checker())
+
+    assert finding.resolved_locator.article_no == "第一百八十八条"
+    assert "更正引用条号" in finding.suggestion
+    assert "更正后请注意" in finding.suggestion and "义务人" in finding.suggestion

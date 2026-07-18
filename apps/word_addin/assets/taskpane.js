@@ -23,9 +23,9 @@ document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
 
 ui.setHandlers({
-  onJump: async check => {
+  onJump: async (check, locationIndex = 0) => {
     try {
-      const details = await jumpToSource(check, lastResult.document_key)
+      const details = await jumpToSource(check, lastResult.document_key, locationIndex)
       await saveWordDebug("locate_success", check, details)
       if (details.warning) ui.showMessage(details.warning)
     } catch (error) {

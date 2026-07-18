@@ -16,7 +16,8 @@ from .checks import CheckVerdict, ExecutionStatus
 class CaseErrorCode(str, Enum):
     CASE_NOT_FOUND = "case_not_found"
     CASE_IDENTITY_ERROR = "case_identity_error"
-    HOLDING_NOT_IN_CASE = "holding_not_in_case"
+    HOLDING_UNSUPPORTED = "holding_unsupported"
+    HOLDING_DISTORTED = "holding_distorted"
 
 
 class CaseFinding(BaseModel):
@@ -24,6 +25,10 @@ class CaseFinding(BaseModel):
     risk_level: Literal["HIGH", "MEDIUM"]
     summary: str = Field(max_length=300)
     suggestion: str
+    matched_excerpt: str | None = Field(
+        default=None,
+        description="命中的裁判说理原文句段，程序按句号从权威文本取回，前后以省略号标示节选",
+    )
     revision: RevisionProposal | None = None
 
 

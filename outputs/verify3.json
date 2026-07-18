@@ -1,0 +1,210 @@
+{
+  "schema_version": "0.5",
+  "generated_at": "2026-07-18T17:41:32.342507+00:00",
+  "source_claim_doc_id": "68402860-d82f-476b-8cfb-3dce2d0bdf6d",
+  "statute_results": [],
+  "case_results": [
+    {
+      "check_id": "cc_00001",
+      "claim_id": "cl_00001",
+      "claim_text": "在（2018）最高法民再396号案中，最高人民法院认为，销售者销售侵犯注册商标专用权商品，若能证明合法来源且尽到合理注意义务，可不承担赔偿责任。",
+      "jurisdiction": "CN",
+      "cited_case_number": "（2018）最高法民再396号",
+      "cited_case_name": null,
+      "cited_court": "最高人民法院",
+      "lookup_status": "verified",
+      "evidence": {
+        "matched_text": "广州市指南针会展服务有限公司、广州中唯企业管理咨询服务有限公司诉优衣库商贸有限公司、优衣库商贸有限公司上海月星环球港店侵害商标权纠纷案",
+        "case_number": "（2018）最高法民再396号 ",
+        "gid": "",
+        "court": "最高人民法院",
+        "title": "广州市指南针会展服务有限公司、广州中唯企业管理咨询服务有限公司诉优衣库商贸有限公司、优衣库商贸有限公司上海月星环球港店侵害商标权纠纷案",
+        "last_instance_date": "2018.12.28",
+        "url": "https://www.pkulaw.com/pfnl/95b2ca8d4055fce1210fc80386147af042f79a0e5fd02ddebdfb.html?way=mcp",
+        "holding": null
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "holding_check": {
+        "execution_status": "skipped",
+        "verdict": null,
+        "findings": [],
+        "notes": "案例身份已经确认，但北大法宝 MCP 中未收录该案裁判说理，引用表述需人工核对原文书。",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": "holding_unavailable"
+      },
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:1",
+          "char_start": 0,
+          "char_end": 72,
+          "anchor_text": "在（2018）最高法民再396号案中，最高人民法院认为，销售者销售侵犯注册商标专用权商品，若能证明合法来源且尽到合理注意义务，可不承担赔偿责任。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "source_name": "北大法宝 MCP：get_case_list",
+          "source_url": null,
+          "fetched_at": "2026-07-18T17:41:23.158889+00:00",
+          "status": "manual_review",
+          "message": "检索完成，返回案例候选",
+          "metadata": {
+            "route": "get_case_list",
+            "title_query": "",
+            "fulltext_query": "（2018）最高法民再396号",
+            "candidate_count": 10
+          }
+        },
+        {
+          "source_name": "北大法宝 MCP：search_case",
+          "source_url": "https://www.pkulaw.com/pfnl/95b2ca8d4055fce1210fc80386147af042f79a0e5fd02ddebdfb.html?way=mcp",
+          "fetched_at": "2026-07-18T17:41:24.977301+00:00",
+          "status": "verified",
+          "message": "案例身份匹配通过",
+          "metadata": {
+            "route": "search_case",
+            "semantic_query": "检索能够核验以下直接案例引用的司法案例；法院：最高人民法院；文书表述：在案中；最高人民法院；销售者销售侵犯注册商标专用权商品；若能证明合法来源且尽到合理注意义务；可不承担赔偿责任",
+            "candidate_count": 5,
+            "match_basis": "exact_case_number_cluster"
+          }
+        }
+      ],
+      "candidate_cases": []
+    },
+    {
+      "check_id": "cc_00002",
+      "claim_id": "cl_00002",
+      "claim_text": "关于公司章程限制股权转让的问题，可参考宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案，法院认为公司章程可以对股东失权作出自治安排；此类人走股留条款因违反公司法的禁止性规定而一律无效；公司还应当向离职股东支付离职经济补偿金。",
+      "jurisdiction": "CN",
+      "cited_case_number": null,
+      "cited_case_name": "可参考宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案",
+      "cited_court": null,
+      "lookup_status": "verified",
+      "evidence": {
+        "matched_text": "可参考宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案",
+        "case_number": "(2014)陕民二申字第00215号",
+        "gid": "",
+        "court": "陕西省高级人民法院",
+        "title": "宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案",
+        "last_instance_date": "2015.03.25",
+        "url": "https://www.pkulaw.com/pfnl/a25051f3312b07f3fa4f579a3e4048c638ab71b801981480bdfb.html?way=mcp",
+        "holding": "\t本院认为，通过听取再审申请人宋文军的再审申请理由及被申请人大华公司的答辩意见，本案的焦点问题如下：1、大华公司的公司章程中关于“人走股留”的规定，是否违反了《公司法》的禁止性规定，该章程是否有效；2、大华公司回购宋文军股权是否违反《公司法》的相关规定，大华公司是否构成抽逃出资。\n\t针对第一个焦点问题，首先，大华公司章程第十四条规定，“公司股权不向公司以外的任何团体和个人出售、转让。公司改制一年后，经董事会批准后可以公司内部赠与、转让和继承。持股人死亡或退休经董事会批准后方可继承、转让或由企业收购，持股人若辞职、调离或被辞退、解除劳动合同的，人走股留，所持股份由企业收购。”依照《公司法》第二十五条第二款“股东应当在公司章程上签名、盖章”的规定，有限公司章程系公司设立时全体股东一致同意并对公司及全体股东产生一致约束力的规则性文件，宋文军在公司章程上签名的行为，应视为其对前述规定的认可和同意，该章程对大华公司及宋文军均产生约束力。其次，基于有限责任公司封闭性和人合性的特点，由公司章程对公司股东转让股权作出某些限制性规定，系公司自治的体现。在本案中，大华公司进行企业改制时，宋文军之所以成为大华公司的股东，其原因在于宋文军与大华公司具有劳动合同关系，如果宋文军与大华公司没有建立劳动关系，宋文军则没有成为大华公司股东的可能性。同理，大华公司章程将是否与公司具有劳动合同关系作为确定股东身份的依据继而作出“人走股留”的规定，符合有限责任公司封闭性和人合性的特点，亦系公司自治原则的体现，不违反公司法的禁止性规定。第三，大华公司章程第十四条关于股权转让的规定，属于对股东转让股权的限制性规定而非禁止性规定，宋文军依法转让股权的权利没有被公司章程所禁止，大华公司章程不存在侵害宋文军股权转让的情形。综上，本案一、二审法院均认定大华公司章程不违反《公司法》的禁止性规定，应为有效的结论正确，宋文军的此节再审申请理由不能成立。\n\t针对第二个焦点问题，《公司法》第七十四条所规定的异议股东回购请求权具有法定的行使条件，即只有在“公司连续五年不向股东分配利润，而公司该五年连续盈利，并且符合本法规定的分配利润条件的；公司合并、分立、转让主要财产的；公司章程规定的营业期限届满或者章程规定的其他解散事由出现，股东会会议通过决议修改章程使公司存续的”三种情形下，异议股东有权要求公司回购其股权，对应的是公司是否应当履行回购异议股东股权的法定义务。而本案属于大华公司是否有权基于公司章程的约定及与宋文军的合意而回购宋文军股权，对应的是大华公司是否具有回购宋文军股权的权利，二者没有相同之处，《公司法》第七十四条不能适用于本案。在本案中，宋文军于2006年6月3日向大华公司提出解除劳动合同申请并于同日手书《退股申请》，提出“本人要求全额退股，年终盈利与亏损与我无关”，该《退股申请》应视为其真实意思表示。大华公司于2006年8月28日退还其全额股金款2万元，于2007年1月8日召开股东大会审议通过了宋文军等三位股东的退股申请并决议“其股金暂由公司收购保管，不得参与红利分配”，大华公司基于宋文军的退股申请，依照公司章程的规定回购宋文军的股权，程序并无不当。另外，我国《公司法》所规定的抽逃出资专指公司股东抽逃其对于公司出资的行为，公司不能构成抽逃出资的主体，宋文军的此节再审申请理由不能成立。\n\t综上，宋文军的再审申请不符合《中华人民共和国民事诉讼法》第二百条规定。依照《中华人民共和国民事诉讼法》第二百零四条第一款的规定，裁定如下："
+      },
+      "findings": [
+        {
+          "code": "holding_distorted",
+          "risk_level": "HIGH",
+          "summary": "文书称该类条款因违反禁止性规定而一律无效，但说理原文（句9、11）明确指出该章程规定符合公司自治原则，不违反公司法禁止性规定，应认定为有效。文书观点与裁判结论完全相反。",
+          "suggestion": "裁判认定“人走股留”条款有效且不违反法律禁止性规定，建议修正为支持章程自治效力的表述。",
+          "matched_excerpt": "……同理，大华公司章程将是否与公司具有劳动合同关系作为确定股东身份的依据继而作出“人走股留”的规定，符合有限责任公司封闭性和人合性的特点，亦系公司自治原则的体现，不违反公司法的禁止性规定。……综上，本案一、二审法院均认定大华公司章程不违反《公司法》的禁止性规定，应为有效的结论正确，宋文军的此节再审申请理由不能成立。……",
+          "revision": {
+            "strategy": "replace_exact_text",
+            "original_text": "此类人走股留条款因违反公司法的禁止性规定而一律无效；",
+            "revised_text": "此类人走股留条款体现了公司自治原则，不违反公司法的禁止性规定，应认定为有效；",
+            "rationale": "裁判认定“人走股留”条款有效且不违反法律禁止性规定，建议修正为支持章程自治效力的表述。",
+            "machine_applicable": true,
+            "preconditions": [
+              "original_text_unique",
+              "document_unchanged"
+            ]
+          }
+        },
+        {
+          "code": "holding_unsupported",
+          "risk_level": "MEDIUM",
+          "summary": "说理文本仅讨论了股权回购的效力及是否构成抽逃出资，并未提及公司向离职股东支付离职经济补偿金的问题。",
+          "suggestion": "说理未涉及离职经济补偿金问题，建议删除该观点或补充相关事实依据。",
+          "matched_excerpt": null,
+          "revision": null
+        }
+      ],
+      "outcome": "issue",
+      "message": "",
+      "holding_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "holding_distorted",
+            "risk_level": "HIGH",
+            "summary": "文书称该类条款因违反禁止性规定而一律无效，但说理原文（句9、11）明确指出该章程规定符合公司自治原则，不违反公司法禁止性规定，应认定为有效。文书观点与裁判结论完全相反。",
+            "suggestion": "裁判认定“人走股留”条款有效且不违反法律禁止性规定，建议修正为支持章程自治效力的表述。",
+            "matched_excerpt": "……同理，大华公司章程将是否与公司具有劳动合同关系作为确定股东身份的依据继而作出“人走股留”的规定，符合有限责任公司封闭性和人合性的特点，亦系公司自治原则的体现，不违反公司法的禁止性规定。……综上，本案一、二审法院均认定大华公司章程不违反《公司法》的禁止性规定，应为有效的结论正确，宋文军的此节再审申请理由不能成立。……",
+            "revision": {
+              "strategy": "replace_exact_text",
+              "original_text": "此类人走股留条款因违反公司法的禁止性规定而一律无效；",
+              "revised_text": "此类人走股留条款体现了公司自治原则，不违反公司法的禁止性规定，应认定为有效；",
+              "rationale": "裁判认定“人走股留”条款有效且不违反法律禁止性规定，建议修正为支持章程自治效力的表述。",
+              "machine_applicable": true,
+              "preconditions": [
+                "original_text_unique",
+                "document_unchanged"
+              ]
+            }
+          },
+          {
+            "code": "holding_unsupported",
+            "risk_level": "MEDIUM",
+            "summary": "说理文本仅讨论了股权回购的效力及是否构成抽逃出资，并未提及公司向离职股东支付离职经济补偿金的问题。",
+            "suggestion": "说理未涉及离职经济补偿金问题，建议删除该观点或补充相关事实依据。",
+            "matched_excerpt": null,
+            "revision": null
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null
+      },
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:2",
+          "char_start": 0,
+          "char_end": 114,
+          "anchor_text": "关于公司章程限制股权转让的问题，可参考宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案，法院认为公司章程可以对股东失权作出自治安排；此类人走股留条款因违反公司法的禁止性规定而一律无效；公司还应当向离职股东支付离职经济补偿金。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "source_name": "北大法宝 MCP：get_case_list",
+          "source_url": "https://www.pkulaw.com/pfnl/a25051f3312b07f3fa4f579a3e4048c638ab71b801981480bdfb.html?way=mcp",
+          "fetched_at": "2026-07-18T17:41:23.063136+00:00",
+          "status": "verified",
+          "message": "案例身份匹配通过",
+          "metadata": {
+            "route": "get_case_list",
+            "title_query": "宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案",
+            "fulltext_query": "",
+            "candidate_count": 1,
+            "match_basis": "exact_case_title"
+          }
+        }
+      ],
+      "candidate_cases": []
+    }
+  ]
+}

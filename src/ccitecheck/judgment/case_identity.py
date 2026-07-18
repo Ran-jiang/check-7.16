@@ -12,7 +12,7 @@ _CASE_TITLE_SUFFIX = re.compile(
     r"(?:判决书|裁定书|调解书|决定书|通知书|支付令)|纠纷案|案)+$"
 )
 _MUNICIPALITIES = {"北京", "上海", "天津", "重庆"}
-_CASE_CONTEXT_PREFIX = re.compile(r"^(?:在|根据|依据|依照|参见|援引)+")
+_CASE_CONTEXT_PREFIX = re.compile(r"^(?:在|根据|依据|依照|参见|援引|可参考|参考|参照)+")
 
 
 def compare_case_identity(

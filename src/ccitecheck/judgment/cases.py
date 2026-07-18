@@ -1,7 +1,8 @@
-"""司法案例的两级检索、身份确认与裁判观点核查。"""
+"""司法案例的两级检索、身份确认与裁判说理核查。"""
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -130,8 +131,8 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
             message=message,
         )
         return CaseLookupStatus.OUT_OF_SCOPE, None, message, [trace], []
-    title, fulltext = _exact_query(claim, ref)
-    if not title and not fulltext:
+    queries = _exact_queries(claim, ref)
+    if not any(title or fulltext for title, fulltext in queries):
         message = "现有引用信息不足以构造案例检索条件。"
         trace = CaseSourceTrace(
             source_name="CCiteheck 案例检索路由",
@@ -140,16 +141,24 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
         )
         return CaseLookupStatus.MANUAL_REVIEW, None, message, [trace], []
 
-    exact = _run_route(
-        "北大法宝 MCP：get_case_list",
-        lambda: searcher.search_keyword(title, fulltext),
-        {"route": "get_case_list", "title_query": title, "fulltext_query": fulltext},
-    )
-    traces = [exact.trace]
-    if not exact.completed:
-        return exact.trace.status, None, exact.trace.message, traces, []
+    traces = []
+    exact = None
+    for title, fulltext in queries:
+        exact = _run_route(
+            "北大法宝 MCP：get_case_list",
+            lambda title=title, fulltext=fulltext: searcher.search_keyword(title, fulltext),
+            {"route": "get_case_list", "title_query": title, "fulltext_query": fulltext},
+        )
+        traces.append(exact.trace)
+        if not exact.completed:
+            return exact.trace.status, None, exact.trace.message, traces, []
+        if exact.records:
+            break
 
-    match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, exact.records)
+    document_type = getattr(ref, "document_type", None)
+    match, basis, conflict = _match_case_record(
+        ref.case_number, ref.case_name, ref.court, exact.records, document_type,
+    )
     if match is not None:
         if claim.claim_type == ClaimType.CASE_HOLDING_PARAPHRASE and not match.holding:
             supplemented = _semantic_route(searcher, claim, ref)
@@ -166,7 +175,10 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
     if not semantic.completed:
         return semantic.trace.status, None, semantic.trace.message, traces, []
 
-    match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, semantic.records)
+    match, basis, semantic_conflict = _match_case_record(
+        ref.case_number, ref.case_name, ref.court, semantic.records, document_type,
+    )
+    conflict = conflict or semantic_conflict
     if match is None:
         match = _cross_route_match(exact.records, semantic.records)
         basis = "cross_route_case_number" if match is not None else None
@@ -177,7 +189,11 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
     if candidates:
         metadata = [_candidate_metadata(record) for record in candidates[:10]]
         traces[-1].metadata["candidates"] = metadata
-        message = "北大法宝返回了案例，但现有引用信息不足以证明是哪一份裁判文书。可参考案例如下。"
+        message = (
+            f"{conflict}，请人工确认引用的是哪一份文书。可参考候选如下。"
+            if conflict
+            else "北大法宝返回了案例，但现有引用信息不足以证明是哪一份裁判文书。可参考案例如下。"
+        )
         return (
             CaseLookupStatus.MANUAL_REVIEW,
             None,
@@ -189,17 +205,20 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
     return CaseLookupStatus.NOT_FOUND, None, message, traces, []
 
 
-def _exact_query(claim, ref) -> tuple[str, str]:
+def _exact_queries(claim, ref) -> list[tuple[str, str]]:
+    """按优先级排列的精准检索词；前一组未命中记录时才尝试下一组。"""
     title = _case_search_title(ref.case_name or "")
     if ref.case_number:
-        return title, ref.case_number.strip()
+        return [(title, ref.case_number.strip())]
     if _guiding_case_id(_normalize_case_name(ref.case_name or "")):
-        return title, ""
+        return [(title, "")]
     parties = _case_parties(ref.case_name or "")
     if parties:
-        return "", " ".join(parties)
+        attempts = [(title, "")] if title else []
+        attempts.append(("", " ".join(parties)))
+        return attempts
     _, fulltext = build_case_keyword_query(ref.case_name, claim.text, ref.court)
-    return title, fulltext
+    return [(title, fulltext)]
 
 
 def _semantic_route(searcher, claim, ref) -> _RouteOutcome:
@@ -233,29 +252,32 @@ def _run_route(source_name, operation, metadata) -> _RouteOutcome:
     ), True)
 
 
-def _match_case_record(case_number, case_name, court, records):
+def _match_case_record(case_number, case_name, court, records, document_type=None):
+    """返回 (确认记录, 匹配依据, 转人工原因)；三者最多一组非空。"""
     if case_number:
         target = _normalize_case_number(case_number)
         matches = [record for record in records if _normalize_case_number(record.case_number) == target]
         if len(matches) == 1:
-            return matches[0], "exact_case_number"
-        clustered = _same_identity_cluster(matches)
-        if clustered:
-            return clustered, "exact_case_number_cluster"
+            return matches[0], "exact_case_number", None
+        if matches:
+            resolved, basis, conflict = _resolve_duplicate_number_records(matches, document_type)
+            if resolved is not None:
+                return resolved, basis, None
+            return None, None, conflict
     target_title = _normalize_case_name(case_name or "")
     if target_title:
         matches = [record for record in records if _normalize_case_name(record.title) == target_title]
         if len(matches) > 1 and court:
             matches = [record for record in matches if _same_court(court, record.court)]
             if len(matches) == 1:
-                return matches[0], "exact_title_and_court"
+                return matches[0], "exact_title_and_court", None
         if len(matches) == 1:
-            return matches[0], "exact_case_title"
+            return matches[0], "exact_case_title", None
         guiding_id = _guiding_case_id(target_title)
         if guiding_id:
             matches = [record for record in records if _guiding_case_id(_normalize_case_name(record.title)) == guiding_id]
             if len(matches) == 1:
-                return matches[0], "exact_case_title"
+                return matches[0], "exact_case_title", None
         parties = _case_parties(case_name or "")
         if parties and _safe_natural_person_pair(parties):
             matches = [
@@ -263,20 +285,72 @@ def _match_case_record(case_number, case_name, court, records):
                 if all(party in _normalize_case_name(record.title) for party in parties)
             ]
             if len(matches) == 1:
-                return matches[0], "unique_party_pair"
-    return None, None
+                return matches[0], "unique_party_pair", None
+    return None, None, None
 
 
-def _same_identity_cluster(records: list[PkulawCaseRecord]):
-    """合并供应商对同一案号、法院和裁判日期返回的重复编目记录。"""
-    if len(records) < 2:
-        return records[0] if records else None
-    identities = {
-        (_normalize_court(record.court), record.last_instance_date or "")
-        for record in records
-    }
-    if len(identities) != 1 or not all(next(iter(identities))):
-        return None
+_RECORD_DOC_TYPE = re.compile(r"(判决书|裁定书|调解书|决定书|支付令)")
+
+
+def _record_document_type(title: str) -> str | None:
+    matches = _RECORD_DOC_TYPE.findall(title or "")
+    return matches[-1] if matches else None
+
+
+def _resolve_duplicate_number_records(records, cited_type):
+    """同案号多条记录的归并确认。
+
+    案号标识案件而非文书，同案号下可能并存判决书、裁定书等不同文书，
+    也可能只是同一份文书的重复编目（含无类型后缀的典型案例条目）。
+    先按标题中的文书类型分组选定目标组，组内做非空字段冲突校验后择优。
+    返回 (确认记录, 依据, None) 或 (None, None, 转人工原因)。
+    """
+    groups: dict[str, list[PkulawCaseRecord]] = {}
+    untyped: list[PkulawCaseRecord] = []
+    for record in records:
+        record_type = _record_document_type(record.title)
+        if record_type:
+            groups.setdefault(record_type, []).append(record)
+        else:
+            untyped.append(record)
+    if cited_type and groups and cited_type not in groups:
+        available = "、".join(sorted(groups))
+        return None, None, (
+            f"文书写明引用的是{cited_type}，但北大法宝同案号下仅收录{available}，"
+            "未找到该类型的文书"
+        )
+    if cited_type and cited_type in groups:
+        pool, basis = groups[cited_type] + untyped, "exact_case_number_cited_document_type"
+    elif len(groups) > 1:
+        if "判决书" not in groups:
+            available = "、".join(sorted(groups))
+            return None, None, (
+                f"同案号下收录了{available}多种文书，文中未写明引用类型，"
+                "且没有可默认的判决书"
+            )
+        pool, basis = groups["判决书"] + untyped, "exact_case_number_default_judgment"
+    elif groups:
+        pool, basis = next(iter(groups.values())) + untyped, "exact_case_number_cluster"
+    else:
+        pool, basis = untyped, "exact_case_number_cluster"
+    conflict = _cluster_conflict(pool)
+    if conflict:
+        return None, None, conflict
+    return _best_record(pool), basis, None
+
+
+def _cluster_conflict(records) -> str | None:
+    """非空字段之间的冲突才算冲突；编目条目缺日期不投否决票。"""
+    courts = sorted({_normalize_court(record.court) for record in records if record.court})
+    if len(courts) > 1:
+        return f"同案号候选的审理法院不一致（{'、'.join(courts)}），可能对应不同文书"
+    dates = sorted({record.last_instance_date for record in records if record.last_instance_date})
+    if len(dates) > 1:
+        return f"同案号候选的裁判日期不一致（{'、'.join(dates)}），可能对应同一案件的不同文书"
+    return None
+
+
+def _best_record(records):
     return max(
         records,
         key=lambda record: (
@@ -316,7 +390,12 @@ def _same_case(reference: PkulawCaseRecord, records: list[PkulawCaseRecord]):
     else:
         title = _normalize_case_name(reference.title)
         matches = [record for record in records if _normalize_case_name(record.title) == title]
-    return matches[0] if len(matches) == 1 else _same_identity_cluster(matches)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return None
+    resolved, _, _ = _resolve_duplicate_number_records(matches, None)
+    return resolved
 
 
 def _cross_route_match(left, right):
@@ -408,7 +487,7 @@ def _check_holding(claim, evidence, semantic_checker):
         return CaseHoldingCheck(
             execution_status=ExecutionStatus.SKIPPED,
             skipped_reason="holding_unavailable",
-            notes="案例身份已经确认，但北大法宝 MCP 中未收录裁判观点。",
+            notes="案例身份已经确认，但北大法宝 MCP 中未收录该案裁判说理，引用表述需人工核对原文书。",
         )
     compare = getattr(semantic_checker, "compare_holding", None)
     if not callable(compare):

@@ -56,7 +56,7 @@ function renderResult(result) {
   activeType = ""
   const summary = result.summary
   document.getElementById("results-title").innerHTML = `核查完成！发现引用句<em class="title-count">${summary.card_total}</em>处，共核查法律引用<em class="title-count">${summary.reference_total}</em>条；<em class="title-count">${summary.passed}</em>处已通过，<em class="title-count">${summary.issues}</em>处待核实，<em class="title-count">${summary.bugs}</em>处无法判断`
-  document.getElementById("results-subtitle").textContent = result.file_name
+  document.getElementById("results-subtitle").textContent = `${result.file_name} · 核查以法规现行有效版本为基准`
   renderStatusFilter()
   renderTypeFilter()
   renderVisibleChecks()

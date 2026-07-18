@@ -176,6 +176,10 @@ class CaseRef(BaseModel):
         default=None,
         description="法院名称"
     )
+    document_type: Optional[str] = Field(
+        default=None,
+        description="文中写明的文书类型，如'判决书'、'裁定书'；未写明为 None"
+    )
     jurisdiction: str = Field(
         default="CN",
         description="法域：CN（中国）或 FOREIGN（外国判例，超出核查边界）"

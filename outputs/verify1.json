@@ -1,0 +1,941 @@
+{
+  "schema_version": "0.5",
+  "generated_at": "2026-07-18T18:12:57.083142+00:00",
+  "source_claim_doc_id": "06c17943-2428-4a9a-a232-edcd2560c1c2",
+  "statute_results": [
+    {
+      "check_id": "vc_00001",
+      "card_id": "card_00001",
+      "claim_id": "cl_00001",
+      "claim_text": "根据《中华人民共和国劳动合同法》第八十二条，用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。",
+      "law_title": "中华人民共和国劳动合同法",
+      "jurisdiction": "CN",
+      "document_quote": "用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资",
+      "cited_locators": [
+        {
+          "article_no": "第八十二条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国劳动合同法",
+        "source_type": "law",
+        "article_no": "第八十二条",
+        "article_text": "用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。\n用人单位违反本法规定不与劳动者订立无固定期限劳动合同的，自应当订立无固定期限劳动合同之日起向劳动者每月支付二倍的工资。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2013-07-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2013-07-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2012-12-28",
+          "effective_from": "2013-07-01",
+          "effective_to": null,
+          "effective_at": "2013-07-01"
+        },
+        "related_articles": [],
+        "structure_path": "第七章 法律责任",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157723+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "pass",
+        "findings": [],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_2416120e33cc99ed"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:3",
+          "char_start": 0,
+          "char_end": 72,
+          "anchor_text": "根据《中华人民共和国劳动合同法》第八十二条，用人单位自用工之日起超过一个月不满一年未与劳动者订立书面劳动合同的，应当向劳动者每月支付二倍的工资。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157723+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00002",
+      "card_id": "card_00002",
+      "claim_id": "cl_00002",
+      "claim_text": "同时，依据《中华人民共和国劳动合同法》第四十七条，经济补偿按劳动者在本单位工作的年限，每满一年支付两个月工资的标准向劳动者支付。",
+      "law_title": "中华人民共和国劳动合同法",
+      "jurisdiction": "CN",
+      "document_quote": "经济补偿按劳动者在本单位工作的年限，每满一年支付两个月工资的标准向劳动者支付",
+      "cited_locators": [
+        {
+          "article_no": "第四十七条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国劳动合同法",
+        "source_type": "law",
+        "article_no": "第四十七条",
+        "article_text": "经济补偿按劳动者在本单位工作的年限，每满一年支付一个月工资的标准向劳动者支付。六个月以上不满一年的，按一年计算；不满六个月的，向劳动者支付半个月工资的经济补偿。\n劳动者月工资高于用人单位所在直辖市、设区的市级人民政府公布的本地区上年度职工月平均工资三倍的，向其支付经济补偿的标准按职工月平均工资三倍的数额支付，向其支付经济补偿的年限最高不超过十二年。\n本条所称月工资是指劳动者在劳动合同解除或者终止前十二个月的平均工资。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2013-07-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2013-07-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2012-12-28",
+          "effective_from": "2013-07-01",
+          "effective_to": null,
+          "effective_at": "2013-07-01"
+        },
+        "related_articles": [],
+        "structure_path": "第四章 劳动合同的解除和终止",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157815+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [
+        {
+          "code": "meaning_distorted",
+          "risk_level": "HIGH",
+          "summary": "文书称每满一年支付两个月工资，原文规定为一个月工资。文书将法定补偿标准提高了一倍，实质改变了法律后果和用人单位的支付义务。",
+          "suggestion": "将“两个月”改为“一个月”，以符合第四十七条规定的法定补偿标准。",
+          "cited_locator": null,
+          "resolved_locator": null,
+          "historical_version": null,
+          "location_recheck_required": false,
+          "candidate_article_no": null,
+          "revision": {
+            "strategy": "replace_exact_text",
+            "original_text": "经济补偿按劳动者在本单位工作的年限，每满一年支付两个月工资的标准向劳动者支付",
+            "revised_text": "经济补偿按劳动者在本单位工作的年限，每满一年支付一个月工资的标准向劳动者支付",
+            "rationale": "将“两个月”改为“一个月”，以符合第四十七条规定的法定补偿标准。",
+            "machine_applicable": true,
+            "preconditions": [
+              "original_text_unique",
+              "document_unchanged"
+            ]
+          }
+        }
+      ],
+      "outcome": "issue",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "meaning_distorted",
+            "risk_level": "HIGH",
+            "summary": "文书称每满一年支付两个月工资，原文规定为一个月工资。文书将法定补偿标准提高了一倍，实质改变了法律后果和用人单位的支付义务。",
+            "suggestion": "将“两个月”改为“一个月”，以符合第四十七条规定的法定补偿标准。",
+            "cited_locator": null,
+            "resolved_locator": null,
+            "historical_version": null,
+            "location_recheck_required": false,
+            "candidate_article_no": null,
+            "revision": {
+              "strategy": "replace_exact_text",
+              "original_text": "经济补偿按劳动者在本单位工作的年限，每满一年支付两个月工资的标准向劳动者支付",
+              "revised_text": "经济补偿按劳动者在本单位工作的年限，每满一年支付一个月工资的标准向劳动者支付",
+              "rationale": "将“两个月”改为“一个月”，以符合第四十七条规定的法定补偿标准。",
+              "machine_applicable": true,
+              "preconditions": [
+                "original_text_unique",
+                "document_unchanged"
+              ]
+            }
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_d3dfed2e073dd4cd"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:4",
+          "char_start": 0,
+          "char_end": 64,
+          "anchor_text": "同时，依据《中华人民共和国劳动合同法》第四十七条，经济补偿按劳动者在本单位工作的年限，每满一年支付两个月工资的标准向劳动者支付。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/7ab5e7d605f859e6bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157815+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00003",
+      "card_id": "card_00003",
+      "claim_id": "cl_00003",
+      "claim_text": "《中华人民共和国民法典》第五百七十七条规定，当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
+      "law_title": "中华人民共和国民法典",
+      "jurisdiction": "CN",
+      "document_quote": "规定，当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任",
+      "cited_locators": [
+        {
+          "article_no": "第五百七十七条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国民法典",
+        "source_type": "law",
+        "article_no": "第五百七十七条",
+        "article_text": "当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2021-01-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2021-01-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2020-05-28",
+          "effective_from": "2021-01-01",
+          "effective_to": null,
+          "effective_at": "2021-01-01"
+        },
+        "related_articles": [],
+        "structure_path": "第三编 合同 / 第一分编 通则 / 第八章 违约责任",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/aa00daaeb5a4fe4ebdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157888+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "pass",
+        "findings": [],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_92183b94e3610d60"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:6",
+          "char_start": 0,
+          "char_end": 76,
+          "anchor_text": "《中华人民共和国民法典》第五百七十七条规定，当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/aa00daaeb5a4fe4ebdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157888+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00004",
+      "card_id": "card_00004",
+      "claim_id": "cl_00004",
+      "claim_text": "需要注意的是，根据《中华人民共和国民法典》第一百九十六条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+      "law_title": "中华人民共和国民法典",
+      "jurisdiction": "CN",
+      "document_quote": "向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算",
+      "cited_locators": [
+        {
+          "article_no": "第一百九十六条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国民法典",
+        "source_type": "law",
+        "article_no": "第一百九十六条",
+        "article_text": "下列请求权不适用诉讼时效的规定：\n（一）请求停止侵害、排除妨碍、消除危险；\n（二）不动产物权和登记的动产物权的权利人请求返还财产；\n（三）请求支付抚养费、赡养费或者扶养费；\n（四）依法不适用诉讼时效的其他请求权。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2021-01-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2021-01-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2020-05-28",
+          "effective_from": "2021-01-01",
+          "effective_to": null,
+          "effective_at": "2021-01-01"
+        },
+        "related_articles": [],
+        "structure_path": "第一编 总则 / 第九章 诉讼时效",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/aa00daaeb5a4fe4ebdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157966+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [
+        {
+          "code": "meaning_distorted",
+          "risk_level": "HIGH",
+          "summary": "文书引用民法典第一百九十六条称诉讼时效为三年，但该条原文规定的是不适用诉讼时效的四种特定请求权情形。文书将关于时效排除的规定曲解为时效期间的一般规定，内容与条文完全无关且含义相反。",
+          "suggestion": "经北大法宝复查并比对原文，所述内容对应第一百八十八条，建议更正引用条号。更正后请注意：补全起算条件，增加“以及义务人”的表述，以符合条文原意。",
+          "cited_locator": null,
+          "resolved_locator": {
+            "article_no": "第一百八十八条",
+            "paragraph_no": null,
+            "item_no": null
+          },
+          "historical_version": null,
+          "location_recheck_required": true,
+          "candidate_article_no": "第一百八十八条",
+          "revision": {
+            "strategy": "replace_exact_text",
+            "original_text": "需要注意的是，根据《中华人民共和国民法典》第一百九十六条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+            "revised_text": "需要注意的是，根据《中华人民共和国民法典》第一百八十八条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+            "rationale": "将错误引用位置更正为第一百八十八条",
+            "machine_applicable": true,
+            "preconditions": [
+              "original_text_unique",
+              "document_unchanged",
+              "candidate_deterministically_verified"
+            ]
+          }
+        }
+      ],
+      "outcome": "issue",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "meaning_distorted",
+            "risk_level": "HIGH",
+            "summary": "文书引用民法典第一百九十六条称诉讼时效为三年，但该条原文规定的是不适用诉讼时效的四种特定请求权情形。文书将关于时效排除的规定曲解为时效期间的一般规定，内容与条文完全无关且含义相反。",
+            "suggestion": "经北大法宝复查并比对原文，所述内容对应第一百八十八条，建议更正引用条号。更正后请注意：补全起算条件，增加“以及义务人”的表述，以符合条文原意。",
+            "cited_locator": null,
+            "resolved_locator": {
+              "article_no": "第一百八十八条",
+              "paragraph_no": null,
+              "item_no": null
+            },
+            "historical_version": null,
+            "location_recheck_required": true,
+            "candidate_article_no": "第一百八十八条",
+            "revision": {
+              "strategy": "replace_exact_text",
+              "original_text": "需要注意的是，根据《中华人民共和国民法典》第一百九十六条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+              "revised_text": "需要注意的是，根据《中华人民共和国民法典》第一百八十八条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+              "rationale": "将错误引用位置更正为第一百八十八条",
+              "machine_applicable": true,
+              "preconditions": [
+                "original_text_unique",
+                "document_unchanged",
+                "candidate_deterministically_verified"
+              ]
+            }
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_0b2aced13aa24e25"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:7",
+          "char_start": 0,
+          "char_end": 77,
+          "anchor_text": "需要注意的是，根据《中华人民共和国民法典》第一百九十六条，向人民法院请求保护民事权利的诉讼时效期间为三年，自权利人知道或者应当知道权利受到损害之日起计算。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/aa00daaeb5a4fe4ebdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.157966+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00005",
+      "card_id": "card_00005",
+      "claim_id": "cl_00005",
+      "claim_text": "若贵公司销售行为被认定为欺诈，依据《中华人民共和国消费者权益保护法》第五十五条，消费者有权要求增加赔偿其受到的损失，增加赔偿的金额为消费者购买商品价款的十倍；增加赔偿的金额不足一千元的，为一千元。",
+      "law_title": "中华人民共和国消费者权益保护法",
+      "jurisdiction": "CN",
+      "document_quote": "消费者有权要求增加赔偿其受到的损失，增加赔偿的金额为消费者购买商品价款的十倍；增加赔偿的金额不足一千元的，为一千元",
+      "cited_locators": [
+        {
+          "article_no": "第五十五条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国消费者权益保护法",
+        "source_type": "law",
+        "article_no": "第五十五条",
+        "article_text": "经营者提供商品或者服务有欺诈行为的，应当按照消费者的要求增加赔偿其受到的损失，增加赔偿的金额为消费者购买商品的价款或者接受服务的费用的三倍；增加赔偿的金额不足五百元的，为五百元。法律另有规定的，依照其规定。\n经营者明知商品或者服务存在缺陷，仍然向消费者提供，造成消费者或者其他受害人死亡或者健康严重损害的，受害人有权要求经营者依照本法第四十九条、第五十一条等法律规定赔偿损失，并有权要求所受损失二倍以下的惩罚性赔偿。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "1994-01-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "1994-01-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2013-10-25",
+          "effective_from": "1994-01-01",
+          "effective_to": null,
+          "effective_at": "1994-01-01"
+        },
+        "related_articles": [],
+        "structure_path": "第七章 法律责任",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/a347c82e6a7d13aabdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.158050+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [
+        {
+          "code": "meaning_distorted",
+          "risk_level": "HIGH",
+          "summary": "文书称欺诈赔偿为价款十倍且最低一千元，原文规定为价款三倍且最低五百元。文书擅自提高法定赔偿标准，改变了法律后果。",
+          "suggestion": "将“十倍”改为“三倍”，将“一千元”改为“五百元”，以符合消法第五十五条关于欺诈行为的惩罚性赔偿规定。",
+          "cited_locator": null,
+          "resolved_locator": null,
+          "historical_version": null,
+          "location_recheck_required": false,
+          "candidate_article_no": null,
+          "revision": null
+        }
+      ],
+      "outcome": "issue",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "meaning_distorted",
+            "risk_level": "HIGH",
+            "summary": "文书称欺诈赔偿为价款十倍且最低一千元，原文规定为价款三倍且最低五百元。文书擅自提高法定赔偿标准，改变了法律后果。",
+            "suggestion": "将“十倍”改为“三倍”，将“一千元”改为“五百元”，以符合消法第五十五条关于欺诈行为的惩罚性赔偿规定。",
+            "cited_locator": null,
+            "resolved_locator": null,
+            "historical_version": null,
+            "location_recheck_required": false,
+            "candidate_article_no": null,
+            "revision": null
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_73c74e0f2eac3160"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:9",
+          "char_start": 0,
+          "char_end": 98,
+          "anchor_text": "若贵公司销售行为被认定为欺诈，依据《中华人民共和国消费者权益保护法》第五十五条，消费者有权要求增加赔偿其受到的损失，增加赔偿的金额为消费者购买商品价款的十倍；增加赔偿的金额不足一千元的，为一千元。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/a347c82e6a7d13aabdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.158050+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00006",
+      "card_id": "card_00006",
+      "claim_id": "cl_00006",
+      "claim_text": "根据《中华人民共和国公司法》第五十四条，公司不能清偿到期债务的，公司或者已到期债权的债权人有权要求已认缴出资但未届出资期限的股东提前缴纳出资。",
+      "law_title": "中华人民共和国公司法",
+      "jurisdiction": "CN",
+      "document_quote": "公司不能清偿到期债务的，公司或者已到期债权的债权人有权要求已认缴出资但未届出资期限的股东提前缴纳出资",
+      "cited_locators": [
+        {
+          "article_no": "第五十四条",
+          "paragraph_no": null,
+          "item_no": null
+        }
+      ],
+      "lookup_status": "article_found",
+      "evidence": {
+        "law_title": "中华人民共和国公司法",
+        "source_type": "law",
+        "article_no": "第五十四条",
+        "article_text": "公司不能清偿到期债务的，公司或者已到期债权的债权人有权要求已认缴出资但未届出资期限的股东提前缴纳出资。",
+        "version_label": "现行有效",
+        "version_status": "effective",
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "source_metadata": {
+          "version_key": "2024-07-01",
+          "timeliness": "现行有效",
+          "effectiveness": null,
+          "issued_at": "2023-12-29",
+          "effective_from": "2024-07-01",
+          "effective_to": null,
+          "effective_at": "2024-07-01"
+        },
+        "related_articles": [],
+        "structure_path": "第三章 有限责任公司的设立和组织机构 / 第一节 设立",
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/8ba805acd08846d7bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.158222+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      },
+      "findings": [],
+      "outcome": "pass",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "pass",
+        "findings": [],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_5dbff6be82394ab6"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:11",
+          "char_start": 0,
+          "char_end": 71,
+          "anchor_text": "根据《中华人民共和国公司法》第五十四条，公司不能清偿到期债务的，公司或者已到期债权的债权人有权要求已认缴出资但未届出资期限的股东提前缴纳出资。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "用户提供DOCX",
+          "source_url": "https://pkulaw.com/chl/8ba805acd08846d7bdfb.html",
+          "fetched_at": "2026-07-18T18:12:42.158222+00:00",
+          "status": "article_found",
+          "message": "",
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "check_id": "vc_00007",
+      "card_id": "card_00007",
+      "claim_id": "cl_00008",
+      "claim_text": "根据《中华人民共和国个人信息保护法》的规定，按照依法制定的劳动规章制度实施人力资源管理所必需时，处理员工个人信息无需取得个人同意，但仍应履行告知义务。",
+      "law_title": "中华人民共和国个人信息保护法",
+      "jurisdiction": "CN",
+      "document_quote": "根据《中华人民共和国个人信息保护法》的规定，按照依法制定的劳动规章制度实施人力资源管理所必需时，处理员工个人信息无需取得个人同意，但仍应履行告知义务。",
+      "cited_locators": [],
+      "lookup_status": "relevant_articles_found",
+      "evidence": {
+        "law_title": "中华人民共和国个人信息保护法",
+        "source_type": "law",
+        "article_no": null,
+        "article_text": "第十三条　符合下列情形之一的，个人信息处理者方可处理个人信息：\n（一）取得个人的同意；\n（二）为订立、履行个人作为一方当事人的合同所必需，或者按照依法制定的劳动规章制度和依法签订的集体合同实施人力资源管理所必需；\n（三）为履行法定职责或者法定义务所必需；\n（四）为应对突发公共卫生事件，或者紧急情况下为保护自然人的生命健康和财产安全所必需；\n（五）为公共利益实施新闻报道、舆论监督等行为，在合理的范围内处理个人信息；\n（六）依照本法规定在合理的范围内处理个人自行公开或者其他已经合法公开的个人信息；\n（七）法律、行政法规规定的其他情形。\n依照本法其他有关规定，处理个人信息应当取得个人同意，但是有前款第二项至第七项规定情形的，不需取得个人同意。\n\n第三十八条　个人信息处理者因业务等需要，确需向中华人民共和国境外提供个人信息的，应当具备下列条件之一：\n（一）依照本法第四十条的规定通过国家网信部门组织的安全评估；\n（二）按照国家网信部门的规定经专业机构进行个人信息保护认证；\n（三）按照国家网信部门制定的标准合同与境外接收方订立合同，约定双方的权利和义务；\n（四）法律、行政法规或者国家网信部门规定的其他条件。\n中华人民共和国缔结或者参加的国际条约、协定对向中华人民共和国境外提供个人信息的条件等有规定的，可以按照其规定执行。\n个人信息处理者应当采取必要措施，保障境外接收方处理个人信息的活动达到本法规定的个人信息保护标准。\n\n第六十九条　处理个人信息侵害个人信息权益造成损害，个人信息处理者不能证明自己没有过错的，应当承担损害赔偿等侵权责任。\n前款规定的损害赔偿责任按照个人因此受到的损失或者个人信息处理者因此获得的利益确定；个人因此受到的损失和个人信息处理者因此获得的利益难以确定的，根据实际情况确定赔偿数额。",
+        "version_label": null,
+        "version_status": "has_articles",
+        "effective_from": null,
+        "effective_to": null,
+        "source_metadata": {
+          "authority": "全国人大常委会",
+          "category": "数据合规",
+          "retrieval_method": "local_article_lexical_retrieval"
+        },
+        "related_articles": [
+          {
+            "article_no": "第十三条",
+            "article_text": "符合下列情形之一的，个人信息处理者方可处理个人信息：\n（一）取得个人的同意；\n（二）为订立、履行个人作为一方当事人的合同所必需，或者按照依法制定的劳动规章制度和依法签订的集体合同实施人力资源管理所必需；\n（三）为履行法定职责或者法定义务所必需；\n（四）为应对突发公共卫生事件，或者紧急情况下为保护自然人的生命健康和财产安全所必需；\n（五）为公共利益实施新闻报道、舆论监督等行为，在合理的范围内处理个人信息；\n（六）依照本法规定在合理的范围内处理个人自行公开或者其他已经合法公开的个人信息；\n（七）法律、行政法规规定的其他情形。\n依照本法其他有关规定，处理个人信息应当取得个人同意，但是有前款第二项至第七项规定情形的，不需取得个人同意。",
+            "relevance_score": 22.199014
+          },
+          {
+            "article_no": "第三十八条",
+            "article_text": "个人信息处理者因业务等需要，确需向中华人民共和国境外提供个人信息的，应当具备下列条件之一：\n（一）依照本法第四十条的规定通过国家网信部门组织的安全评估；\n（二）按照国家网信部门的规定经专业机构进行个人信息保护认证；\n（三）按照国家网信部门制定的标准合同与境外接收方订立合同，约定双方的权利和义务；\n（四）法律、行政法规或者国家网信部门规定的其他条件。\n中华人民共和国缔结或者参加的国际条约、协定对向中华人民共和国境外提供个人信息的条件等有规定的，可以按照其规定执行。\n个人信息处理者应当采取必要措施，保障境外接收方处理个人信息的活动达到本法规定的个人信息保护标准。",
+            "relevance_score": 3.850924
+          },
+          {
+            "article_no": "第六十九条",
+            "article_text": "处理个人信息侵害个人信息权益造成损害，个人信息处理者不能证明自己没有过错的，应当承担损害赔偿等侵权责任。\n前款规定的损害赔偿责任按照个人因此受到的损失或者个人信息处理者因此获得的利益确定；个人因此受到的损失和个人信息处理者因此获得的利益难以确定的，根据实际情况确定赔偿数额。",
+            "relevance_score": 2.875328
+          }
+        ],
+        "structure_path": null,
+        "data_source": {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:12:42.158422+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      },
+      "findings": [
+        {
+          "code": "meaning_distorted",
+          "risk_level": "MEDIUM",
+          "summary": "文书称“仍需履行告知义务”，但引用的第十三条仅规定无需取得同意，未包含告知义务内容。告知义务主要规定在第十七条，此处引用导致法律依据与规范内容不匹配。",
+          "suggestion": "建议补充告知义务的法律依据（如第十七条），或调整表述以准确反映第十三条仅豁免同意要件的原意。",
+          "cited_locator": null,
+          "resolved_locator": null,
+          "historical_version": null,
+          "location_recheck_required": false,
+          "candidate_article_no": null,
+          "revision": null
+        }
+      ],
+      "outcome": "issue",
+      "message": "",
+      "meaning_check": {
+        "execution_status": "completed",
+        "verdict": "issue",
+        "findings": [
+          {
+            "code": "meaning_distorted",
+            "risk_level": "MEDIUM",
+            "summary": "文书称“仍需履行告知义务”，但引用的第十三条仅规定无需取得同意，未包含告知义务内容。告知义务主要规定在第十七条，此处引用导致法律依据与规范内容不匹配。",
+            "suggestion": "建议补充告知义务的法律依据（如第十七条），或调整表述以准确反映第十三条仅豁免同意要件的原意。",
+            "cited_locator": null,
+            "resolved_locator": null,
+            "historical_version": null,
+            "location_recheck_required": false,
+            "candidate_article_no": null,
+            "revision": null
+          }
+        ],
+        "notes": "",
+        "error_code": null,
+        "retryable": false,
+        "skipped_reason": null,
+        "job_id": "sj_319bcec5ee65e6b2"
+      },
+      "reference_role": "direct",
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:14",
+          "char_start": 0,
+          "char_end": 75,
+          "anchor_text": "根据《中华人民共和国个人信息保护法》的规定，按照依法制定的劳动规章制度实施人力资源管理所必需时，处理员工个人信息无需取得个人同意，但仍应履行告知义务。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "tier": "local_sqlite",
+          "source_name": "CCiteheck 本地 SQLite 法规库",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:12:42.158422+00:00",
+          "status": "relevant_articles_found",
+          "message": "文书未注明条号，已从本地全文召回相关条款",
+          "metadata": {}
+        }
+      ]
+    }
+  ],
+  "case_results": [
+    {
+      "check_id": "cc_00001",
+      "claim_id": "cl_00007",
+      "claim_text": "此点亦可参考最高人民法院指导案例96号（宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案）所体现的公司自治与债权人保护的平衡思路。",
+      "jurisdiction": "CN",
+      "cited_case_number": null,
+      "cited_case_name": "指导案例96号：此点亦可参考最高人民法院指导案例96号（宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案）",
+      "cited_court": null,
+      "lookup_status": "manual_review",
+      "evidence": null,
+      "findings": [],
+      "outcome": "bug",
+      "message": "北大法宝返回了案例，但现有引用信息不足以证明是哪一份裁判文书。可参考案例如下。",
+      "holding_check": null,
+      "source_locations": [
+        {
+          "platform": "docx",
+          "document_id": null,
+          "revision": null,
+          "block_id": "word:p:12",
+          "char_start": 0,
+          "char_end": 67,
+          "anchor_text": "此点亦可参考最高人民法院指导案例96号（宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案）所体现的公司自治与债权人保护的平衡思路。",
+          "occurrence": 0,
+          "table_index": null,
+          "row_index": null,
+          "cell_index": null,
+          "row_start": null,
+          "row_end": null,
+          "col_start": null,
+          "col_end": null
+        }
+      ],
+      "source_attempts": [
+        {
+          "source_name": "北大法宝 MCP：get_case_list",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:12:56.176135+00:00",
+          "status": "not_found",
+          "message": "检索完成，未命中案例",
+          "metadata": {
+            "route": "get_case_list",
+            "title_query": "指导性案例96号",
+            "fulltext_query": "",
+            "candidate_count": 0
+          }
+        },
+        {
+          "source_name": "北大法宝 MCP：search_case",
+          "source_url": null,
+          "fetched_at": "2026-07-18T18:12:57.082474+00:00",
+          "status": "manual_review",
+          "message": "检索完成，返回案例候选",
+          "metadata": {
+            "route": "search_case",
+            "semantic_query": "检索能够核验以下直接案例引用的司法案例；案例线索：指导案例96号：此点亦可参考最高人民法院指导案例96号（宋文军诉西安市大华餐饮有限责任公司股东资格确认纠纷案）；文书表述：此点亦可参考最高人民法院指导案例96号；宋文军诉西安市大华餐饮有限责任公司股东资格确认纠；所体现的公司自治与债权人保护的平衡思路",
+            "candidate_count": 5,
+            "candidates": [
+              {
+                "title": "西安＊公司与邹＊、蔡＊股东损害公司债权人利益责任纠纷一审民事判决书",
+                "case_number": "(2025)陕0112民初14682号",
+                "court": "陕西省西安市未央区人民法院",
+                "last_instance_date": null,
+                "url": "https://pkulaw.com/pfnl/c7ed112b8012f816e0b618317a0bc9324a4822d587deb436bdfb.html"
+              },
+              {
+                "title": "黄丽与徐州德恒投资管理咨询服务有限公司股东资格确认纠纷一审民事判决书",
+                "case_number": "(2020)苏0321民初4053号",
+                "court": "江苏省丰县人民法院",
+                "last_instance_date": null,
+                "url": "https://pkulaw.com/pfnl/a6bdb3332ec0adc4102b8e0e9b0c4faf467c9fba0691626cbdfb.html"
+              },
+              {
+                "title": "任珂与郝艳星,西安好易运餐饮管理有限公司股东资格确认纠纷一审民事判决书",
+                "case_number": "(2020)陕0113民初14825号",
+                "court": "陕西省西安市雁塔区人民法院",
+                "last_instance_date": null,
+                "url": "https://pkulaw.com/pfnl/c05aeed05a57db0adad3cf951331a09418e9e33ea5ca828ebdfb.html"
+              },
+              {
+                "title": "中国人民财产保险股份有限公司无锡市分公司与何小林机动车交通事故责任纠纷上诉案",
+                "case_number": "(2017)粤01民终578号",
+                "court": "广东省广州市中级人民法院",
+                "last_instance_date": null,
+                "url": "https://pkulaw.com/pfnl/a25051f3312b07f3def3b13e0d087a4dd96401314832363dbdfb.html"
+              },
+              {
+                "title": "黄某与某某公司等股东资格确认纠纷一审民事裁定书",
+                "case_number": "(2023)沪0107民初488号之一",
+                "court": "上海市普陀区人民法院",
+                "last_instance_date": null,
+                "url": "https://pkulaw.com/pfnl/c7ed112b8012f816bbdf0fabe53895c6514d84ab8d5a07d3bdfb.html"
+              }
+            ]
+          }
+        }
+      ],
+      "candidate_cases": [
+        {
+          "title": "西安＊公司与邹＊、蔡＊股东损害公司债权人利益责任纠纷一审民事判决书",
+          "case_number": "(2025)陕0112民初14682号",
+          "court": "陕西省西安市未央区人民法院",
+          "last_instance_date": null,
+          "url": "https://pkulaw.com/pfnl/c7ed112b8012f816e0b618317a0bc9324a4822d587deb436bdfb.html"
+        },
+        {
+          "title": "黄丽与徐州德恒投资管理咨询服务有限公司股东资格确认纠纷一审民事判决书",
+          "case_number": "(2020)苏0321民初4053号",
+          "court": "江苏省丰县人民法院",
+          "last_instance_date": null,
+          "url": "https://pkulaw.com/pfnl/a6bdb3332ec0adc4102b8e0e9b0c4faf467c9fba0691626cbdfb.html"
+        },
+        {
+          "title": "任珂与郝艳星,西安好易运餐饮管理有限公司股东资格确认纠纷一审民事判决书",
+          "case_number": "(2020)陕0113民初14825号",
+          "court": "陕西省西安市雁塔区人民法院",
+          "last_instance_date": null,
+          "url": "https://pkulaw.com/pfnl/c05aeed05a57db0adad3cf951331a09418e9e33ea5ca828ebdfb.html"
+        },
+        {
+          "title": "中国人民财产保险股份有限公司无锡市分公司与何小林机动车交通事故责任纠纷上诉案",
+          "case_number": "(2017)粤01民终578号",
+          "court": "广东省广州市中级人民法院",
+          "last_instance_date": null,
+          "url": "https://pkulaw.com/pfnl/a25051f3312b07f3def3b13e0d087a4dd96401314832363dbdfb.html"
+        },
+        {
+          "title": "黄某与某某公司等股东资格确认纠纷一审民事裁定书",
+          "case_number": "(2023)沪0107民初488号之一",
+          "court": "上海市普陀区人民法院",
+          "last_instance_date": null,
+          "url": "https://pkulaw.com/pfnl/c7ed112b8012f816bbdf0fabe53895c6514d84ab8d5a07d3bdfb.html"
+        }
+      ]
+    }
+  ]
+}

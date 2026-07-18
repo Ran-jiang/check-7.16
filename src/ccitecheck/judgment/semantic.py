@@ -27,13 +27,21 @@ from ..domain.statute_results import (
     StatuteMeaningCheck,
 )
 from .markers import strip_internal_markers
+from .reasoning import (
+    build_excerpt,
+    clean_reasoning_text,
+    reasoning_is_truncated,
+    split_reasoning_sentences,
+)
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 PROMPT_PATH = (
     Path(__file__).resolve().parent / "prompts" / "statute_meaning_check.md"
 )
-HOLDING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_holding_comparison.md"
+REASONING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_reasoning_check.md"
+REPROPOSAL_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_locator_reproposal.md"
+_ARTICLE_NO_FORMAT = re.compile(r"第[零一二两三四五六七八九十百千0-9]+条")
 _LLM_ISSUE_TYPES = {
     "曲解权威文本原意",
 }
@@ -181,32 +189,62 @@ class QwenSemanticChecker:
             ) from exc
 
     def compare_holding(self, paraphrase_text: str, holding_text: str, case_title: str) -> CaseHoldingCheck:
+        assertions = split_reasoning_sentences(paraphrase_text) or [clean_reasoning_text(paraphrase_text)]
+        sentences = split_reasoning_sentences(holding_text)
+        truncated = reasoning_is_truncated(sentences)
         payload = {
             "model": self.model,
             "input": [
-                {"role": "system", "content": HOLDING_PROMPT_PATH.read_text(encoding="utf-8")},
+                {"role": "system", "content": REASONING_PROMPT_PATH.read_text(encoding="utf-8")},
                 {"role": "user", "content": json.dumps({
-                    "paraphrase_text": paraphrase_text,
                     "case_title": case_title,
-                    "authoritative_holding": holding_text,
+                    "assertions": [
+                        {"id": index, "text": text}
+                        for index, text in enumerate(assertions, start=1)
+                    ],
+                    "reasoning_sentences": [
+                        {"id": index, "text": text}
+                        for index, text in enumerate(sentences, start=1)
+                    ],
+                    "reasoning_truncated": truncated,
                 }, ensure_ascii=False)},
             ],
             "enable_thinking": False,
         }
         raw = _load_json_object(_extract_output_text(self._post_response(payload)))
-        raw["notes"] = strip_internal_markers(str(raw.get("notes", "")))
-        for issue in raw.get("issues", []):
-            if not isinstance(issue, dict) or issue.get("error_type") != "所述观点非该案裁判观点":
-                raise SemanticResponseError("Qwen returned an invalid case holding error_type")
-            for field in ("diff_summary", "suggestion", "revised_text"):
-                if isinstance(issue.get(field), str):
-                    issue[field] = strip_internal_markers(issue[field])
         try:
-            result = _case_check_from_raw(raw)
-            _approve_case_revisions(result, raw, paraphrase_text)
-            return result
-        except ValueError as exc:
-            raise SemanticResponseError(f"Qwen returned invalid case holding JSON: {exc}") from exc
+            return _case_reasoning_check_from_raw(raw, assertions, sentences, truncated)
+        except (ValueError, TypeError) as exc:
+            raise SemanticResponseError(f"Qwen returned invalid case reasoning JSON: {exc}") from exc
+
+    def propose_locator_candidate(
+        self,
+        *,
+        law_title: str,
+        document_quote: str,
+        cited_article_no: str,
+        cited_article_text: str,
+        tried: list[dict[str, str]],
+    ) -> str | None:
+        """已验证候选均不匹配后，携带验证反馈向模型索取下一个候选条号。"""
+        payload = {
+            "model": self.model,
+            "input": [
+                {"role": "system", "content": REPROPOSAL_PROMPT_PATH.read_text(encoding="utf-8")},
+                {"role": "user", "content": json.dumps({
+                    "law_title": law_title,
+                    "document_quote": document_quote,
+                    "cited_article": {
+                        "article_no": cited_article_no,
+                        "article_text": cited_article_text,
+                    },
+                    "tried_candidates": tried,
+                }, ensure_ascii=False)},
+            ],
+            "enable_thinking": False,
+        }
+        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+        return _valid_article_no(raw.get("candidate_article_no"))
 
     def _post_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -263,15 +301,28 @@ def _approve_statute_revisions(
         )
 
 
+def _risk_level(issue: dict[str, Any]) -> str:
+    """模型偶尔返回小写风险等级，统一大写后再交给领域模型校验。"""
+    return str(issue.get("risk_level", "")).strip().upper()
+
+
+def _valid_article_no(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if _ARTICLE_NO_FORMAT.fullmatch(stripped) else None
+
+
 def _statute_check_from_raw(raw: dict[str, Any]) -> StatuteMeaningCheck:
     findings = []
     for issue in raw.get("issues", []):
         finding = StatuteFinding(
             code=StatuteErrorCode.MEANING_DISTORTED,
-            risk_level=issue["risk_level"],
+            risk_level=_risk_level(issue),
             summary=issue["diff_summary"],
             suggestion=issue["suggestion"],
             location_recheck_required=bool(issue.get("location_recheck_required", False)),
+            candidate_article_no=_valid_article_no(issue.get("candidate_article_no")),
         )
         findings.append(finding)
     return StatuteMeaningCheck(
@@ -281,39 +332,101 @@ def _statute_check_from_raw(raw: dict[str, Any]) -> StatuteMeaningCheck:
     )
 
 
-def _case_check_from_raw(raw: dict[str, Any]) -> CaseHoldingCheck:
-    return CaseHoldingCheck(
-        verdict=CheckVerdict(raw["verdict"]),
-        findings=[
-            CaseFinding(
-                code=CaseErrorCode.HOLDING_NOT_IN_CASE,
-                risk_level=issue["risk_level"],
-                summary=issue["diff_summary"],
-                suggestion=issue["suggestion"],
-            )
-            for issue in raw.get("issues", [])
-        ],
-        notes=raw.get("notes", ""),
-    )
-
-
-def _approve_case_revisions(
-    comparison: CaseHoldingCheck,
+def _case_reasoning_check_from_raw(
     raw: dict[str, Any],
-    paraphrase_text: str,
-) -> None:
-    for finding, raw_issue in zip(comparison.findings, raw.get("issues", [])):
-        proposed_text = raw_issue.get("revised_text")
-        if not _safe_llm_revision(paraphrase_text, proposed_text):
-            continue
-        finding.revision = RevisionProposal(
-            strategy="replace_exact_text",
-            original_text=paraphrase_text,
-            revised_text=proposed_text,
-            rationale=finding.suggestion,
-            machine_applicable=True,
-            preconditions=["original_text_unique", "document_unchanged"],
+    assertions: list[str],
+    sentences: list[str],
+    truncated: bool,
+) -> CaseHoldingCheck:
+    """按定位校验结果分流两类错误；模型给的是材料，分支由程序决定。"""
+    if raw.get("verdict") == CheckVerdict.INSUFFICIENT_INPUT.value:
+        return CaseHoldingCheck(
+            verdict=CheckVerdict.INSUFFICIENT_INPUT,
+            notes=strip_internal_markers(str(raw.get("notes", ""))),
         )
+    items = raw.get("assertions")
+    if not isinstance(items, list):
+        raise ValueError("missing assertions list")
+    findings: list[CaseFinding] = []
+    truncation_notes: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("assertion item is not an object")
+        assertion_id = item.get("id")
+        if not isinstance(assertion_id, int) or not 1 <= assertion_id <= len(assertions):
+            raise ValueError(f"assertion id {assertion_id!r} out of range")
+        assertion_text = assertions[assertion_id - 1]
+        judgment = item.get("judgment")
+        hits = [hit for hit in item.get("hit_sentence_ids") or [] if isinstance(hit, int)]
+        valid_hits = [hit for hit in hits if 1 <= hit <= len(sentences)]
+        if judgment == "supported":
+            continue
+        if judgment == "distorted" and valid_hits:
+            finding = CaseFinding(
+                code=CaseErrorCode.HOLDING_DISTORTED,
+                risk_level=_risk_level_or_medium(item),
+                summary=_user_text(item.get("diff_summary"), limit=300)
+                or "文书转述与裁判说理原文含义不符。",
+                suggestion=_user_text(item.get("suggestion"))
+                or "文书转述改变了裁判说理的含义，请对照说理原句修改。",
+                matched_excerpt=build_excerpt(sentences, valid_hits),
+            )
+            proposed = item.get("revised_text")
+            if _safe_llm_revision(assertion_text, proposed):
+                finding.revision = RevisionProposal(
+                    strategy="replace_exact_text",
+                    original_text=assertion_text,
+                    revised_text=proposed,
+                    rationale=finding.suggestion,
+                    machine_applicable=True,
+                    preconditions=["original_text_unique", "document_unchanged"],
+                )
+            findings.append(finding)
+        elif judgment == "unsupported" and not hits:
+            if truncated:
+                truncation_notes.append(
+                    f"裁判说理文本疑似截断，观点「{assertion_text}」未能核验，请人工核对原文书。"
+                )
+                continue
+            findings.append(CaseFinding(
+                code=CaseErrorCode.HOLDING_UNSUPPORTED,
+                risk_level=_risk_level_or_medium(item),
+                summary=_user_text(item.get("diff_summary"), limit=300)
+                or "该观点在北大法宝收录的裁判说理中没有对应内容。",
+                suggestion=_user_text(item.get("suggestion"))
+                or "该观点在该案裁判说理中无对应依据，请核对是否引用了正确案例。",
+            ))
+        else:
+            # 判定与定位证据自相矛盾（曲解却无有效句号 / 无依据却给了句号），
+            # 结论无法确定性验证，保守转人工。
+            findings.append(CaseFinding(
+                code=CaseErrorCode.HOLDING_UNSUPPORTED,
+                risk_level="MEDIUM",
+                summary=f"观点「{_user_text(assertion_text, limit=120)}」的核查结论缺少可验证的说理定位。",
+                suggestion="未能在裁判说理中定位该观点的依据句段，请人工核对原文书。",
+            ))
+    notes = strip_internal_markers(str(raw.get("notes", "")))
+    if truncation_notes:
+        notes = " ".join(filter(None, [notes, *truncation_notes]))
+    if findings:
+        verdict = CheckVerdict.ISSUE
+    elif truncation_notes:
+        verdict = CheckVerdict.INSUFFICIENT_INPUT
+    else:
+        verdict = CheckVerdict.PASS
+    return CaseHoldingCheck(verdict=verdict, findings=findings, notes=notes)
+
+
+def _risk_level_or_medium(item: dict[str, Any]) -> str:
+    level = _risk_level(item)
+    return level if level in ("HIGH", "MEDIUM") else "MEDIUM"
+
+
+def _user_text(value: Any, limit: int | None = None) -> str:
+    text = strip_internal_markers(value.strip()) if isinstance(value, str) else ""
+    if limit is not None and len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return text
 
 
 _LEGAL_CITATION = re.compile(r"《[^》]+》(?:第[^，。；\s]{1,30}条(?:第[^，。；\s]{1,12}[款项])?)?")

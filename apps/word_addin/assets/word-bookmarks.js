@@ -49,9 +49,11 @@ export async function seedSourceBookmarks(result) {
   return details
 }
 
-export async function jumpToSource(check, documentKey) {
+export async function jumpToSource(check, documentKey, locationIndex = 0) {
   assertWordApi()
-  const target = primaryTarget(check, documentKey)
+  const target = locationIndex > 0
+    ? targetAt(check, documentKey, locationIndex)
+    : primaryTarget(check, documentKey)
   const includeNotes = supportsWordApi15()
   if (!includeNotes && isNoteBlock(target.location.block_id)) {
     throw new Error("WordApi 1.4 不支持定位脚注或尾注原文")
@@ -391,6 +393,12 @@ function locationsForCheck(check, documentKey) {
       bookmarkName: bookmarkName(documentKey, checkId, index),
     }))
     .filter(target => target.location.platform === "docx" && target.location.anchor_text)
+}
+
+function targetAt(check, documentKey, locationIndex) {
+  const targets = locationsForCheck(check, documentKey)
+  if (!targets.length) throw new Error("该结果缺少 Word 块定位信息")
+  return targets[Math.min(locationIndex, targets.length - 1)]
 }
 
 function primaryTarget(check, documentKey) {

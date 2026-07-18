@@ -34,7 +34,7 @@ from ..infrastructure.database import (
     resolve_structure_path,
 )
 from ..judgment.cases import verify_case_claims
-from ..judgment.semantic import SemanticChecker
+from ..judgment.semantic import SemanticChecker, SemanticCheckError
 from ..judgment.statutes import (
     LocationAssessment,
     LocationStatus,
@@ -103,8 +103,12 @@ def verify_claim_document(
         location_repairs,
     )
     _resolve_repealed_successors(source_chain, items, judgments)
-    _verify_semantic_locator_candidates(source_chain, items, judgments)
-    statute_results = _build_statute_results(items, lookup_results, judgments)
+    _verify_semantic_locator_candidates(
+        source_chain, items, judgments, lookup_results, semantic_checker
+    )
+    statute_results = _aggregate_duplicate_statute_results(
+        _build_statute_results(items, lookup_results, judgments)
+    )
     case_results = (
         verify_case_claims(claim_document, searcher, semantic_checker)
         if include_cases
@@ -554,12 +558,18 @@ def _locator_revision(
     )
 
 
+_MAX_LOCATOR_PROPOSALS = 3
+
+
 def _verify_semantic_locator_candidates(
     source_chain: list[StatuteSource],
     items: list[_CheckItem],
     judgments: dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]],
+    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
+    semantic_checker: SemanticChecker | None = None,
 ) -> None:
-    """把 LLM 提出的其他条号当作检索候选，经 MCP 与文本定位核验后才批准修订。"""
+    """迭代验证 LLM 提名的候选条号：取回原文→确定性包含或语义比对确认→
+    不匹配则携带验证反馈索取下一个候选，最多三轮，穷尽后明示已复查条号。"""
     locator_source = next((
         source for source in source_chain
         if callable(getattr(source, "locate_candidates", None))
@@ -573,39 +583,162 @@ def _verify_semantic_locator_candidates(
         for finding in meaning.findings:
             if not finding.location_recheck_required:
                 continue
-            candidates: dict[int, str] = {}
-            for match in _EU_CN_ARTICLE_PATTERN.finditer(f"{finding.summary} {finding.suggestion}"):
-                number = chinese_number_to_int(match.group(1))
-                if number:
-                    candidates[number] = match.group(1)
-            candidates.pop(article_number_from_citation(item.article_no), None)
-            if len(candidates) == 1:
-                _, label = next(iter(candidates.items()))
-                lookup = locator_source.lookup(LookupRequest(
-                    law_title=item.law_title,
-                    source_type=item.source_type,
-                    article_no=f"第{label}条",
-                    context_text=item.document_quote,
-                ))
-                evidence = [lookup.evidence] if lookup.status == LookupStatus.ARTICLE_FOUND and lookup.evidence else []
-            elif not candidates:
-                recalled = locator_source.locate_candidates(LookupRequest(
-                    law_title=item.law_title,
-                    source_type=item.source_type,
-                    article_no=item.article_no,
-                    context_text=item.document_quote,
-                ))
-                evidence = recalled.candidates
-            else:
+            candidate = finding.candidate_article_no or _regex_candidate(finding, item)
+            if candidate is None:
+                _resolve_by_semantic_recall(locator_source, item, finding)
                 continue
-            resolution = resolve_location_candidates(item.document_quote, evidence)
-            if resolution.status != "resolved":
-                continue
-            resolved = resolution.candidates[0].locator
-            finding.resolved_locator = resolved
-            finding.revision = _locator_revision(item, resolved)
-            if finding.revision:
-                finding.suggestion = f"经北大法宝再次核对，所述内容对应{resolved.article_no}，建议更正引用位置。"
+            tried = _run_locator_proposal_loop(
+                locator_source, semantic_checker, item, finding, candidate,
+                _cited_article_text(lookup_results, item),
+            )
+            if finding.resolved_locator is None and tried:
+                tried_list = "、".join(entry["article_no"] for entry in tried)
+                finding.suggestion = (
+                    f"{finding.suggestion} 已复查{tried_list}，"
+                    "均与引文内容不符，请人工确认实际引用条款。"
+                )
+
+
+def _run_locator_proposal_loop(
+    locator_source,
+    semantic_checker: SemanticChecker | None,
+    item: _CheckItem,
+    finding: StatuteFinding,
+    candidate: str,
+    cited_article_text: str,
+) -> list[dict[str, str]]:
+    tried: list[dict[str, str]] = []
+    for round_no in range(_MAX_LOCATOR_PROPOSALS):
+        if (
+            candidate is None
+            or candidate == item.article_no
+            or any(entry["article_no"] == candidate for entry in tried)
+        ):
+            break
+        lookup = locator_source.lookup(LookupRequest(
+            law_title=item.law_title,
+            source_type=item.source_type,
+            article_no=candidate,
+            context_text=item.document_quote,
+        ))
+        if lookup.status == LookupStatus.ARTICLE_FOUND and lookup.evidence:
+            if _approve_candidate(semantic_checker, item, finding, lookup.evidence, candidate):
+                return tried
+            tried.append({
+                "article_no": candidate,
+                "article_text": lookup.evidence.article_text or "",
+                "mismatch": "条文原文与文书内容不构成对应",
+            })
+        else:
+            tried.append({
+                "article_no": candidate,
+                "article_text": "",
+                "mismatch": "北大法宝未取到该条原文",
+            })
+        if round_no + 1 >= _MAX_LOCATOR_PROPOSALS:
+            break
+        propose = getattr(semantic_checker, "propose_locator_candidate", None)
+        if not callable(propose):
+            break
+        try:
+            candidate = propose(
+                law_title=item.law_title,
+                document_quote=item.document_quote,
+                cited_article_no=item.article_no or "",
+                cited_article_text=cited_article_text,
+                tried=tried,
+            )
+        except SemanticCheckError:
+            break
+    return tried
+
+
+def _approve_candidate(
+    semantic_checker: SemanticChecker | None,
+    item: _CheckItem,
+    finding: StatuteFinding,
+    evidence: ArticleEvidence,
+    candidate: str,
+) -> bool:
+    resolution = resolve_location_candidates(item.document_quote, [evidence])
+    if resolution.status == "resolved":
+        resolved = resolution.candidates[0].locator
+        finding.resolved_locator = resolved
+        finding.revision = _locator_revision(item, resolved)
+        if finding.revision:
+            finding.suggestion = f"经北大法宝再次核对，所述内容对应{resolved.article_no}，建议更正引用位置。"
+        return True
+    if semantic_checker is None:
+        return False
+    try:
+        confirmation = semantic_checker.compare(
+            item.document_quote,
+            item.claim.text,
+            f"《{item.law_title}》{candidate}",
+            evidence,
+        )
+    except SemanticCheckError:
+        return False
+    # 定位确认问的是"引文说的是不是这条"，不是"转述是否零瑕疵"：
+    # 判曲解但可比（recheck=False）说明引文确指该条，条号照改，瑕疵随卡片提示。
+    if confirmation.verdict == CheckVerdict.PASS:
+        residual = None
+    elif confirmation.verdict == CheckVerdict.ISSUE and confirmation.findings and all(
+        not issue.location_recheck_required for issue in confirmation.findings
+    ):
+        residual = confirmation.findings[0].suggestion
+    else:
+        return False
+    resolved = StatuteLocator(article_no=candidate)
+    finding.resolved_locator = resolved
+    finding.revision = _locator_revision(item, resolved)
+    if finding.revision:
+        finding.suggestion = f"经北大法宝复查并比对原文，所述内容对应{candidate}，建议更正引用条号。"
+        if residual:
+            finding.suggestion += f"更正后请注意：{residual}"
+        return True
+    return False
+
+
+def _regex_candidate(finding: StatuteFinding, item: _CheckItem) -> str | None:
+    """结构化字段缺失时从结论文本回捞唯一候选条号（兼容旧模型输出）。"""
+    candidates: dict[int, str] = {}
+    for match in _EU_CN_ARTICLE_PATTERN.finditer(f"{finding.summary} {finding.suggestion}"):
+        number = chinese_number_to_int(match.group(1))
+        if number:
+            candidates[number] = match.group(1)
+    candidates.pop(article_number_from_citation(item.article_no), None)
+    if len(candidates) != 1:
+        return None
+    return f"第{next(iter(candidates.values()))}条"
+
+
+def _resolve_by_semantic_recall(locator_source, item: _CheckItem, finding: StatuteFinding) -> None:
+    """无任何候选线索时按语义召回，仅确定性包含成立才批准修订。"""
+    recalled = locator_source.locate_candidates(LookupRequest(
+        law_title=item.law_title,
+        source_type=item.source_type,
+        article_no=item.article_no,
+        context_text=item.document_quote,
+    ))
+    resolution = resolve_location_candidates(item.document_quote, recalled.candidates)
+    if resolution.status != "resolved":
+        return
+    resolved = resolution.candidates[0].locator
+    finding.resolved_locator = resolved
+    finding.revision = _locator_revision(item, resolved)
+    if finding.revision:
+        finding.suggestion = f"经北大法宝再次核对，所述内容对应{resolved.article_no}，建议更正引用位置。"
+
+
+def _cited_article_text(
+    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
+    item: _CheckItem,
+) -> str:
+    entry = lookup_results.get(item.lookup_key)
+    if entry is None or entry[0].evidence is None:
+        return ""
+    return entry[0].evidence.article_text or ""
 
 
 _CITATION_TEXT = re.compile(r"《[^》]+》第[^，。；：]{1,30}条(?:第[^，。；：]{1,12}[款项])?")
@@ -837,6 +970,54 @@ def _build_statute_results(
             )
         )
     return results
+
+
+def _aggregate_duplicate_statute_results(
+    results: list[StatuteVerificationResult],
+) -> list[StatuteVerificationResult]:
+    """同一法条的同一错误因简称/承前引用在文书多处出现时，合并为一张
+    卡片并保留全部出现位置，避免同一问题重复刷屏。"""
+    aggregated: list[StatuteVerificationResult] = []
+    groups: dict[tuple, StatuteVerificationResult] = {}
+    counts: dict[tuple, int] = {}
+    for result in results:
+        if result.outcome != "issue" or not result.findings:
+            aggregated.append(result)
+            continue
+        key = (
+            result.law_title,
+            tuple(
+                (locator.article_no, locator.paragraph_no, locator.item_no)
+                for locator in result.cited_locators
+            ),
+            tuple(
+                (finding.code, finding.risk_level, finding.suggestion)
+                for finding in result.findings
+            ),
+        )
+        first = groups.get(key)
+        if first is None:
+            groups[key] = result
+            counts[key] = 1
+            aggregated.append(result)
+            continue
+        counts[key] += 1
+        seen = {
+            (location.platform, location.block_id, location.char_start, location.char_end)
+            for location in first.source_locations
+        }
+        merged = list(first.source_locations)
+        for location in result.source_locations:
+            identity = (location.platform, location.block_id, location.char_start, location.char_end)
+            if identity not in seen:
+                seen.add(identity)
+                merged.append(location)
+        first.source_locations = merged
+    for key, first in groups.items():
+        if counts[key] > 1:
+            note = f"该问题在文书中共出现 {counts[key]} 处，已合并为一条，可逐处定位。"
+            first.message = f"{first.message} {note}".strip()
+    return aggregated
 
 
 def _statute_outcome(

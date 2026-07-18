@@ -76,6 +76,10 @@ class StatuteFinding(BaseModel):
     resolved_locator: StatuteLocator | None = None
     historical_version: StatuteVersion | None = None
     location_recheck_required: bool = False
+    candidate_article_no: str | None = Field(
+        default=None,
+        description="LLM 提出的疑似实际对应条号（'第X条'），仅作二次核查的首轮线索，逐轮验证后才采用",
+    )
     revision: RevisionProposal | None = None
 
 

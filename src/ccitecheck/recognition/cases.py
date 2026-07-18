@@ -41,6 +41,12 @@ CASE_NUMBER_PATTERN = re.compile(
     r"号"
 )
 
+# 案号后紧跟的文书类型，如"（2018）最高法民再396号民事判决书"
+CASE_DOCUMENT_TYPE_PATTERN = re.compile(
+    r"^(?:之[一二三四五六七八九十])?(?:民事|刑事|行政|执行)?"
+    r"(判决书|裁定书|调解书|决定书|支付令)"
+)
+
 # 无案号线索 — 白名单模式
 
 # 指导案例：指导案例第X号 或 指导性案例第X号
@@ -211,11 +217,13 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     for m in case_number_matches:
         full_match = m.group(0)
         court = _court_near_case_number(text, m.start(), m.end())
+        doc_type_match = CASE_DOCUMENT_TYPE_PATTERN.match(text[m.end():m.end() + 10])
         case_refs.append(CaseRef(
             reference_type=CaseReferenceType.WITH_CASE_NUMBER,
             case_number=full_match,
             case_name=None,
             court=court,
+            document_type=doc_type_match.group(1) if doc_type_match else None,
         ))
 
     # 2. 指导案例

@@ -7,7 +7,8 @@ export const CASE_STATUS_LABELS = {
 
 export const CASE_ERROR_LABELS = {
   case_not_found: "北大法宝未检索到引用案例", case_identity_error: "案例引用信息错误",
-  holding_not_in_case: "所述观点非该案裁判观点",
+  holding_unsupported: "所述观点在裁判说理中无对应依据",
+  holding_distorted: "曲解裁判说理原意",
 }
 
 export function caseTypeOf(check) {
@@ -40,5 +41,7 @@ export function caseViewOf(check, options = {}) {
 function findingText(finding) {
   const summary = String(finding.summary || "").trim().replace(/[。；]+$/, "")
   const suggestion = String(finding.suggestion || "").trim()
-  return suggestion || (summary ? `${summary}。` : "")
+  const base = suggestion || (summary ? `${summary}。` : "")
+  const excerpt = String(finding.matched_excerpt || "").trim()
+  return excerpt ? `${base}\n裁判说理原文：${excerpt}` : base
 }
