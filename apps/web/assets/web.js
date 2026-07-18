@@ -2,11 +2,10 @@ import { normalizeCaseResult, normalizeStatuteResult, findingLabel } from "/asse
 import { caseViewOf } from "/assets/case-view-model.js"
 import { statuteViewOf } from "/assets/statute-view-model.js"
 
-const state = { entry: "file", file: null, result: null, status: "all", kind: "all", accepted: new Set(), selected: null }
+const state = { entry: "file", file: null, result: null, status: "all", accepted: new Set(), selected: null }
 const $ = id => document.getElementById(id)
 
 document.querySelectorAll(".entry-tab").forEach(button => button.addEventListener("click", () => switchEntry(button.dataset.entry)))
-document.querySelectorAll(".kind-filters button").forEach(button => button.addEventListener("click", () => { state.kind = button.dataset.kind; syncKindButtons(); renderResults() }))
 $("docx-file").addEventListener("change", event => selectFile(event.target.files[0]))
 $("drop-zone").addEventListener("dragover", event => { event.preventDefault(); event.currentTarget.classList.add("is-dragging") })
 $("drop-zone").addEventListener("dragleave", event => event.currentTarget.classList.remove("is-dragging"))
@@ -57,7 +56,6 @@ async function runCheck() {
     if (!response.ok) throw new Error(data.detail || `核查服务返回 ${response.status}`)
     state.result = data
     state.status = "all"
-    state.kind = "all"
     state.accepted = new Set()
     state.selected = null
     renderWorkspace()
@@ -75,7 +73,6 @@ function renderWorkspace() {
   $("download-button").href = `/api/web/sessions/${result.session_id}/document`
   $("download-button").classList.remove("is-disabled")
   renderStatusFilters()
-  syncKindButtons()
   renderPreview()
   renderResults()
   showOnly("workspace")
@@ -102,7 +99,7 @@ function renderStatusFilters() {
 }
 
 function renderResults() {
-  const visible = checks().filter(check => (state.status === "all" || check.outcome === state.status) && (state.kind === "all" || check.check_kind === state.kind))
+  const visible = checks().filter(check => state.status === "all" || check.outcome === state.status)
   $("visible-count").textContent = `${visible.length} 条`
   $("web-results").replaceChildren(...visible.map(createResultCard))
   if (!visible.length) $("web-results").append(el("div", "empty-state", "当前筛选条件下没有核查结果。"))
@@ -139,9 +136,12 @@ function createEvidence(evidence) {
   if (evidence.structurePath) details.append(el("p", "evidence-path", `章节位置：${evidence.structurePath}`))
   if (evidence.articleText) details.append(el("blockquote", "", `${evidence.articleHeading ? `${evidence.articleHeading}　` : ""}${evidence.articleText}`))
   if (evidence.url) {
-    const link = el("a", "source-link", "查看权威来源")
+    const linkLine = el("p", "source-line")
+    linkLine.append("原文链接：")
+    const link = el("a", "source-link", evidence.url)
     link.href = evidence.url; link.target = "_blank"; link.rel = "noopener noreferrer"
-    details.append(link)
+    linkLine.append(link)
+    details.append(linkLine)
   }
   return details
 }
@@ -196,15 +196,28 @@ function selectCheck(check) {
   renderPreview(); renderResults()
   const preview = document.querySelector(`mark[data-check-id="${CSS.escape(check.check_id)}"]`) || document.querySelector(`[data-block-id="${CSS.escape(check.source_locations?.[0]?.block_id || "")}"]`)
   const card = document.querySelector(`.web-result-card[data-check-id="${CSS.escape(check.check_id)}"]`)
-  preview?.scrollIntoView({ behavior: "smooth", block: "center" })
-  card?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  centerInPane(preview, document.querySelector(".document-pane"))
+  centerInPane(card, document.querySelector(".results-pane"))
+}
+
+function centerInPane(element, pane) {
+  if (!element || !pane) return
+  if (pane.scrollHeight > pane.clientHeight + 1) {
+    const paneBox = pane.getBoundingClientRect()
+    const elementBox = element.getBoundingClientRect()
+    pane.scrollTo({
+      top: pane.scrollTop + elementBox.top - paneBox.top - (pane.clientHeight - elementBox.height) / 2,
+      behavior: "smooth",
+    })
+    return
+  }
+  element.scrollIntoView({ behavior: "smooth", block: "center" })
 }
 
 function revisedBlockText(text) { for (const check of checks()) if (state.accepted.has(check.check_id)) { const r = revisionOf(check); if (r && text.includes(r.original_text)) text = text.replace(r.original_text, r.revised_text) } return text }
 function revisedClaim(check) { const r = revisionOf(check); return state.accepted.has(check.check_id) && r ? r.revised_text : check.claim_text }
 function revisionOf(check) { const revisions = (check.findings || []).map(item => item.revision).filter(item => item?.machine_applicable && item.revised_text); return revisions.length === 1 ? revisions[0] : null }
 function locationOrder(check) { return Number(String(check.source_locations?.[0]?.block_id || "").match(/\d+/)?.[0] || Number.MAX_SAFE_INTEGER) }
-function syncKindButtons() { document.querySelectorAll(".kind-filters button").forEach(button => button.classList.toggle("is-active", button.dataset.kind === state.kind)) }
 function showLanding() { showOnly("landing") }
 function showOnly(id) { for (const section of ["landing", "progress", "workspace"]) $(section).classList.toggle("is-hidden", section !== id); window.scrollTo({ top: 0, behavior: "smooth" }) }
 function cycleProgress() { const messages = ["正在解析文书结构", "正在连接权威法律来源", "正在核对法规与案例引用"]; let i = 0; $("progress-title").textContent = messages[0]; const timer = setInterval(() => { if ($("progress").classList.contains("is-hidden")) return clearInterval(timer); $("progress-title").textContent = messages[++i % messages.length] }, 2400) }

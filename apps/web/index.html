@@ -63,21 +63,24 @@
         <div><p class="eyebrow">核查工作台</p><h1 id="document-title">文书核查结果</h1><p id="summary-line"></p></div>
         <div class="workspace-actions"><button id="new-check" class="secondary-button" type="button">核查新文书</button><a id="download-button" class="primary-button is-disabled" href="#">下载修订版</a></div>
       </header>
-      <nav class="filters" aria-label="筛选核查结果">
-        <div id="status-filters" class="filter-group"></div>
-        <div class="filter-group kind-filters">
-          <button class="filter-button is-active" data-kind="all">全部引用</button>
-          <button class="filter-button" data-kind="statute">法规</button>
-          <button class="filter-button" data-kind="case">案例</button>
-        </div>
-      </nav>
       <div class="workbench">
         <section class="document-pane" aria-labelledby="preview-title">
-          <div class="pane-heading"><h2 id="preview-title">文书原文</h2><span>点击高亮查看核查结果</span></div>
+          <div class="pane-heading preview-heading">
+            <h2 id="preview-title">文书原文</h2>
+            <div class="highlight-guide" aria-label="引用句颜色说明">
+              <strong>引用句已标亮</strong>
+              <span class="is-issue">红色为未通过</span>
+              <span class="is-pass">绿色为已通过</span>
+              <span class="is-bug">橙色为待核实</span>
+            </div>
+          </div>
           <article id="document-preview" class="paper"></article>
         </section>
         <aside class="results-pane" aria-labelledby="result-list-title">
-          <div class="pane-heading"><h2 id="result-list-title">核查结果</h2><span id="visible-count"></span></div>
+          <div class="results-toolbar">
+            <div class="pane-heading"><h2 id="result-list-title">核查结果</h2><span id="visible-count"></span></div>
+            <nav id="status-filters" class="filter-group" aria-label="筛选核查状态"></nav>
+          </div>
           <div id="web-results" class="web-results"></div>
         </aside>
       </div>
