@@ -23,3 +23,4 @@ reports/
 debug_runs/
 data/pkulaw_cache.sqlite
 data/laws.sqlite.backup-*
+.claude/
