@@ -9,6 +9,9 @@ on:
       - ".github/workflows/build-installers.yml"
       - "requirements.txt"
 
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     strategy:

@@ -25,6 +25,10 @@ import zipfile
 from datetime import date
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 PKG_DIR = Path(__file__).resolve().parent
 REPO = PKG_DIR.parents[1]
 CACHE = PKG_DIR / "cache"
