@@ -1,4 +1,8 @@
-from ccitecheck.domain.statute_results import StatuteLocator
+from types import SimpleNamespace
+
+from ccitecheck.application.verify_claims import _matching_historical_location
+from ccitecheck.domain.citation import ArticleRef
+from ccitecheck.domain.statute_results import StatuteLocator, StatuteVersion
 from ccitecheck.judgment.statutes import (
     LocationStatus,
     assess_location,
@@ -84,3 +88,17 @@ def test_flattened_article_does_not_claim_later_paragraph_is_missing():
     )
 
     assert assessment.status == LocationStatus.STRUCTURE_UNAVAILABLE
+
+
+def test_historical_version_can_resolve_a_missing_current_paragraph():
+    item = SimpleNamespace(
+        article_no="第二条",
+        article=ArticleRef(article="第二条", paragraphs=["第三款"]),
+    )
+    historical = StatuteVersion(
+        version_key="2018",
+        article_no="第二条",
+        article_text="第二条　第一款。\n第二款。\n历史第三款。",
+    )
+
+    assert _matching_historical_location(item, [historical]) == historical

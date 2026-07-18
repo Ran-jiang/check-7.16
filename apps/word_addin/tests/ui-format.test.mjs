@@ -3,7 +3,6 @@ import test from "node:test"
 
 import {
   CheckUi,
-  checkState,
   formatReference,
   orderChecksByCitation,
   sourceUrlOf,
@@ -68,31 +67,25 @@ test("formats one article with multiple paragraphs as one reference", () => {
   }), "《中华人民共和国商标法》第十三条第一款、第三款")
 })
 
-test("each statute result keeps its own verification state", () => {
-  assert.equal(checkState({ outcome: "pass", findings: [] }), "pass")
-  assert.equal(checkState({ outcome: "issue", findings: [{ code: "citation_location_error" }] }), "issue")
-})
-
-// ---------- 统一视图模型（normalizeCheck） ----------
-
-import { normalizeCheck } from "../assets/view-model.js"
+import { statuteViewOf } from "../assets/statute-view-model.js"
+import { caseViewOf } from "../assets/case-view-model.js"
 
 test("badge text follows the renamed three-state scheme", () => {
-  const issue = normalizeCheck({ outcome: "issue", findings: [{ code: "meaning_distorted", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
+  const issue = statuteViewOf({ outcome: "issue", findings: [{ code: "meaning_distorted", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
   assert.equal(issue.state, "issue")
   assert.equal(issue.badge.text, "未通过")
 
-  const bug = normalizeCheck({ outcome: "bug", law_title: "刑法", lookup_status: "law_found_text_unavailable" })
+  const bug = statuteViewOf({ outcome: "bug", law_title: "刑法", lookup_status: "law_found_text_unavailable" })
   assert.equal(bug.state, "bug")
   assert.equal(bug.badge.text, "待核实")
 
-  const pass = normalizeCheck({ outcome: "pass", law_title: "民法典", lookup_status: "article_found", meaning_check: { verdict: "pass" } })
+  const pass = statuteViewOf({ outcome: "pass", law_title: "民法典", lookup_status: "article_found", meaning_check: { verdict: "pass" } })
   assert.equal(pass.badge.text, "通过")
   assert.equal(pass.typeLabel, "法律引用无问题")
 })
 
 test("out-of-scope statutes surface the boundary message", () => {
-  const view = normalizeCheck({
+  const view = statuteViewOf({
     law_title: "知识产权法典",
     outcome: "bug",
     lookup_status: "out_of_scope",
@@ -105,7 +98,7 @@ test("out-of-scope statutes surface the boundary message", () => {
 })
 
 test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
-  const view = normalizeCheck({
+  const view = statuteViewOf({
     law_title: "通用数据保护条例",
     jurisdiction: "EU",
     outcome: "pass",
@@ -123,7 +116,7 @@ test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
 })
 
 test("case checks normalize into the same shape as statutes", () => {
-  const view = normalizeCheck({
+  const view = caseViewOf({
     check_kind: "case",
     outcome: "bug",
     check_id: "cc_00001",
@@ -143,7 +136,7 @@ test("case checks normalize into the same shape as statutes", () => {
 })
 
 test("compact sub-references drop the quote and jump affordance", () => {
-  const view = normalizeCheck(
+  const view = statuteViewOf(
     { outcome: "pass", law_title: "刑法", article_no: "第二百九十一条", claim_text: "整段引文", lookup_status: "article_found", meaning_check: { verdict: "pass" } },
     { compact: true },
   )
@@ -153,7 +146,7 @@ test("compact sub-references drop the quote and jump affordance", () => {
 })
 
 test("recalled related articles keep the evidence section even without full text", () => {
-  const view = normalizeCheck({
+  const view = statuteViewOf({
     law_title: "著作权法",
     outcome: "pass",
     lookup_status: "relevant_articles_found",
@@ -169,7 +162,7 @@ test("recalled related articles keep the evidence section even without full text
 })
 
 test("EU evidence headings use the Article convention with a separator", () => {
-  const view = normalizeCheck({
+  const view = statuteViewOf({
     law_title: "通用数据保护条例",
     article_no: "第十七条",
     jurisdiction: "EU",
@@ -188,7 +181,7 @@ test("EU evidence headings use the Article convention with a separator", () => {
 })
 
 test("structure citations label distinctly from nested references", () => {
-  const structure = normalizeCheck({
+  const structure = statuteViewOf({
     law_title: "中华人民共和国民法典",
     outcome: "pass",
     article_no: "第三编第四章",
@@ -204,7 +197,7 @@ test("structure citations label distinctly from nested references", () => {
   assert.equal(structure.typeLabel, "章节引用：已核验存在")
   assert.match(structure.evidence.structurePath, /合同的履行/)
 
-  const ambiguous = normalizeCheck({
+  const ambiguous = statuteViewOf({
     law_title: "中华人民共和国民法典",
     outcome: "bug",
     article_no: "第四章",
@@ -215,7 +208,7 @@ test("structure citations label distinctly from nested references", () => {
   assert.equal(ambiguous.state, "bug")
   assert.equal(ambiguous.typeLabel, "章节引用存在多个候选，请人工确认")
 
-  const nested = normalizeCheck({
+  const nested = statuteViewOf({
     outcome: "pass",
     law_title: "中华人民共和国刑法",
     article_no: "第二百九十一条",

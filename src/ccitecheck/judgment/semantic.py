@@ -26,7 +26,6 @@ from ..domain.statute_results import (
     StatuteMeaningCheck,
 )
 from .markers import strip_internal_markers
-from .paragraphs import resolve_paragraph
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -46,7 +45,6 @@ class SemanticChecker(Protocol):
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
-        paragraphs: list[str] | None = None,
     ) -> StatuteMeaningCheck: ...
 
 
@@ -105,7 +103,6 @@ class QwenSemanticChecker:
         quote_context: str,
         cited_source: str,
         evidence: ArticleEvidence,
-        paragraphs: list[str] | None = None,
     ) -> StatuteMeaningCheck:
         if not evidence.article_text:
             raise SemanticCheckError("未取得法条原文，无法进行语义对比")
@@ -117,15 +114,6 @@ class QwenSemanticChecker:
             "statute_text": evidence.article_text,
             "source_metadata": _source_metadata(evidence),
         }
-        if paragraphs:
-            target = resolve_paragraph(paragraphs[0], evidence.article_text)
-            if target is not None:
-                user_input["target_paragraph"] = {
-                    "cited": paragraphs[0],
-                    "number": target.number,
-                    "total_paragraphs": target.total,
-                    "text": target.text,
-                }
         payload = {
             "model": self.model,
             "input": [

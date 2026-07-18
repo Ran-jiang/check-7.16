@@ -3,7 +3,7 @@
 对接标准 Streamable HTTP MCP 服务（如 @cyanheads/eur-lex-mcp-server）：
 先 initialize 握手取得会话，再按会话调用工具；会话失效自动重建。
 "未找到"是成功响应；网络失败显式报错，绝不静默降级。未配置网关时抛
-EurLexNotConfiguredError，由上游归入 out_of_scope 提示。
+EurLexNotConfiguredError，由上游归入 source_not_configured 状态。
 """
 
 from __future__ import annotations

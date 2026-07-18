@@ -1,16 +1,5 @@
-const STATUTE_LABELS = {
-  source_not_found: "北大法宝未检索到所引法源",
-  citation_location_error: "条款编号或引用定位错误",
-  source_repealed: "法源已废止或失效",
-  source_amended: "法源已修改",
-  meaning_distorted: "曲解权威文本原意",
-}
-
-const CASE_LABELS = {
-  case_not_found: "北大法宝未检索到引用案例",
-  case_identity_error: "案例引用信息错误",
-  holding_not_in_case: "所述观点非该案裁判观点",
-}
+import { STATUTE_ERROR_LABELS } from "./statute-view-model.js"
+import { CASE_ERROR_LABELS, CASE_STATUS_LABELS } from "./case-view-model.js"
 
 export function buildResultCards(verification) {
   const cards = new Map()
@@ -42,7 +31,7 @@ export function normalizeStatuteResult(result) {
     article_no: locator.article_no,
     paragraphs: result.cited_locators?.map(item => item.paragraph_no).filter(Boolean) || [],
     items: result.cited_locators?.map(item => item.item_no).filter(Boolean) || [],
-    type: result.findings?.map(item => STATUTE_LABELS[item.code] || item.code).join("；") || "法律引用无问题",
+    type: result.findings?.map(item => STATUTE_ERROR_LABELS[item.code] || item.code).join("；") || "法律引用无问题",
   }
 }
 
@@ -51,20 +40,14 @@ export function normalizeCaseResult(result) {
     ...result,
     check_kind: "case",
     state: result.outcome,
-    type: result.findings?.map(item => CASE_LABELS[item.code] || item.code).join("；") || caseStatusLabel(result.lookup_status),
+    type: result.findings?.map(item => CASE_ERROR_LABELS[item.code] || item.code).join("；") || caseStatusLabel(result.lookup_status),
   }
 }
 
 export function findingLabel(finding, kind) {
-  return (kind === "case" ? CASE_LABELS : STATUTE_LABELS)[finding.code] || finding.code
+  return (kind === "case" ? CASE_ERROR_LABELS : STATUTE_ERROR_LABELS)[finding.code] || finding.code
 }
 
 function caseStatusLabel(status) {
-  return {
-    verified: "案例已验证",
-    not_found: "北大法宝未检索到引用案例",
-    manual_review: "候选案例待确认",
-    source_not_configured: "案例库凭证未配置",
-    source_error: "案例数据源调用失败",
-  }[status] || status
+  return CASE_STATUS_LABELS[status] || status
 }

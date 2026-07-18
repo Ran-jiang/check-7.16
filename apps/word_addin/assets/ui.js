@@ -1,16 +1,11 @@
 import {
   BADGE_TEXT,
-  CASE_STATUS_LABELS,
-  LOOKUP_STATUS_LABELS,
-  caseTypeOf,
-  checkState,
-  findingsOf,
-  formatReference,
-  normalizeCheck,
   orderChecksByCitation,
   sourceUrlOf,
   stripRepeatedArticleHeading,
 } from "./view-model.js"
+import { caseTypeOf, caseViewOf, CASE_STATUS_LABELS } from "./case-view-model.js"
+import { formatReference, statuteViewOf, LOOKUP_STATUS_LABELS } from "./statute-view-model.js"
 import { buildResultCards } from "./result-models.js"
 
 export {
@@ -18,10 +13,7 @@ export {
   CASE_STATUS_LABELS,
   LOOKUP_STATUS_LABELS,
   caseTypeOf,
-  checkState,
-  findingsOf,
   formatReference,
-  normalizeCheck,
   orderChecksByCitation,
   sourceUrlOf,
   stripRepeatedArticleHeading,
@@ -30,6 +22,10 @@ export {
 const screens = ["home-screen", "progress-screen", "results-screen"]
 
 const REFERENCE_ROLE_LABELS = { nested: "内部转引", inherited: "承前引用" }
+
+function viewOf(check, options = {}) {
+  return check.check_kind === "case" ? caseViewOf(check, options) : statuteViewOf(check, options)
+}
 
 export class CheckUi {
   constructor() {
@@ -182,9 +178,9 @@ export class CheckUi {
     const select = document.getElementById("type-filter")
     const types = new Set()
     for (const check of this.checks) {
-      const findings = findingsOf(check)
+      const findings = check.findings || []
       if (findings.length) {
-        for (const type of normalizeCheck(check).typeTags) types.add(type)
+        for (const type of viewOf(check).typeTags) types.add(type)
       } else if (check.check_kind === "case") {
         types.add(caseTypeOf(check))
       }
@@ -210,9 +206,9 @@ export class CheckUi {
     list.replaceChildren()
     const visible = this.cards.filter(item => {
       const checks = item.check_kind === "statute-group" ? item.references : [item]
-      if (this.statusFilter !== "all" && !checks.some(check => checkState(check) === this.statusFilter)) return false
+      if (this.statusFilter !== "all" && !checks.some(check => check.outcome === this.statusFilter)) return false
       if (!this.typeFilter) return true
-      return checks.some(check => normalizeCheck(check).typeTags.includes(this.typeFilter) ||
+      return checks.some(check => viewOf(check).typeTags.includes(this.typeFilter) ||
         (check.check_kind === "case" && caseTypeOf(check) === this.typeFilter))
     })
     if (!visible.length) {
@@ -239,7 +235,7 @@ export class CheckUi {
   // 统一卡片解剖（单条/多条/案例同构）：
   // ①汇总行（仅多条）②文书原文（含定位）③「核查对象」分区标签 ④收起的核查行×N
   createResultCard(check) {
-    const view = normalizeCheck(check, { compact: true })
+    const view = viewOf(check, { compact: true })
     const card = element("article", `result-card is-${view.state}`)
     card.append(...this.createQuoteZone(check.claim_text, check, check.card_id || check.check_id))
     card.append(this.createSectionLabel(view.refLine.label))
@@ -251,7 +247,7 @@ export class CheckUi {
 
   createMultiReferenceCard(card) {
     const views = card.references.map(reference =>
-      normalizeCheck({ ...reference, check_kind: "statute" }, { compact: true })
+      statuteViewOf(reference, { compact: true })
     )
     const container = element("article", "result-card statute-group is-multiple")
 
@@ -372,7 +368,7 @@ export class CheckUi {
   // ⑥区：单个决策按钮，接受修订 ⇄ 取消修订
   createDecisionRow(view) {
     const row = element("div", "action-row")
-    const applicable = findingsOf(view.raw).some(finding => finding.revision?.machine_applicable)
+    const applicable = (view.raw.findings || []).some(finding => finding.revision?.machine_applicable)
     if (!applicable) return row
     const button = element("button", "action-button decision-button")
     button.type = "button"

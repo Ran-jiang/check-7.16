@@ -87,9 +87,11 @@ def verify_claim_document(
     searcher = case_searcher or PkulawCaseSource()
     items = _collect_check_items(claim_document) if include_statutes else []
     lookup_results = _run_lookups(source_chain, items, database_path)
-    location_repairs = _run_location_repairs(source_chain, items, lookup_results)
     historical_versions = _load_historical_versions(
         database_path, items, lookup_results
+    )
+    location_repairs = _run_location_repairs(
+        source_chain, items, lookup_results, historical_versions
     )
     judgments = _run_judgments(
         semantic_checker,
@@ -301,6 +303,7 @@ def _run_location_repairs(
     source_chain: list[StatuteSource],
     items: list[_CheckItem],
     lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
+    historical_versions: dict[tuple, list[StatuteVersion]],
 ) -> dict[int, StatuteLocationResolution]:
     locator_source = next((
         source
@@ -314,7 +317,11 @@ def _run_location_repairs(
         if item.lookup_key not in lookup_results or not _has_subarticle_locator(item):
             continue
         lookup_result, _ = lookup_results[item.lookup_key]
-        if _assess_item_location(item, lookup_result).status == LocationStatus.STRUCTURE_UNAVAILABLE:
+        if _assess_item_location(item, lookup_result).status != LocationStatus.INVALID:
+            continue
+        if _matching_historical_location(
+            item, historical_versions.get(item.lookup_key, [])
+        ) is not None:
             continue
         candidate_result = locator_source.locate_candidates(LookupRequest(
             law_title=item.law_title,
@@ -352,20 +359,6 @@ def _location_suggestion(
 
 def _has_subarticle_locator(item: _CheckItem) -> bool:
     return bool(item.article and (item.article.paragraphs or item.article.items))
-
-
-def _resolved_to_other_location(
-    item: _CheckItem,
-    resolution: StatuteLocationResolution | None,
-) -> bool:
-    if resolution is None or resolution.status != "resolved":
-        return False
-    cited = {
-        (locator.article_no, locator.paragraph_no, locator.item_no)
-        for locator in _item_locators(item)
-    }
-    resolved = resolution.candidates[0].locator
-    return (resolved.article_no, resolved.paragraph_no, resolved.item_no) not in cited
 
 
 def _run_judgments(
@@ -409,20 +402,26 @@ def _run_judgments(
         )
         location = _assess_item_location(item, lookup_result)
         if location.status == LocationStatus.INVALID:
-            repair = location_repairs.get(index)
-            findings.append(StatuteFinding(
-                code=StatuteErrorCode.CITATION_LOCATION_ERROR,
-                risk_level="HIGH",
-                summary=location.message,
-                suggestion=_location_suggestion(repair),
-            ))
-        elif _resolved_to_other_location(item, location_repairs.get(index)):
-            findings.append(StatuteFinding(
-                code=StatuteErrorCode.CITATION_LOCATION_ERROR,
-                risk_level="HIGH",
-                summary="文书所述内容与所引款项不对应",
-                suggestion=_location_suggestion(location_repairs[index]),
-            ))
+            historical = _matching_historical_location(
+                item, historical_versions.get(item.lookup_key, [])
+            )
+            if historical is not None:
+                findings.append(StatuteFinding(
+                    code=StatuteErrorCode.SOURCE_AMENDED,
+                    risk_level="HIGH",
+                    summary=f"现行版本中{location.message}，但历史版本存在所引位置",
+                    suggestion="该引用对应历史版本，请核实适用时间，并改引现行规定。",
+                    cited_locator=_item_locators(item)[0],
+                    historical_version=historical,
+                ))
+            else:
+                repair = location_repairs.get(index)
+                findings.append(StatuteFinding(
+                    code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+                    risk_level="HIGH",
+                    summary=location.message,
+                    suggestion=_location_suggestion(repair),
+                ))
         elif location.status == LocationStatus.STRUCTURE_UNAVAILABLE:
             results[index] = (
                 findings,
@@ -478,6 +477,16 @@ def _run_judgments(
             if item.jurisdiction == "EU":
                 _append_verified_eu_candidate(item, lookup_results[item.lookup_key][0], comparison)
     return results
+
+
+def _matching_historical_location(
+    item: _CheckItem, versions: list[StatuteVersion]
+) -> StatuteVersion | None:
+    for version in versions:
+        structure = parse_article_structure(version.article_no, version.article_text)
+        if assess_location(structure, _item_locators(item)).status == LocationStatus.VALID:
+            return version
+    return None
 
 
 def _append_verified_eu_candidate(
@@ -674,7 +683,13 @@ def _load_historical_versions(
         for item in items
         if item.article_no
         and item.lookup_key in lookup_results
-        and lookup_results[item.lookup_key][0].status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+        and (
+            lookup_results[item.lookup_key][0].status
+            == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+            or _assess_item_location(
+                item, lookup_results[item.lookup_key][0]
+            ).status == LocationStatus.INVALID
+        )
     }
     if not targets:
         return {}
