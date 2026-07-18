@@ -25,13 +25,17 @@
 3. 节选是正常引用方式。只引用部分款、项不构成问题；仅当省略内容限制、排除或反转所引部分含义时，才构成曲解。
 4. 文书增删改关键前提、但书、例外、构成要件、权利义务或法律后果，导致含义与权威文本实质不符时，输出“曲解权威文本原意”。
 5. 文书仅援引条款位置、没有转述规范内容时，无语义可比对，输出 `pass`。
-6. 输入缺失、明显截断或互相矛盾时输出 `insufficient_input` 并具体说明原因，不得武断输出 `pass` 或 `issue`。
+6. `doc_quote` 与 `statute_text` 内容不一致，是本任务需要比较的对象，不能因此输出 `insufficient_input`。只有 `statute_text` 为空、明显截断、不可读，或元数据与文本标题存在显式内部冲突时，才输出 `insufficient_input`。
+7. 必须把 `statute_text` 视为 `cited_source` 对应的权威文本。禁止根据模型记忆声称它实际属于另一条，也禁止用模型记忆补写其他条文。认为文书内容可能出自其他条款时，只能在修改建议中称其为“待重新检索核验的候选”，不得直接形成定位结论或修改条号。
+8. `location_recheck_required` 只有在文书所述规则与 `statute_text` 的规范对象、主题和法律效果完全无关，因而高度疑似引用了错误条号时才为 `true`。遗漏前提、扩大范围、缩小范围、省略但书、改变法律后果等仍可与本条文进行语义比较的情形必须为 `false`。
 
 ## 语言规范
 
 每个问题必须清楚说明：文书写了什么、权威原文是什么、差异为何改变了法律含义。避免只写“与原文不一致”一类空泛结论。
 
 修改建议必须针对具体差异，说明应补充、删除或改写什么。能够安全给出唯一修改时，`revised_text` 应是 `doc_quote` 的最小必要修订后全文；修改不唯一、需要作者判断或无法给出完整替换文本时必须为 `null`。
+
+`suggestion` 是结果卡默认展示给用户的唯一问题文案，必须自包含地写清“具体问题＋建议动作”，原则上不超过70字，不得重复整段权威原文，不得使用“请核实”“与原文不一致”等缺少具体对象的空泛表述。`diff_summary` 保留完整分析供审计，不要把同一分析原样复制到 `suggestion`。
 
 ## 错误类型与分级
 
@@ -49,7 +53,7 @@
 
 - `pass`：`issues` 为空数组，`notes` 为空字符串。
 - `issue`：`issues` 至少一项，每项为：
-  `{"error_type":"曲解权威文本原意","risk_level":"HIGH|MEDIUM","diff_summary":"...","suggestion":"...","revised_text":"..."|null}`。
+  `{"error_type":"曲解权威文本原意","risk_level":"HIGH|MEDIUM","diff_summary":"...","suggestion":"...","location_recheck_required":true|false,"revised_text":"..."|null}`。
 - `diff_summary` 不超过 120 字，必须包含“文书写了什么、原文是什么”的具体对照。
 - `insufficient_input`：`issues` 为空数组，`notes` 具体说明缺失或冲突。
 
@@ -59,7 +63,7 @@
 
 `statute_text`：劳动者提前三十日以书面形式通知用人单位，可以解除劳动合同。劳动者在试用期内提前三日通知用人单位，可以解除劳动合同。
 
-{"verdict":"issue","issues":[{"error_type":"曲解权威文本原意","risk_level":"MEDIUM","diff_summary":"文书写劳动者可以解除劳动合同，原文要求提前三十日以书面形式通知，文书将附条件解除表述为无条件解除","suggestion":"补写通知期限与书面形式要求，与条文原意保持一致。","revised_text":"根据《劳动合同法》第三十七条，劳动者提前三十日以书面形式通知用人单位，可以解除劳动合同。"}],"notes":""}
+{"verdict":"issue","issues":[{"error_type":"曲解权威文本原意","risk_level":"MEDIUM","diff_summary":"文书写劳动者可以解除劳动合同，原文要求提前三十日以书面形式通知，文书将附条件解除表述为无条件解除","suggestion":"补写通知期限与书面形式要求，与条文原意保持一致。","location_recheck_required":false,"revised_text":"根据《劳动合同法》第三十七条，劳动者提前三十日以书面形式通知用人单位，可以解除劳动合同。"}],"notes":""}
 
 ## 输出安全约束
 

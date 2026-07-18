@@ -23,10 +23,19 @@ _ISSUING_AUTHORITY_PREFIXES = (
 
 def match_law_record(law_title: str, records: list[RecordT]) -> RecordT | None:
     """匹配同名法规及作为规范性文件发布载体的印发/发布通知。"""
+    exact_target = _normalized_exact_title(law_title)
+    exact_matches = [
+        record for record in records
+        if _normalized_exact_title(record.title) == exact_target
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+
     target = _normalized_title(law_title)
     target_full = (
         target if target.startswith("中华人民共和国") else f"中华人民共和国{target}"
     )
+    matches: list[RecordT] = []
     for record in records:
         candidate = _normalized_title(record.title)
         candidate_without_issuer = next(
@@ -41,7 +50,11 @@ def match_law_record(law_title: str, records: list[RecordT]) -> RecordT | None:
             target,
             target_full,
         ):
-            return record
+            matches.append(record)
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        return None
     # 部门规范性文件可能只存在于印发/发布通知中，没有独立同名条目。
     # 仅接受书名号内嵌完整目标法名的发布载体。
     for record in records:
@@ -53,6 +66,10 @@ def match_law_record(law_title: str, records: list[RecordT]) -> RecordT | None:
 
 def _normalized_title(title: str) -> str:
     return strip_version_annotation(normalize_title(title))
+
+
+def _normalized_exact_title(title: str) -> str:
+    return normalize_title(title).translate(str.maketrans({"（": "(", "）": ")"}))
 
 
 __all__ = ["match_law_record"]

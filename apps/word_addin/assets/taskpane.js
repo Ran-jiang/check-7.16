@@ -6,7 +6,7 @@ import {
   getDocumentName,
   getSelectedContent,
 } from "./office-document.js"
-import { clearSourceBookmarks, jumpToSource, seedSourceBookmarks } from "./word-bookmarks.js"
+import { jumpToSource, seedSourceBookmarks } from "./word-bookmarks.js"
 import { CheckUi } from "./ui.js"
 import { applyTrackedRevision } from "./word-revisions.js"
 
@@ -19,7 +19,6 @@ let lastScope = null
 document.getElementById("start-button").addEventListener("click", runCheck)
 document.getElementById("selection-button").addEventListener("click", runSelectionCheck)
 document.getElementById("rerun-button").addEventListener("click", rerunCurrentCheck)
-document.getElementById("clear-bookmarks-button").addEventListener("click", clearBookmarkMarkers)
 document.getElementById("brand-button").addEventListener("click", showHome)
 document.getElementById("help-button").addEventListener("click", openHelp)
 
@@ -209,30 +208,11 @@ function openHistorySnapshot(entry) {
   ui.renderResults(snapshot, readDecisions(snapshot.document_key), { snapshotAt: entry.checkedAt })
 }
 
-async function clearBookmarkMarkers() {
-  try {
-    ui.setBusy(true)
-    const count = await clearSourceBookmarks()
-    ui.showMessage(count ? `已清除 ${count} 个定位标记` : "没有需要清除的定位标记")
-  } catch (error) {
-    ui.showMessage(error.message || "清除定位标记失败")
-  } finally {
-    ui.setBusy(false)
-  }
-}
 
 function showHome() {
   ui.showScreen("home-screen")
 }
 
 function openHelp() {
-  openExternal(`${window.location.origin}/help.html`)
-}
-
-function openExternal(url) {
-  if (Office.context.ui?.openBrowserWindow) {
-    Office.context.ui.openBrowserWindow(url)
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer")
-  }
+  ui.showScreen("help-screen")
 }

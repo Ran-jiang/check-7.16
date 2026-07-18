@@ -8,12 +8,14 @@ from dataclasses import dataclass
 from ..domain.citation import ClaimDocument, ClaimType
 from ..domain.evidence import CaseEvidence, CaseLookupStatus, CaseSourceTrace
 from ..domain.case_results import (
+    CaseCandidate,
     CaseErrorCode,
     CaseFinding,
     CaseHoldingCheck,
     CaseVerificationResult,
 )
 from ..domain.checks import ExecutionStatus
+from ..domain.revisions import RevisionProposal
 from ..tracing.queries import build_case_keyword_query, build_case_semantic_query
 from ..tracing.sources.pkulaw.cases import CaseSearcher
 from ..tracing.sources.pkulaw.client import (
@@ -23,6 +25,9 @@ from ..tracing.sources.pkulaw.client import (
     PkulawNotFoundError,
 )
 from .case_identity import (
+    case_parties as _case_parties,
+    case_search_title as _case_search_title,
+    equivalent_case_name as _equivalent_case_name,
     compare_case_identity,
     guiding_case_id as _guiding_case_id,
     normalize_case_name as _normalize_case_name,
@@ -57,7 +62,7 @@ def verify_case_claims(
         )
     checks: list[CaseVerificationResult] = []
     for next_id, ((claim, ref), outcome) in enumerate(zip(refs, outcomes), start=1):
-        status, evidence, message, traces = outcome
+        status, evidence, message, traces, candidates = outcome
         holding_check = (
             _check_holding(claim, evidence, semantic_checker)
             if status == CaseLookupStatus.VERIFIED
@@ -72,13 +77,14 @@ def verify_case_claims(
                 evidence=evidence,
             )
             if identity is not None:
+                identity.revision = _case_identity_revision(claim.text, ref, evidence, identity.suggestion)
                 findings.insert(0, identity)
         elif status == CaseLookupStatus.NOT_FOUND:
             findings.append(CaseFinding(
                 code=CaseErrorCode.CASE_NOT_FOUND,
                 risk_level="HIGH",
                 summary=message,
-                suggestion="请核对案名、案号、法院或裁判日期。",
+                suggestion="北大法宝未检索到所引案例，请核对案名、案号、法院或裁判日期。",
             ))
         checks.append(CaseVerificationResult(
             check_id=f"cc_{next_id:05d}",
@@ -94,6 +100,7 @@ def verify_case_claims(
             evidence=evidence,
             message=message,
             source_attempts=traces,
+            candidate_cases=candidates,
             findings=findings,
             outcome=("issue" if findings or status == CaseLookupStatus.NOT_FOUND else "pass" if status == CaseLookupStatus.VERIFIED else "bug"),
             holding_check=holding_check,
@@ -122,7 +129,7 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
             status=CaseLookupStatus.OUT_OF_SCOPE,
             message=message,
         )
-        return CaseLookupStatus.OUT_OF_SCOPE, None, message, [trace]
+        return CaseLookupStatus.OUT_OF_SCOPE, None, message, [trace], []
     title, fulltext = _exact_query(claim, ref)
     if not title and not fulltext:
         message = "现有引用信息不足以构造案例检索条件。"
@@ -131,7 +138,7 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
             status=CaseLookupStatus.MANUAL_REVIEW,
             message=message,
         )
-        return CaseLookupStatus.MANUAL_REVIEW, None, message, [trace]
+        return CaseLookupStatus.MANUAL_REVIEW, None, message, [trace], []
 
     exact = _run_route(
         "北大法宝 MCP：get_case_list",
@@ -140,7 +147,7 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
     )
     traces = [exact.trace]
     if not exact.completed:
-        return exact.trace.status, None, exact.trace.message, traces
+        return exact.trace.status, None, exact.trace.message, traces, []
 
     match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, exact.records)
     if match is not None:
@@ -152,19 +159,19 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
             same = _same_case(match, supplemented.records)
             if same is not None and same.holding:
                 match = same
-        return _verified(match, ref.case_name, basis, traces)
+        return (*_verified(match, ref.case_name, basis, traces), [])
 
     semantic = _semantic_route(searcher, claim, ref)
     traces.append(semantic.trace)
     if not semantic.completed:
-        return semantic.trace.status, None, semantic.trace.message, traces
+        return semantic.trace.status, None, semantic.trace.message, traces, []
 
     match, basis = _match_case_record(ref.case_number, ref.case_name, ref.court, semantic.records)
     if match is None:
         match = _cross_route_match(exact.records, semantic.records)
         basis = "cross_route_case_number" if match is not None else None
     if match is not None:
-        return _verified(match, ref.case_name, basis, traces)
+        return (*_verified(match, ref.case_name, basis, traces), [])
 
     candidates = _unique_records([*exact.records, *semantic.records])
     if candidates:
@@ -176,21 +183,27 @@ def _verify_case_reference(searcher: CaseSearcher, claim, ref):
             None,
             message,
             traces,
+            [CaseCandidate.model_validate(item) for item in metadata],
         )
     message = "北大法宝精准检索和语义检索均未找到文书引用的案例，请核对案名、案号、法院或裁判日期。"
-    return CaseLookupStatus.NOT_FOUND, None, message, traces
+    return CaseLookupStatus.NOT_FOUND, None, message, traces, []
 
 
 def _exact_query(claim, ref) -> tuple[str, str]:
-    title = (ref.case_name or "").strip()
+    title = _case_search_title(ref.case_name or "")
     if ref.case_number:
         return title, ref.case_number.strip()
-    _, fulltext = build_case_keyword_query(ref.case_name, claim.context_text or claim.text, ref.court)
+    if _guiding_case_id(_normalize_case_name(ref.case_name or "")):
+        return title, ""
+    parties = _case_parties(ref.case_name or "")
+    if parties:
+        return "", " ".join(parties)
+    _, fulltext = build_case_keyword_query(ref.case_name, claim.text, ref.court)
     return title, fulltext
 
 
 def _semantic_route(searcher, claim, ref) -> _RouteOutcome:
-    query = build_case_semantic_query(ref.case_name, claim.context_text or claim.text, ref.court)
+    query = build_case_semantic_query(ref.case_name, claim.text, ref.court)
     return _run_route(
         "北大法宝 MCP：search_case",
         lambda: searcher.search_semantic(query),
@@ -226,6 +239,9 @@ def _match_case_record(case_number, case_name, court, records):
         matches = [record for record in records if _normalize_case_number(record.case_number) == target]
         if len(matches) == 1:
             return matches[0], "exact_case_number"
+        clustered = _same_identity_cluster(matches)
+        if clustered:
+            return clustered, "exact_case_number_cluster"
     target_title = _normalize_case_name(case_name or "")
     if target_title:
         matches = [record for record in records if _normalize_case_name(record.title) == target_title]
@@ -240,7 +256,44 @@ def _match_case_record(case_number, case_name, court, records):
             matches = [record for record in records if _guiding_case_id(_normalize_case_name(record.title)) == guiding_id]
             if len(matches) == 1:
                 return matches[0], "exact_case_title"
+        parties = _case_parties(case_name or "")
+        if parties and _safe_natural_person_pair(parties):
+            matches = [
+                record for record in records
+                if all(party in _normalize_case_name(record.title) for party in parties)
+            ]
+            if len(matches) == 1:
+                return matches[0], "unique_party_pair"
     return None, None
+
+
+def _same_identity_cluster(records: list[PkulawCaseRecord]):
+    """合并供应商对同一案号、法院和裁判日期返回的重复编目记录。"""
+    if len(records) < 2:
+        return records[0] if records else None
+    identities = {
+        (_normalize_court(record.court), record.last_instance_date or "")
+        for record in records
+    }
+    if len(identities) != 1 or not all(next(iter(identities))):
+        return None
+    return max(
+        records,
+        key=lambda record: (
+            bool(record.holding),
+            bool(record.fulltext),
+            bool(record.url),
+            bool(record.gid),
+        ),
+    )
+
+
+def _safe_natural_person_pair(parties: tuple[str, str]) -> bool:
+    organization_tokens = ("公司", "集团", "法院", "委员会", "事务所", "中心", "协会")
+    return all(
+        1 < len(party) <= 6 and not any(token in party for token in organization_tokens)
+        for party in parties
+    )
 
 
 def _verified(record, cited_name, basis, traces):
@@ -263,7 +316,7 @@ def _same_case(reference: PkulawCaseRecord, records: list[PkulawCaseRecord]):
     else:
         title = _normalize_case_name(reference.title)
         matches = [record for record in records if _normalize_case_name(record.title) == title]
-    return matches[0] if len(matches) == 1 else None
+    return matches[0] if len(matches) == 1 else _same_identity_cluster(matches)
 
 
 def _cross_route_match(left, right):
@@ -279,7 +332,13 @@ def _unique_records(records):
     result = []
     seen = set()
     for record in records:
-        key = _normalize_case_number(record.case_number) or f"{_normalize_case_name(record.title)}|{_normalize_court(record.court)}"
+        # 同一案号可能被供应商返回为两条不同标题/链接的记录。不能按案号
+        # 折叠，否则人工确认的真正歧义会被前端隐藏。
+        key = record.gid or record.url or (
+            f"{_normalize_case_number(record.case_number)}|{_normalize_case_name(record.title)}"
+            if record.case_number
+            else f"{_normalize_case_name(record.title)}|{_normalize_court(record.court)}"
+        )
         if key not in seen:
             seen.add(key)
             result.append(record)
@@ -294,6 +353,39 @@ def _candidate_metadata(record):
         "last_instance_date": record.last_instance_date,
         "url": record.url,
     }
+
+
+def _case_identity_revision(claim_text, ref, evidence, rationale):
+    replacements = []
+    if ref.case_number and _normalize_case_number(ref.case_number) != _normalize_case_number(evidence.case_number):
+        replacements.append((ref.case_number, evidence.case_number))
+    if ref.case_name and not _equivalent_case_name(ref.case_name, evidence.title):
+        replacements.append((ref.case_name, evidence.title))
+    if ref.court and not _same_court(ref.court, evidence.court):
+        replacements.append((ref.court, evidence.court))
+    revised = claim_text
+    changed = False
+    for original, target in replacements:
+        if not original or not target or original == target:
+            continue
+        if revised.count(original) != 1:
+            return None
+        revised = revised.replace(original, target, 1)
+        changed = True
+    if not changed or revised == claim_text:
+        return None
+    return RevisionProposal(
+        strategy="replace_exact_text",
+        original_text=claim_text,
+        revised_text=revised,
+        rationale=rationale,
+        machine_applicable=True,
+        preconditions=[
+            "original_text_unique",
+            "document_unchanged",
+            "candidate_deterministically_verified",
+        ],
+    )
 
 
 def _case_record_evidence(record, cited_name):

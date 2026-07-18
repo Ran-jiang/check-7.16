@@ -91,7 +91,7 @@ PRONOUN_PATTERNS = [
 
 # 观点触发词（用于 case_holding_paraphrase 判定）
 HOLDING_TRIGGER_PATTERN = re.compile(
-    r"(裁判要旨|裁判规则|裁判认为|法院认为|认为|指出|明确)"
+    r"(裁判要旨|裁判规则|裁判认为|法院认为|认为|指出|明确|表明|确立)"
 )
 
 
@@ -136,13 +136,22 @@ def extract_court_from_context(text: str) -> Optional[str]:
                 prefix
             )
             if province_match and province_match.group(1):
-                court_name = province_match.group(1) + keyword
+                locality = re.split(r"[号由经在至]", province_match.group(1))[-1]
+                court_name = locality + keyword
             else:
                 court_name = keyword
             best_court = court_name
             # 在案号上下文中，court 通常是距离案号最近的那个
             # 此处简化处理，返回最后找到的
     return best_court
+
+
+def _court_near_case_number(text: str, start: int, end: int) -> Optional[str]:
+    """只在案号所在句内关联法院，兼容“案号……由某法院审理”。"""
+    left = max(text.rfind(mark, 0, start) for mark in "。！？；\n") + 1
+    right_candidates = [text.find(mark, end) for mark in "。！？；\n"]
+    right = min((pos for pos in right_candidates if pos >= 0), default=len(text))
+    return extract_court_from_context(text[left:right])
 
 
 # ============================================================
@@ -201,7 +210,7 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     case_number_matches = CASE_NUMBER_PATTERN.finditer(text)
     for m in case_number_matches:
         full_match = m.group(0)
-        court = extract_court_from_context(text[:m.start()])
+        court = _court_near_case_number(text, m.start(), m.end())
         case_refs.append(CaseRef(
             reference_type=CaseReferenceType.WITH_CASE_NUMBER,
             case_number=full_match,

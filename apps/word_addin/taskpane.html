@@ -11,8 +11,8 @@
 <body>
   <main class="app-shell">
     <header class="app-header">
-      <button id="brand-button" class="brand" type="button" aria-label="返回首页">
-        <span class="brand-dot" aria-hidden="true"></span>
+      <button id="brand-button" class="brand" type="button" aria-label="返回主页" title="返回主页">
+        <svg class="brand-back" viewBox="0 0 20 20" aria-hidden="true"><path d="M11.75 5.25 7 10l4.75 4.75M7.5 10h6.25"/></svg>
         <span>CCiteheck</span>
       </button>
       <div class="header-actions">
@@ -106,9 +106,29 @@
         </div>
       </div>
       <div id="results-list" class="results-list"></div>
-      <div class="results-action">
-        <button id="clear-bookmarks-button" class="text-button" type="button">清除定位标记</button>
-      </div>
+    </section>
+
+    <section id="help-screen" class="screen help-screen is-hidden" aria-labelledby="help-title">
+      <p class="eyebrow">产品简介</p>
+      <h1 id="help-title">让法律引用核查更清楚</h1>
+      <p class="help-lead">CCiteheck 识别 Word 文档中的法规与司法案例引用，连接权威来源完成定位、比对，并给出可审阅的修订建议。</p>
+      <div class="help-divider"></div>
+      <section class="help-section" aria-labelledby="help-capability-title">
+        <h2 id="help-capability-title">可以核查什么</h2>
+        <dl class="capability-list">
+          <div><dt>法规引用</dt><dd>核查法源、条款项定位、历史版本与权威文本原意。</dd></div>
+          <div><dt>案例引用</dt><dd>核查案例身份、引用信息与所述裁判观点。</dd></div>
+          <div><dt>修订建议</dt><dd>安全条件满足时，可将建议以修订模式写回 Word。</dd></div>
+        </dl>
+      </section>
+      <section class="help-section" aria-labelledby="help-status-title">
+        <h2 id="help-status-title">结果如何理解</h2>
+        <ul class="status-guide">
+          <li><span class="status-swatch is-pass"></span><div><strong>通过</strong><p>引用与权威来源一致。</p></div></li>
+          <li><span class="status-swatch is-issue"></span><div><strong>未通过</strong><p>发现明确问题，请查看建议。</p></div></li>
+          <li><span class="status-swatch is-review"></span><div><strong>待核实</strong><p>证据或输入不足，需要人工确认。</p></div></li>
+        </ul>
+      </section>
     </section>
 
     <div id="message" class="message is-hidden" role="alert"></div>

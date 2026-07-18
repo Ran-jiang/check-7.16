@@ -60,7 +60,7 @@ def assess_statute(
         candidates = list(pkulaw.metadata.get("candidate_titles", []))
         suggested = suggest_similar_title(law_title, [*known_titles, *candidates])
         suggestion = (
-            f"疑似应为《{suggested}》，请核实法规名称。"
+            f"北大法宝未检索到《{strip_version_annotation(law_title)}》，疑似应为《{suggested}》，请核实法规名称。"
             if suggested
             else "北大法宝未检索到该法规，请人工核对法规名称。"
         )
@@ -92,7 +92,7 @@ def _repealed_finding(law_title: str) -> StatuteFinding:
         code=StatuteErrorCode.SOURCE_REPEALED,
         risk_level="HIGH",
         summary=f"《{title}》的权威证据标记为已废止或失效",
-        suggestion="该法律已经废止，若非适用行为时法，请核实并改引现行规定。",
+        suggestion=f"《{title}》已经废止；若非适用行为时法，请改引现行规定。",
     )
 
 
@@ -110,11 +110,11 @@ def _missing_article_finding(
     if local_count:
         summary = f"《{strip_version_annotation(law_title)}》现行全文共{local_count}条，其中不存在{article_no}"
         risk = "HIGH"
-        suggestion = "请核实条文编号；该条在现行有效版本中不存在。"
+        suggestion = f"现行《{strip_version_annotation(law_title)}》不存在{article_no}，请核实条文编号。"
     else:
         summary = f"北大法宝已收录该法规，但未检索到{article_no}"
         risk = "MEDIUM"
-        suggestion = "请人工核实该条文编号是否存在。"
+        suggestion = f"北大法宝未检索到《{strip_version_annotation(law_title)}》{article_no}，请核实条文编号。"
     return StatuteFinding(
         code=StatuteErrorCode.CITATION_LOCATION_ERROR,
         risk_level=risk,

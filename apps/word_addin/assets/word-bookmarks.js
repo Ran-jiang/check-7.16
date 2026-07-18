@@ -2,11 +2,8 @@ const BOOKMARK_PREFIX = "_cc"
 const SHORT_ANCHOR_LIMIT = 250
 const LONG_ANCHOR_PIECE_LENGTH = 100
 
-let repairEnabled = true
-
 export async function seedSourceBookmarks(result) {
   assertWordApi()
-  repairEnabled = true
   const targets = bookmarkTargets(result)
   const includeNotes = supportsWordApi15()
 
@@ -52,18 +49,6 @@ export async function seedSourceBookmarks(result) {
   return details
 }
 
-export async function clearSourceBookmarks() {
-  assertWordApi()
-  return Word.run(async context => {
-    const bookmarkNames = await getBookmarkNames(context, supportsWordApi15())
-    const names = bookmarkNames.filter(name => name.toLowerCase().startsWith(BOOKMARK_PREFIX))
-    for (const name of names) context.document.deleteBookmark(name)
-    await context.sync()
-    repairEnabled = false
-    return names.length
-  })
-}
-
 export async function jumpToSource(check, documentKey) {
   assertWordApi()
   const target = primaryTarget(check, documentKey)
@@ -81,7 +66,6 @@ export async function jumpToSource(check, documentKey) {
       await context.sync()
       return { location: target.location, method: "bookmark" }
     }
-    if (!repairEnabled) throw new Error("定位标记已清除，请重新核查")
 
     const located = await locateTargets(context, [target], includeNotes)
     const repaired = located.get(target)

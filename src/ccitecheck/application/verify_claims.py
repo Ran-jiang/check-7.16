@@ -24,6 +24,7 @@ from ..domain.statute_results import (
     StatuteVerificationResult,
     StatuteVersion,
 )
+from ..domain.revisions import RevisionProposal
 from ..infrastructure.database import (
     connect,
     find_law,
@@ -101,6 +102,8 @@ def verify_claim_document(
         historical_versions,
         location_repairs,
     )
+    _resolve_repealed_successors(source_chain, items, judgments)
+    _verify_semantic_locator_candidates(source_chain, items, judgments)
     statute_results = _build_statute_results(items, lookup_results, judgments)
     case_results = (
         verify_case_claims(claim_document, searcher, semantic_checker)
@@ -323,6 +326,17 @@ def _run_location_repairs(
             item, historical_versions.get(item.lookup_key, [])
         ) is not None:
             continue
+        # The exact article has already been retrieved and parsed.  Reuse it
+        # before another network lookup: an invalid paragraph/item number can
+        # often be repaired deterministically from the quoted text itself.
+        if lookup_result.evidence is not None:
+            local_resolution = resolve_location_candidates(
+                item.document_quote, [lookup_result.evidence]
+            )
+            if local_resolution.status != "not_found":
+                local_resolution.source_trace = lookup_result.trace
+                repairs[index] = local_resolution
+                continue
         candidate_result = locator_source.locate_candidates(LookupRequest(
             law_title=item.law_title,
             source_type=item.source_type,
@@ -357,6 +371,16 @@ def _location_suggestion(
     return f"经北大法宝候选原文核对，所述内容对应{target}，请更正引用位置。"
 
 
+def _location_user_message(
+    problem: str,
+    resolution: StatuteLocationResolution | None,
+) -> str:
+    suggestion = _location_suggestion(resolution)
+    if resolution is not None and resolution.status == "resolved":
+        return suggestion
+    return f"{problem}，{suggestion}"
+
+
 def _has_subarticle_locator(item: _CheckItem) -> bool:
     return bool(item.article and (item.article.paragraphs or item.article.items))
 
@@ -383,7 +407,7 @@ def _run_judgments(
                     code=StatuteErrorCode.CITATION_LOCATION_ERROR,
                     risk_level="HIGH",
                     summary=lookup_result.trace.message,
-                    suggestion="请核实章节编号及其上级结构。",
+                    suggestion=f"{lookup_result.trace.message}，请核实章节编号及其上级结构。",
                 )], None)
             elif int(lookup_result.trace.metadata.get("candidate_count", 1)) > 1:
                 results[index] = (
@@ -410,23 +434,33 @@ def _run_judgments(
                     code=StatuteErrorCode.SOURCE_AMENDED,
                     risk_level="HIGH",
                     summary=f"现行版本中{location.message}，但历史版本存在所引位置",
-                    suggestion="该引用对应历史版本，请核实适用时间，并改引现行规定。",
+                    suggestion=f"现行版本中{location.message}，但历史版本存在该位置；请核实适用时间并改引现行规定。",
                     cited_locator=_item_locators(item)[0],
                     historical_version=historical,
                 ))
             else:
                 repair = location_repairs.get(index)
-                findings.append(StatuteFinding(
+                finding = StatuteFinding(
                     code=StatuteErrorCode.CITATION_LOCATION_ERROR,
                     risk_level="HIGH",
                     summary=location.message,
-                    suggestion=_location_suggestion(repair),
-                ))
+                    suggestion=_location_user_message(location.message, repair),
+                )
+                if repair is not None and repair.status == "resolved":
+                    finding.resolved_locator = repair.candidates[0].locator
+                    finding.revision = _locator_revision(item, repair.candidates[0].locator)
+                findings.append(finding)
         elif location.status == LocationStatus.STRUCTURE_UNAVAILABLE:
             results[index] = (
                 findings,
                 skipped_semantic_result("citation_structure_unavailable"),
             )
+            continue
+        if (
+            lookup_result.status == LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
+            and _is_existence_only_reference(item)
+        ):
+            results[index] = (findings, None)
             continue
         gate = decide_semantic_gate(
             lookup_result,
@@ -477,6 +511,183 @@ def _run_judgments(
             if item.jurisdiction == "EU":
                 _append_verified_eu_candidate(item, lookup_results[item.lookup_key][0], comparison)
     return results
+
+
+def _is_existence_only_reference(item: _CheckItem) -> bool:
+    """同一句并列列举多个无条号法源时，只核验存在性与效力。"""
+    if item.article_no or item.article is not None:
+        return False
+    sources = list(getattr(item.claim.entities, "legal_sources", []))
+    return len(sources) > 1 and all(not source.articles for source in sources)
+
+
+def _locator_revision(
+    item: _CheckItem, resolved: StatuteLocator
+) -> RevisionProposal | None:
+    cited = _item_locators(item)[0]
+    original_locator = "".join(filter(None, (
+        cited.article_no, cited.paragraph_no, cited.item_no,
+    )))
+    revised_locator = "".join(filter(None, (
+        resolved.article_no, resolved.paragraph_no, resolved.item_no,
+    )))
+    if not original_locator or not revised_locator or original_locator == revised_locator:
+        return None
+    if item.claim.text.count(original_locator) != 1:
+        sub_original = "".join(filter(None, (cited.paragraph_no, cited.item_no)))
+        sub_revised = "".join(filter(None, (resolved.paragraph_no, resolved.item_no)))
+        if not sub_original or not sub_revised or item.claim.text.count(sub_original) != 1:
+            return None
+        original_locator, revised_locator = sub_original, sub_revised
+    revised_text = item.claim.text.replace(original_locator, revised_locator, 1)
+    return RevisionProposal(
+        strategy="replace_exact_text",
+        original_text=item.claim.text,
+        revised_text=revised_text,
+        rationale=f"将错误引用位置更正为{revised_locator}",
+        machine_applicable=True,
+        preconditions=[
+            "original_text_unique",
+            "document_unchanged",
+            "candidate_deterministically_verified",
+        ],
+    )
+
+
+def _verify_semantic_locator_candidates(
+    source_chain: list[StatuteSource],
+    items: list[_CheckItem],
+    judgments: dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]],
+) -> None:
+    """把 LLM 提出的其他条号当作检索候选，经 MCP 与文本定位核验后才批准修订。"""
+    locator_source = next((
+        source for source in source_chain
+        if callable(getattr(source, "locate_candidates", None))
+    ), None)
+    if locator_source is None:
+        return
+    for index, item in enumerate(items):
+        _, meaning = judgments[index]
+        if item.jurisdiction != "CN" or meaning is None:
+            continue
+        for finding in meaning.findings:
+            if not finding.location_recheck_required:
+                continue
+            candidates: dict[int, str] = {}
+            for match in _EU_CN_ARTICLE_PATTERN.finditer(f"{finding.summary} {finding.suggestion}"):
+                number = chinese_number_to_int(match.group(1))
+                if number:
+                    candidates[number] = match.group(1)
+            candidates.pop(article_number_from_citation(item.article_no), None)
+            if len(candidates) == 1:
+                _, label = next(iter(candidates.items()))
+                lookup = locator_source.lookup(LookupRequest(
+                    law_title=item.law_title,
+                    source_type=item.source_type,
+                    article_no=f"第{label}条",
+                    context_text=item.document_quote,
+                ))
+                evidence = [lookup.evidence] if lookup.status == LookupStatus.ARTICLE_FOUND and lookup.evidence else []
+            elif not candidates:
+                recalled = locator_source.locate_candidates(LookupRequest(
+                    law_title=item.law_title,
+                    source_type=item.source_type,
+                    article_no=item.article_no,
+                    context_text=item.document_quote,
+                ))
+                evidence = recalled.candidates
+            else:
+                continue
+            resolution = resolve_location_candidates(item.document_quote, evidence)
+            if resolution.status != "resolved":
+                continue
+            resolved = resolution.candidates[0].locator
+            finding.resolved_locator = resolved
+            finding.revision = _locator_revision(item, resolved)
+            if finding.revision:
+                finding.suggestion = f"经北大法宝再次核对，所述内容对应{resolved.article_no}，建议更正引用位置。"
+
+
+_CITATION_TEXT = re.compile(r"《[^》]+》第[^，。；：]{1,30}条(?:第[^，。；：]{1,12}[款项])?")
+
+
+def _resolve_repealed_successors(
+    source_chain: list[StatuteSource],
+    items: list[_CheckItem],
+    judgments: dict[int, tuple[list[StatuteFinding], StatuteMeaningCheck | None]],
+) -> None:
+    """仅批准能由候选权威正文直接支持的唯一跨法源替换。"""
+    source = next((
+        candidate for candidate in source_chain
+        if callable(getattr(candidate, "locate_successor_candidates", None))
+    ), None)
+    if source is None:
+        return
+    for index, item in enumerate(items):
+        findings, _ = judgments[index]
+        repealed = next((f for f in findings if f.code == StatuteErrorCode.SOURCE_REPEALED), None)
+        if repealed is None or item.jurisdiction != "CN":
+            continue
+        result = source.locate_successor_candidates(LookupRequest(
+            law_title=item.law_title,
+            source_type=item.source_type,
+            context_text=item.document_quote,
+        ))
+        supported = [
+            candidate for candidate in result.candidates
+            if _candidate_supports_quote(item.document_quote, candidate.article_text or "")
+        ]
+        unique = {
+            (candidate.law_title, candidate.article_no): candidate
+            for candidate in supported
+            if candidate.article_no
+        }
+        if len(unique) != 1:
+            if result.candidates:
+                repealed.suggestion = "北大法宝返回了多个现行继受法候选，请人工确认后再修改引用。"
+            continue
+        candidate = next(iter(unique.values()))
+        revision = _successor_revision(item, candidate)
+        if revision is None:
+            continue
+        repealed.resolved_locator = StatuteLocator(article_no=candidate.article_no)
+        repealed.suggestion = (
+            f"该法源已经废止；经北大法宝核对，现行对应规则为"
+            f"《{candidate.law_title}》{candidate.article_no}，建议更新法源和条号。"
+        )
+        repealed.revision = revision
+
+
+def _candidate_supports_quote(document_quote: str, article_text: str) -> bool:
+    normalized_article = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", article_text)
+    without_citation = _CITATION_TEXT.sub("", document_quote)
+    clauses = [
+        re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", clause)
+        for clause in re.split(r"[，。；：]", without_citation)
+    ]
+    return any(len(clause) >= 8 and clause in normalized_article for clause in clauses)
+
+
+def _successor_revision(item: _CheckItem, evidence: ArticleEvidence) -> RevisionProposal | None:
+    if not evidence.article_no:
+        return None
+    cited = _item_locators(item)[0]
+    old_citation = f"《{item.law_title}》{cited.article_no or ''}"
+    new_citation = f"《{evidence.law_title}》{evidence.article_no}"
+    if item.claim.text.count(old_citation) != 1:
+        return None
+    return RevisionProposal(
+        strategy="replace_exact_text",
+        original_text=item.claim.text,
+        revised_text=item.claim.text.replace(old_citation, new_citation, 1),
+        rationale="将已废止法源更新为经权威数据源核验的现行继受条文",
+        machine_applicable=True,
+        preconditions=[
+            "original_text_unique",
+            "document_unchanged",
+            "candidate_deterministically_verified",
+        ],
+    )
 
 
 def _matching_historical_location(

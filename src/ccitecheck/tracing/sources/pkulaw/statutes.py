@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Protocol
 
 from ....domain.evidence import (
@@ -71,6 +72,8 @@ class PkulawFallbackSource:
             if match_law_record(request.law_title, [article]) is not None
         ]
         attempt.update(status="completed", candidate_count=len(filtered))
+        if not filtered and request.article_no:
+            filtered = self._scan_nearby_articles(request, trace)
         trace.status = (
             LookupStatus.RELEVANT_ARTICLES_FOUND
             if filtered
@@ -80,6 +83,85 @@ class PkulawFallbackSource:
         return LocationCandidateResult(
             candidates=[self._candidate_evidence(request, trace, article) for article in filtered],
             trace=trace,
+        )
+
+    def _scan_nearby_articles(self, request: LookupRequest, trace: SourceTrace) -> list[PkulawArticle]:
+        """语义服务无结果时，对引用条号附近做受限精确扫描。"""
+        from ....domain.legal_numbers import chinese_number_to_int
+        import re
+
+        match = re.fullmatch(r"第([一二三四五六七八九十百千万两零〇0-9]+)条", request.article_no or "")
+        if not match:
+            return []
+        token = match.group(1)
+        try:
+            cited = int(token) if token.isdigit() else chinese_number_to_int(token)
+        except ValueError:
+            return []
+        numbers = list(range(max(1, cited - 10), cited + 11))
+        title = build_article_exact_title(request.law_title)
+
+        def fetch(number: int):
+            try:
+                return self._client().get_article(title, f"第{number}条")
+            except (PkulawNotFoundError, PkulawMcpError):
+                return None
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            articles = [article for article in pool.map(fetch, numbers) if article is not None]
+        matched = [article for article in articles if match_law_record(request.law_title, [article])]
+        trace.metadata["route_attempts"].append({
+            "service": "law_exact_nearby_scan",
+            "purpose": "citation_location",
+            "status": "completed",
+            "range": [numbers[0], numbers[-1]],
+            "candidate_count": len(matched),
+        })
+        return matched
+
+    def locate_successor_candidates(self, request: LookupRequest) -> LocationCandidateResult:
+        """检索废止规则在现行法规中的继受条文；这里只召回，不作结论。"""
+        trace = self._trace()
+        query = f"检索现行有效法规中与以下已废止规则对应的条文：{request.context_text}"[:500]
+        try:
+            articles = self._client().search_law_articles(query)
+        except PkulawNotFoundError:
+            articles = []
+        except PkulawMcpError as exc:
+            trace.status = _pkulaw_error_status(exc)
+            trace.message = str(exc)
+            return LocationCandidateResult([], trace)
+        current = []
+        for article in articles:
+            if match_law_record(request.law_title, [article]) is not None:
+                continue
+            try:
+                laws = self._client().get_law_list(title=article.title)
+            except (PkulawNotFoundError, PkulawMcpError):
+                continue
+            law = match_law_record(article.title, laws)
+            statuses = "".join((law.timeliness if law else []) + (law.effectiveness if law else []))
+            if law is None or not any(token in statuses for token in ("现行有效", "有效")):
+                continue
+            if any(token in statuses for token in ("废止", "失效")):
+                continue
+            current.append(replace(
+                article,
+                timeliness=law.timeliness,
+                effectiveness=law.effectiveness,
+                implement_date=law.implement_date,
+                issue_date=law.issue_date,
+            ))
+        trace.status = LookupStatus.RELEVANT_ARTICLES_FOUND if current else LookupStatus.LAW_NOT_FOUND
+        trace.message = "现行继受法候选检索完成"
+        trace.metadata.update(
+            purpose="successor_law",
+            candidate_count=len(current),
+            query=query,
+        )
+        return LocationCandidateResult(
+            [self._candidate_evidence(request, trace, article) for article in current],
+            trace,
         )
 
     def _trace(self) -> SourceTrace:

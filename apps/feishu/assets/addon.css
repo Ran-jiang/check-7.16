@@ -141,7 +141,7 @@ button { cursor: pointer; }
 .reference-row-summary::after { content: "▸"; color: var(--fg-3); order: 3; }
 .reference-row[open] .reference-row-summary::after { content: "▾"; }
 .reference-row-summary .reference-source { flex: 1; margin: 0; }
-.reference-role, .jurisdiction-label, .version-status { color: var(--fg-3); font-size: 12px; }
+.reference-role, .jurisdiction-label { color: var(--fg-3); font-size: 12px; }
 .multi-counts { display: flex; gap: 8px; font-size: 12px; }
 .multi-counts .count-issue { color: var(--danger-fg); }
 .multi-counts .count-bug { color: var(--warning-fg); }

@@ -19,7 +19,7 @@ export {
   stripRepeatedArticleHeading,
 }
 
-const screens = ["home-screen", "progress-screen", "results-screen"]
+const screens = ["home-screen", "progress-screen", "results-screen", "help-screen"]
 
 const REFERENCE_ROLE_LABELS = { nested: "内部转引", inherited: "承前引用" }
 
@@ -63,7 +63,7 @@ export class CheckUi {
       const button = document.getElementById(id)
       if (button) button.disabled = busy || !this.ready
     }
-    for (const id of ["rerun-button", "export-button", "clear-bookmarks-button"]) {
+    for (const id of ["rerun-button", "export-button"]) {
       const button = document.getElementById(id)
       if (button) button.disabled = busy
     }
@@ -291,15 +291,9 @@ export class CheckUi {
     const body = element("div", "reference-row-body")
     const bodyTop = element("div", "reference-body-topline")
     bodyTop.append(element("div", "card-type", view.typeLabel))
-    if (view.refLine.status) {
-      bodyTop.append(element(
-        "span",
-        `version-status${view.refLine.status.effective ? " is-effective" : ""}`,
-        view.refLine.status.text
-      ))
-    }
     body.append(bodyTop)
     this.appendVerdict(body, view)
+    if (view.candidates?.length) body.append(this.createCaseCandidates(view.candidates))
     if (view.evidence) body.append(this.createEvidenceDetails(view.evidence))
     body.append(this.createDecisionRow(view))
     row.append(body)
@@ -365,6 +359,28 @@ export class CheckUi {
     return details
   }
 
+  createCaseCandidates(candidates) {
+    const details = element("details", "result-details")
+    details.open = true
+    details.append(element("summary", "", `参考案例（${candidates.length}）`))
+    candidates.forEach((candidate, index) => {
+      const line = element("div", "statute-line")
+      line.append(`${index + 1}. ${candidate.title || "未命名案例"}`)
+      const metadata = [candidate.case_number, candidate.court, candidate.last_instance_date].filter(Boolean).join("｜")
+      if (metadata) line.append(element("div", "", metadata))
+      if (candidate.url) {
+        line.append(" ")
+        const link = element("a", "statute-link", "查看原文")
+        link.href = candidate.url
+        link.target = "_blank"
+        link.rel = "noopener noreferrer"
+        line.append(link)
+      }
+      details.append(line)
+    })
+    return details
+  }
+
   // ⑥区：单个决策按钮，接受修订 ⇄ 取消修订
   createDecisionRow(view) {
     const row = element("div", "action-row")
@@ -376,17 +392,14 @@ export class CheckUi {
     button.dataset.checkId = view.checkId
     const sync = () => {
       const accepted = this.decisions[view.checkId] === "accepted"
-      button.textContent = accepted ? "取消修订" : "接受修订"
+      button.textContent = accepted ? "修订已写入" : "接受修订"
       button.classList.toggle("is-active", accepted)
+      button.disabled = accepted
     }
     sync()
     button.addEventListener("click", async () => {
-      const next = this.decisions[view.checkId] === "accepted" ? null : "accepted"
-      if (next === "accepted") {
-        await this.handlers.onApplyFix?.(view.raw)
-      } else {
-        this.decisions = this.handlers.onDecide?.(view.checkId, next) || this.decisions
-      }
+      if (this.decisions[view.checkId] === "accepted") return
+      await this.handlers.onApplyFix?.(view.raw)
       sync()
     })
     row.append(button)

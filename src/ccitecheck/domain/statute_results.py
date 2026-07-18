@@ -75,6 +75,7 @@ class StatuteFinding(BaseModel):
     cited_locator: StatuteLocator | None = None
     resolved_locator: StatuteLocator | None = None
     historical_version: StatuteVersion | None = None
+    location_recheck_required: bool = False
     revision: RevisionProposal | None = None
 
 

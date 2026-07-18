@@ -22,6 +22,7 @@ from ccitecheck.application import (
     verify_document_claims,
 )
 from ccitecheck.infrastructure.paths import PROJECT_ROOT
+from ccitecheck.infrastructure.config import load_project_env
 from ccitecheck.parsing.feishu import parse_feishu_snapshot
 from ccitecheck.output import summarize_verification
 
@@ -39,6 +40,7 @@ FEISHU_ADDIN_ROOT = PROJECT_ROOT / "apps" / "feishu"
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
+load_project_env()
 app = FastAPI(title="CCiteheck API", version="1.0.0")
 allowed_origins = [
     origin.strip()

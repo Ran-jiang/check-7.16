@@ -136,14 +136,14 @@ class CapturingPkulawClient(FakePkulawClient):
             ("民法典", "违约责任"),
             MCP_ENDPOINTS["law_keyword"],
             "get_law_list",
-            {"lawInput": {"Title": "民法典", "FullText": "违约责任"}},
+            {"lawInput": {"Title": "民法典", "Fulltext": "违约责任"}},
         ),
         (
             "get_case_list",
             ("指导案例262号", "平台 责任"),
             MCP_ENDPOINTS["case_keyword"],
             "get_case_list",
-            {"caseInput": {"Title": "指导案例262号", "FullText": "平台 责任"}},
+            {"caseInput": {"Title": "指导案例262号", "Fulltext": "平台 责任"}},
         ),
     ],
 )

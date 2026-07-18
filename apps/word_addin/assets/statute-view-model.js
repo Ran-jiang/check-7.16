@@ -25,7 +25,7 @@ export function statuteViewOf(check, options = {}) {
     badge: { state, text: BADGE_TEXT[state] || "未核查" },
     typeLabel: statuteTypeLabel(check, state, findings),
     quote: options.compact ? null : check.claim_text || "",
-    refLine: { label: "核查对象", text: formatReference(check), status: versionStatusOf(check) },
+    refLine: { label: "核查对象", text: formatReference(check), status: null },
     verdict: statuteVerdict(check, state, findings), evidence: statuteEvidence(check),
     typeTags: findings.map(finding => STATUTE_ERROR_LABELS[finding.code] || finding.code),
     actions: { jump: !options.compact, decide: true }, raw: check,
@@ -36,6 +36,7 @@ function statuteTypeLabel(check, state, findings) {
   if (findings.length) return findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code).join("；")
   if (check.lookup_status === "out_of_scope") return "超出核查边界"
   if (state === "pass") {
+    if (check.lookup_status === "law_found_text_unavailable" && !(check.cited_locators || []).length) return "法源存在性核验通过"
     if (check.jurisdiction === "EU" && !check.meaning_check) return "欧盟法规：已核验存在性"
     if (/[编章节]$/.test(check.article_no || "")) return "章节引用：已核验存在"
     if (check.reference_role === "nested") return "内部转引：仅核验存在性"
@@ -50,7 +51,7 @@ function statuteTypeLabel(check, state, findings) {
 function statuteVerdict(check, state, findings) {
   if (findings.length) {
     const first = findings[0]
-    return { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: first.suggestion }
+    return { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: findingText(first) }
   }
   if (check.lookup_status === "out_of_scope") {
     const message = (check.source_attempts || []).find(item => item.status === "out_of_scope")?.message
@@ -69,12 +70,16 @@ function statuteEvidence(check) {
   const lawTitle = evidence?.law_title || check.law_title
   const articleNo = evidence?.article_no || check.article_no || ""
   const heading = !articleNo ? lawTitle : /^第/.test(articleNo) ? `${lawTitle}${articleNo}` : `${lawTitle} · ${articleNo}`
-  return { summaryLabel: related.length && !articleText ? "权威原文 · 召回的相关条款" : `权威原文 · ${heading}`, articleHeading: articleText ? heading : "", articleText, related, url, structurePath }
+  const summaryLabel = !articleText && !related.length
+    ? `权威来源 · ${lawTitle}`
+    : related.length && !articleText
+      ? "权威原文 · 召回的相关条款"
+      : `权威原文 · ${heading}`
+  return { summaryLabel, articleHeading: articleText ? heading : "", articleText, related, url, structurePath }
 }
 
-function versionStatusOf(check) {
-  let text = check.evidence?.version_label || check.evidence?.version_status || ""
-  if (/^effective$/i.test(text)) text = "现行有效"
-  if (!text || /^[a-z_]+$/i.test(text)) return null
-  return { text, effective: /现行有效/.test(text) }
+function findingText(finding) {
+  const summary = String(finding.summary || "").trim().replace(/[。；]+$/, "")
+  const suggestion = String(finding.suggestion || "").trim()
+  return suggestion || (summary ? `${summary}。` : "")
 }

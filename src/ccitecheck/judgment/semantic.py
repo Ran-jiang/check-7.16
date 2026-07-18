@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -197,11 +198,13 @@ class QwenSemanticChecker:
         for issue in raw.get("issues", []):
             if not isinstance(issue, dict) or issue.get("error_type") != "所述观点非该案裁判观点":
                 raise SemanticResponseError("Qwen returned an invalid case holding error_type")
-            for field in ("diff_summary", "suggestion"):
+            for field in ("diff_summary", "suggestion", "revised_text"):
                 if isinstance(issue.get(field), str):
                     issue[field] = strip_internal_markers(issue[field])
         try:
-            return _case_check_from_raw(raw)
+            result = _case_check_from_raw(raw)
+            _approve_case_revisions(result, raw, paraphrase_text)
+            return result
         except ValueError as exc:
             raise SemanticResponseError(f"Qwen returned invalid case holding JSON: {exc}") from exc
 
@@ -248,7 +251,7 @@ def _approve_statute_revisions(
     """批准仅替换本次精确核查片段的法规语义修订。"""
     for issue, raw_issue in zip(comparison.findings, raw.get("issues", [])):
         proposed_text = raw_issue.get("revised_text")
-        if not proposed_text or proposed_text == doc_quote:
+        if not _safe_llm_revision(doc_quote, proposed_text):
             continue
         issue.revision = RevisionProposal(
             strategy="replace_exact_text",
@@ -268,6 +271,7 @@ def _statute_check_from_raw(raw: dict[str, Any]) -> StatuteMeaningCheck:
             risk_level=issue["risk_level"],
             summary=issue["diff_summary"],
             suggestion=issue["suggestion"],
+            location_recheck_required=bool(issue.get("location_recheck_required", False)),
         )
         findings.append(finding)
     return StatuteMeaningCheck(
@@ -291,6 +295,41 @@ def _case_check_from_raw(raw: dict[str, Any]) -> CaseHoldingCheck:
         ],
         notes=raw.get("notes", ""),
     )
+
+
+def _approve_case_revisions(
+    comparison: CaseHoldingCheck,
+    raw: dict[str, Any],
+    paraphrase_text: str,
+) -> None:
+    for finding, raw_issue in zip(comparison.findings, raw.get("issues", [])):
+        proposed_text = raw_issue.get("revised_text")
+        if not _safe_llm_revision(paraphrase_text, proposed_text):
+            continue
+        finding.revision = RevisionProposal(
+            strategy="replace_exact_text",
+            original_text=paraphrase_text,
+            revised_text=proposed_text,
+            rationale=finding.suggestion,
+            machine_applicable=True,
+            preconditions=["original_text_unique", "document_unchanged"],
+        )
+
+
+_LEGAL_CITATION = re.compile(r"《[^》]+》(?:第[^，。；\s]{1,30}条(?:第[^，。；\s]{1,12}[款项])?)?")
+_CASE_NUMBER = re.compile(r"[（(〔]\d{4}[）)〕][^，。；\s]{2,24}?号")
+
+
+def _safe_llm_revision(original: str, revised: Any) -> bool:
+    """LLM 只能最小改写论述，不得顺手改变已确定的引用身份。"""
+    if not isinstance(revised, str) or not revised.strip() or revised == original:
+        return False
+    if len(revised) < max(4, len(original) // 2) or len(revised) > len(original) * 2 + 80:
+        return False
+    for pattern in (_LEGAL_CITATION, _CASE_NUMBER):
+        if pattern.findall(original) != pattern.findall(revised):
+            return False
+    return True
 
 
 def _load_json_object(text: str) -> dict[str, Any]:

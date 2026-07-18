@@ -81,7 +81,7 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["law_keyword"],
             tool_name="get_law_list",
-            arguments={"lawInput": {"Title": title, "FullText": fulltext}},
+            arguments={"lawInput": {"Title": title, "Fulltext": fulltext}},
         )
         data = _extract_payload_data(payload)
         return _parse_law_list_response(data)
@@ -112,7 +112,10 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["case_keyword"],
             tool_name="get_case_list",
-            arguments={"caseInput": {"Title": title, "FullText": fulltext}},
+            # MCP schema uses ``Fulltext`` (lower-case t).  ``FullText`` is
+            # silently ignored by the gateway and makes case-number-only
+            # searches look as if no query was supplied.
+            arguments={"caseInput": {"Title": title, "Fulltext": fulltext}},
         )
         data = _extract_payload_data(payload)
         return _parse_case_list_response(data)

@@ -59,8 +59,23 @@ def resolve_location_candidates(
 
 
 def _contained(candidate_text: str, normalized_quote: str) -> bool:
+    # 项文本保留“（一）”用于展示，但定位比较只比较规范内容。
+    candidate_text = re.sub(
+        r"^\s*[（(][一二三四五六七八九十百千万两零〇0-9]+[）)]\s*",
+        "",
+        candidate_text,
+    )
     normalized_candidate = _normalize(candidate_text)
-    return bool(normalized_candidate and normalized_candidate in normalized_quote)
+    if normalized_candidate and normalized_candidate in normalized_quote:
+        return True
+    # “取得个人的同意”与“取得个人同意”属于不影响定位的虚词差异；仍然
+    # 只接受完整候选规范片段包含，且最终必须唯一命中。
+    candidate_without_particle = normalized_candidate.replace("的", "")
+    quote_without_particle = normalized_quote.replace("的", "")
+    return bool(
+        len(candidate_without_particle) >= 6
+        and candidate_without_particle in quote_without_particle
+    )
 
 
 def _normalize(value: str) -> str:

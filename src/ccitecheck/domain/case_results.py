@@ -37,6 +37,14 @@ class CaseHoldingCheck(BaseModel):
     skipped_reason: str | None = None
 
 
+class CaseCandidate(BaseModel):
+    title: str
+    case_number: str | None = None
+    court: str | None = None
+    last_instance_date: str | None = None
+    url: str | None = None
+
+
 class CaseVerificationResult(BaseModel):
     check_id: str
     claim_id: str
@@ -53,10 +61,12 @@ class CaseVerificationResult(BaseModel):
     holding_check: CaseHoldingCheck | None = None
     source_locations: list[SourceLocation] = Field(default_factory=list)
     source_attempts: list[CaseSourceTrace] = Field(default_factory=list)
+    candidate_cases: list[CaseCandidate] = Field(default_factory=list)
 
 
 __all__ = [
     "CaseErrorCode",
+    "CaseCandidate",
     "CaseFinding",
     "CaseHoldingCheck",
     "CaseVerificationResult",

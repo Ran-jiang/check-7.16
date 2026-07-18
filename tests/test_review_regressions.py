@@ -275,6 +275,11 @@ def test_case_patterns_are_bounded_and_support_guiding_case_without_di():
     assert extract_case_refs("附录二：典型案例") == []
 
 
+def test_case_number_associates_court_after_number_in_same_sentence():
+    refs = extract_case_refs("（2019）京73民终225号由北京市高级人民法院审理。")
+    assert refs[0].court == "北京市高级人民法院"
+
+
 def test_multiple_clues_for_same_case_are_merged():
     guiding = extract_case_refs(
         "指导性案例262号：某科技有限公司诉某文化公司不正当竞争纠纷案"

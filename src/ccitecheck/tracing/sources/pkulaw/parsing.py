@@ -23,6 +23,8 @@ def parse_exact_article(data: Any, requested_article_no: str) -> PkulawArticle:
         raise PkulawMcpError("Unexpected get_article response shape")
     title = first_value(item, "Title", "title")
     text = first_value(item, "Article", "article")
+    if not title and not text:
+        raise PkulawNotFoundError("未找到数据")
     if not title or not text:
         raise PkulawMcpError("Pkulaw response is missing title or article text")
     return PkulawArticle(

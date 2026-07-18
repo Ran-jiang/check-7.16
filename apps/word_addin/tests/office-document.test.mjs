@@ -6,7 +6,6 @@ import {
   getSelectedContent,
 } from "../assets/office-document.js"
 import {
-  clearSourceBookmarks,
   escapeSearchText,
   jumpToSource,
   planSearchPieces,
@@ -210,42 +209,6 @@ test("seedSourceBookmarks searches inside the target table cell", async () => {
     tables: [{ index: 0, rows: 3, columns: 2 }],
   })
   assert.deepEqual(calls.map(call => call[0]), ["cell-search", "insert"])
-})
-
-test("clearSourceBookmarks is case-insensitive and disables automatic repair", async () => {
-  globalThis.Office = { context: { requirements: { isSetSupported() { return true } } } }
-  const deleted = []
-  const footnoteRange = {
-    getBookmarks() { return { value: ["_ccfootnote_0"] } },
-  }
-  const Word = { async run(callback) { return callback({
-    document: {
-      body: {
-        getRange() { return { getBookmarks() { return { value: ["_CCMARK_0"] } } } },
-        footnotes: {
-          items: [{ body: { getRange() { return footnoteRange } } }],
-          load() {},
-        },
-        endnotes: { items: [], load() {} },
-      },
-      deleteBookmark(name) { deleted.push(name) },
-      getBookmarkRangeOrNullObject() { return { isNullObject: true, load() {} } },
-    },
-    async sync() {},
-  }) } }
-  globalThis.Word = Word
-  globalThis.window = { Word }
-  assert.equal(await clearSourceBookmarks(), 2)
-  assert.deepEqual(deleted, ["_CCMARK_0", "_ccfootnote_0"])
-  await assert.rejects(
-    () => jumpToSource({
-      card_id: "card_1",
-      source_locations: [{
-        platform: "docx", block_id: "word:p:0", anchor_text: "原文。",
-      }],
-    }, "sha256:test"),
-    /定位标记已清除/,
-  )
 })
 
 test("jumpToSource repairs a missing bookmark with search and occurrence", async () => {

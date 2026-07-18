@@ -82,6 +82,15 @@ test("badge text follows the renamed three-state scheme", () => {
   const pass = statuteViewOf({ outcome: "pass", law_title: "民法典", lookup_status: "article_found", meaning_check: { verdict: "pass" } })
   assert.equal(pass.badge.text, "通过")
   assert.equal(pass.typeLabel, "法律引用无问题")
+
+  const listing = statuteViewOf({
+    outcome: "pass", law_title: "网络数据安全管理条例",
+    lookup_status: "law_found_text_unavailable", cited_locators: [],
+    evidence: { law_title: "网络数据安全管理条例", article_text: null, data_source: { source_url: "https://pkulaw.com/chl/example.html" } },
+  })
+  assert.equal(listing.typeLabel, "法源存在性核验通过")
+  assert.equal(listing.evidence.articleText, "")
+  assert.match(listing.evidence.summaryLabel, /^权威来源/)
 })
 
 test("out-of-scope statutes surface the boundary message", () => {
@@ -111,7 +120,7 @@ test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
   })
   assert.equal(view.state, "pass")
   assert.equal(view.typeLabel, "欧盟法规：已核验存在性")
-  assert.equal(view.refLine.status.effective, true)
+  assert.equal(view.refLine.status, null)
   assert.equal(view.evidence.url, "https://eur-lex.europa.eu/eli/reg/2016/679/oj")
 })
 
@@ -133,6 +142,33 @@ test("case checks normalize into the same shape as statutes", () => {
   assert.equal(view.refLine.label, "核查对象")
   assert.equal(view.evidence.summaryLabel, "命中案例")
   assert.match(view.evidence.articleText, /深圳市南山区人民法院/)
+})
+
+test("finding card renders the self-contained suggestion without audit summary", () => {
+  const view = statuteViewOf({
+    outcome: "issue",
+    law_title: "著作权司法解释",
+    findings: [{
+      code: "meaning_distorted",
+      risk_level: "HIGH",
+      summary: "第二十条规定的是出版者责任。",
+      suggestion: "建议改引第十五条。",
+    }],
+  })
+  assert.equal(view.verdict.suggestion, "建议改引第十五条。")
+  assert.equal(view.refLine.status, null)
+})
+
+test("case candidates come from the explicit domain field", () => {
+  const candidates = [{ title: "候选案例", case_number: "（2024）示例1号" }]
+  const view = caseViewOf({
+    outcome: "bug",
+    check_id: "cc_1",
+    cited_case_name: "某案",
+    lookup_status: "manual_review",
+    candidate_cases: candidates,
+  })
+  assert.deepEqual(view.candidates, candidates)
 })
 
 test("compact sub-references drop the quote and jump affordance", () => {

@@ -121,14 +121,17 @@ function renderStatuteCard(check, claimText, location, nested = false) {
   article.className = nested ? `reference-row is-${check.state}` : `result-card is-${check.state}`
   article.dataset.checkId = check.check_id
   const jurisdiction = check.jurisdiction && check.jurisdiction !== "CN" ? `<span class="jurisdiction-label">${escapeHtml(check.jurisdiction)}</span>` : ""
-  const version = check.evidence?.version_label || check.evidence?.version_status || ""
   const heading = `<span class="reference-source">${escapeHtml(check.title)}</span>${jurisdiction}<span class="status-pill is-${check.state}">${check.pill}</span>`
+  const revision = check.finding?.revision
+  const revisionButton = revision?.machine_applicable && revision.strategy === "replace_exact_text"
+    ? `<div class="action-row"><button class="action-button decision-button" data-action="resolve">接受修订</button></div>`
+    : ""
   article.innerHTML = `
     ${nested ? `<summary class="reference-row-summary">${heading}</summary>` : `${quoteZone(claimText)}<div class="zone-label-row"><span class="zone-label">核查对象</span></div><div class="reference-row-summary">${heading}</div>`}
-    <div class="reference-body"><div class="reference-body-topline"><span class="card-type">${escapeHtml(check.type)}</span>${version ? `<span class="version-status">${escapeHtml(version)}</span>` : ""}</div>
-    ${check.finding ? `<div class="card-conf">风险分级：${escapeHtml(check.risk)}</div><p class="card-suggestion">${escapeHtml(check.finding.suggestion || "请人工复核该引用。")}</p>` : check.message && check.state === "bug" ? `<p class="card-suggestion">${escapeHtml(check.message)}</p>` : ""}
+    <div class="reference-body"><div class="reference-body-topline"><span class="card-type">${escapeHtml(check.type)}</span></div>
+    ${check.finding ? `<div class="card-conf">风险分级：${escapeHtml(check.risk)}</div><p class="card-suggestion">${escapeHtml(findingText(check.finding))}</p>` : check.message && check.state === "bug" ? `<p class="card-suggestion">${escapeHtml(check.message)}</p>` : ""}
     ${renderStatuteDetails(check)}
-    <div class="action-row"><button class="action-button decision-button" data-action="resolve">接受修订</button></div></div>`
+    ${revisionButton}</div>`
   bindCardActions(article, location)
   return article
 }
@@ -166,12 +169,13 @@ function renderCaseCard(check) {
 }
 
 function caseCandidates(check) {
-  return (check.source_attempts || []).flatMap(attempt => attempt.metadata?.candidates || []).slice(0, 10)
+  return (check.candidate_cases || []).slice(0, 10)
 }
 
 function renderStatuteDetails(check) {
   if (!check.evidence?.article_text && !check.url && !check.evidence?.structure_path) return ""
-  return `<details class="result-details"><summary>权威原文</summary>${check.evidence?.structure_path ? `<div class="statute-line">章节位置：${escapeHtml(check.evidence.structure_path)}</div>` : ""}${check.evidence?.article_text ? `<div class="authority-quote">${escapeHtml(check.evidence.article_text)}</div>` : ""}${check.url ? `<div class="statute-line">原文链接：<a class="statute-link" href="${escapeHtml(check.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(check.url)}</a></div>` : ""}</details>`
+  const label = check.evidence?.article_text ? "权威原文" : "权威来源"
+  return `<details class="result-details"><summary>${label}</summary>${check.evidence?.structure_path ? `<div class="statute-line">章节位置：${escapeHtml(check.evidence.structure_path)}</div>` : ""}${check.evidence?.article_text ? `<div class="authority-quote">${escapeHtml(check.evidence.article_text)}</div>` : ""}${check.url ? `<div class="statute-line">原文链接：<a class="statute-link" href="${escapeHtml(check.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(check.url)}</a></div>` : ""}</details>`
 }
 
 function quoteZone(text) {
@@ -199,7 +203,7 @@ function normalizeChecks(result) {
         category: "case",
         finding,
         location: card.source_locations?.at(-1),
-        message: finding?.suggestion || card.message,
+        message: finding ? findingText(finding) : card.message,
         url: sourceUrl(card.evidence?.url),
       }
     }
@@ -223,6 +227,12 @@ function normalizeChecks(result) {
       location: card.source_locations?.at(-1),
     }
   })
+}
+
+function findingText(finding) {
+  const summary = String(finding?.summary || "").trim().replace(/[。；]+$/, "")
+  const suggestion = String(finding?.suggestion || "").trim()
+  return suggestion || (summary ? `${summary}。` : "请人工复核该引用。")
 }
 
 function statuteCategory(code, state) {

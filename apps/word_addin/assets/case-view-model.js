@@ -19,7 +19,7 @@ export function caseViewOf(check, options = {}) {
   const findings = check.findings || []
   const first = findings[0]
   const verdict = first
-    ? { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: first.suggestion }
+    ? { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: findingText(first) }
     : check.message ? { riskText: null, suggestion: check.message } : null
   const line = check.evidence
     ? `${check.evidence.title || check.evidence.case_number || ""}${check.evidence.court ? ` · ${check.evidence.court}` : ""}`
@@ -31,7 +31,14 @@ export function caseViewOf(check, options = {}) {
     refLine: { label: "核查对象", text: check.cited_case_number || check.cited_case_name || "未命名案例线索", status: null },
     verdict,
     evidence: check.evidence ? { summaryLabel: "命中案例", articleHeading: "", articleText: line, related: [], url: sourceUrlOf(check) } : null,
+    candidates: check.candidate_cases || [],
     typeTags: findings.map(finding => CASE_ERROR_LABELS[finding.code] || finding.code),
     actions: { jump: !options.compact, decide: true }, raw: check,
   }
+}
+
+function findingText(finding) {
+  const summary = String(finding.summary || "").trim().replace(/[。；]+$/, "")
+  const suggestion = String(finding.suggestion || "").trim()
+  return suggestion || (summary ? `${summary}。` : "")
 }

@@ -12,7 +12,9 @@
 
 ## 语言规范
 
-每个问题必须具体说明文书归纳了什么观点、权威裁判观点实际表达了什么、两者为何不一致。修改建议应说明删除、弱化或改写哪一部分，避免只写“请核实案例观点”。案例观点修改通常需要作者判断，因此不输出 `revised_text`，也不得标记为可自动修改。
+每个问题必须具体说明文书归纳了什么观点、权威裁判观点实际表达了什么、两者为何不一致。修改建议应说明删除、弱化或改写哪一部分，避免只写“请核实案例观点”。只有能够严格依据权威裁判观点形成唯一、完整的最小修订时，才输出 `revised_text`；需要作者选择、补充论证或存在多种合理写法时必须为 `null`。
+
+`suggestion` 是结果卡默认展示给用户的唯一问题文案，必须自包含地概括“具体问题＋建议动作”，原则上不超过70字，不重复完整裁判原文。`diff_summary` 用于保留完整分析，不要原样复制到 `suggestion`。
 
 ## 输出
 
@@ -21,7 +23,7 @@
 {"verdict":"pass|issue|insufficient_input","issues":[],"notes":""}
 
 - `pass`：`issues` 为空数组，`notes` 为空字符串。
-- `issue`：每个问题包含 `error_type`、`risk_level`、`diff_summary`、`suggestion`、`auto_fixable: false`；`error_type` 只能是“所述观点非该案裁判观点”。
+- `issue`：每个问题包含 `error_type`、`risk_level`、`diff_summary`、`suggestion`、`revised_text`；`revised_text` 为修订后的完整 `paraphrase_text` 或 `null`，`error_type` 只能是“所述观点非该案裁判观点”。
 - `insufficient_input`：仅在文书观点无法独立识别、权威观点明显截断或输入结构冲突时使用，`notes` 必须写明具体原因。
 
 所有文本字段只允许面向用户的自然语言。不得输出内部锚点、line 编号、`⟦...⟧`、`[[...]]` 或锚点标签。

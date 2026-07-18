@@ -616,8 +616,41 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
     assert check.lookup_status == CaseLookupStatus.VERIFIED
     assert check.evidence.case_number == "（2024）最高法民终262号"
     assert len(check.source_attempts) == 2
-    assert searcher.keyword_calls[0][0] == "指导案例262号"
+    assert searcher.keyword_calls[0][0] == "指导性案例262号"
     assert searcher.semantic_calls
+
+
+def test_party_style_case_name_is_cleaned_and_sent_as_party_keywords(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(source_doc_id="doc-test", source_doc_hash="sha256:test"),
+        claims=[Claim(
+            claim_id="cl_00001",
+            claim_type=ClaimType.CASE_CITATION,
+            text="在庄羽诉郭敬明案中，法院讨论了作品独创性。",
+            anchor_ids=["line00001"],
+            entities=CaseCitationEntities(case_refs=[CaseRef(
+                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+                case_name="在庄羽诉郭敬明案",
+            )]),
+        )],
+    )
+
+    class PartySearcher:
+        calls = []
+        def search_keyword(self, title, fulltext):
+            self.calls.append((title, fulltext))
+            return [PkulawCaseRecord(
+                title="庄羽与郭敬明等侵犯著作权纠纷上诉案",
+                case_number="(2005)高民终字第539号",
+            )]
+        def search_semantic(self, text):
+            return []
+
+    searcher = PartySearcher()
+    verify_claim_document(claim_doc, db_path, case_searcher=searcher)
+    assert searcher.calls == [("", "庄羽 郭敬明")]
 
 
 def test_case_name_containment_requires_manual_review(tmp_path: Path):
@@ -655,6 +688,9 @@ def test_case_name_containment_requires_manual_review(tmp_path: Path):
         claim_doc, db_path, case_searcher=ContainmentSearcher()
     ).case_results[0]
     assert check.lookup_status == CaseLookupStatus.MANUAL_REVIEW
+    assert [candidate.title for candidate in check.candidate_cases] == [
+        "甲公司诉乙公司合同纠纷案再审审查案"
+    ]
 
 
 def test_match_law_record_accepts_promulgation_notice_title():
@@ -677,6 +713,18 @@ def test_match_law_record_accepts_promulgation_notice_title():
         match_law_record("常见类型移动互联网应用程序必要个人信息范围规定", records[:1])
         is None
     )
+
+
+def test_match_law_record_prefers_explicit_current_version():
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawLawRecord
+    from ccitecheck.tracing.sources.pkulaw.matching import match_law_record
+
+    records = [
+        PkulawLawRecord(title="示例解释", timeliness=["已被修改"]),
+        PkulawLawRecord(title="示例解释(2020修正)", timeliness=["现行有效"]),
+    ]
+    matched = match_law_record("示例解释（2020修正）", records)
+    assert matched is records[1]
 
 
 def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
@@ -964,3 +1012,131 @@ def test_extraction_respects_scope_selection():
     only_cases = extract_claims(doc, include_statutes=False, include_cases=True)
     assert all(c.claim_type != ClaimType.LEGAL_SOURCE_CLAIM for c in only_cases.claims)
     assert len(only_cases.claims) == 1
+
+
+def test_locator_revision_replaces_only_wrong_paragraph_number():
+    from types import SimpleNamespace
+    from ccitecheck.application.verify_claims import _CheckItem, _locator_revision
+    from ccitecheck.domain.citation import ArticleRef
+    from ccitecheck.domain.statute_results import StatuteLocator
+
+    text = "依据《中华人民共和国民法典》第五百零九条第九款，当事人应当按照约定全面履行自己的义务。"
+    item = _CheckItem(
+        claim=SimpleNamespace(text=text, context_text=text),
+        law_title="中华人民共和国民法典", source_type="law",
+        article=ArticleRef(article="第五百零九条", paragraphs=["第九款"]),
+        article_no="第五百零九条", not_verifiable=None,
+    )
+    revision = _locator_revision(item, StatuteLocator(
+        article_no="第五百零九条", paragraph_no="第一款"
+    ))
+    assert revision is not None and revision.machine_applicable
+    assert revision.revised_text == (
+        "依据《中华人民共和国民法典》第五百零九条第一款，"
+        "当事人应当按照约定全面履行自己的义务。"
+    )
+
+
+def test_locator_revision_replaces_only_wrong_item_number():
+    from types import SimpleNamespace
+    from ccitecheck.application.verify_claims import _CheckItem, _locator_revision
+    from ccitecheck.domain.citation import ArticleRef
+    from ccitecheck.domain.statute_results import StatuteLocator
+
+    text = "依据《个人信息保护法》第十三条第一款第九项，处理个人信息应当取得个人同意。"
+    item = _CheckItem(
+        claim=SimpleNamespace(text=text, context_text=text),
+        law_title="个人信息保护法", source_type="law",
+        article=ArticleRef(article="第十三条", paragraphs=["第一款"], items=["第九项"]),
+        article_no="第十三条", not_verifiable=None,
+    )
+    revision = _locator_revision(item, StatuteLocator(
+        article_no="第十三条", paragraph_no="第一款", item_no="第一项"
+    ))
+    assert revision is not None and revision.machine_applicable
+    assert revision.revised_text == (
+        "依据《个人信息保护法》第十三条第一款第一项，处理个人信息应当取得个人同意。"
+    )
+
+
+def test_location_resolution_ignores_item_marker_and_neutral_de_particle():
+    from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
+    from ccitecheck.judgment.statutes.locator_resolution import resolve_location_candidates
+
+    trace = SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND)
+    evidence = ArticleEvidence(
+        law_title="个人信息保护法", source_type="law", article_no="第十三条",
+        article_text="符合下列情形之一的，个人信息处理者方可处理个人信息：\n（一）取得个人的同意；\n（二）为履行合同所必需。",
+        data_source=trace,
+    )
+    result = resolve_location_candidates(
+        "个人信息处理者在取得个人同意后可以处理个人信息。", [evidence]
+    )
+    assert result.status == "resolved"
+    assert result.candidates[0].locator.paragraph_no == "第一款"
+    assert result.candidates[0].locator.item_no == "第一项"
+
+
+def test_ordinary_meaning_distortion_does_not_trigger_secondary_locator_scan():
+    from types import SimpleNamespace
+    from ccitecheck.application.verify_claims import _verify_semantic_locator_candidates
+    from ccitecheck.domain.checks import CheckVerdict
+    from ccitecheck.domain.statute_results import StatuteFinding, StatuteMeaningCheck
+
+    class CountingLocator:
+        calls = 0
+        def locate_candidates(self, request):
+            self.calls += 1
+            raise AssertionError("ordinary meaning distortion must not scan nearby articles")
+
+    source = CountingLocator()
+    item = SimpleNamespace(
+        jurisdiction="CN", law_title="劳动合同法", source_type="law",
+        article_no="第三十七条", document_quote="劳动者可以解除劳动合同。",
+    )
+    finding = StatuteFinding(
+        code=StatuteErrorCode.MEANING_DISTORTED, risk_level="MEDIUM",
+        summary="文书遗漏提前通知要求", suggestion="补充通知期限。",
+        location_recheck_required=False,
+    )
+    meaning = StatuteMeaningCheck(verdict=CheckVerdict.ISSUE, findings=[finding])
+    _verify_semantic_locator_candidates([source], [item], {0: ([], meaning)})
+    assert source.calls == 0
+
+
+def test_bare_multi_law_listing_passes_existence_check_without_article_text(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    text = "本文结合《网络数据安全管理条例》《互联网信息服务算法推荐管理规定》等现行有效法规进行分析。"
+    sources = [
+        LegalSource(title=title, source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT)
+        for title in ("网络数据安全管理条例", "互联网信息服务算法推荐管理规定")
+    ]
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(source_doc_id="doc-test", source_doc_hash="sha256:test"),
+        claims=[Claim(
+            claim_id="cl_00001", claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
+            text=text, anchor_ids=["line00001"],
+            entities=LegalSourceClaimEntities(legal_sources=sources),
+        )],
+    )
+
+    class ExistingLawSource:
+        def lookup(self, request):
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK, source_name="北大法宝 MCP",
+                source_url="https://pkulaw.com/chl/example.html",
+                status=LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE,
+                message="法规存在",
+            )
+            evidence = ArticleEvidence(
+                law_title=request.law_title, source_type=request.source_type,
+                version_status="现行有效", data_source=trace,
+            )
+            return LookupResult(trace.status, evidence, trace)
+
+    result = verify_claim_document(
+        claim_doc, db_path, sources=[ExistingLawSource()], include_cases=False
+    )
+    assert [item.outcome for item in result.statute_results] == ["pass", "pass"]
+    assert all(item.evidence.article_text is None for item in result.statute_results)

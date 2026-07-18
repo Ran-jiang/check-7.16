@@ -297,6 +297,14 @@ def test_case_holding_paraphrase():
     assert "优先保护" in c.entities.holding_text or len(c.entities.holding_text) > 0
 
 
+def test_guiding_case_biaoming_is_holding_paraphrase():
+    text = "指导案例262号表明，网络平台在特定条件下应承担责任。"
+    doc = _make_parsed_doc([text])
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
+
+    assert any(c.claim_type == ClaimType.CASE_HOLDING_PARAPHRASE for c in candidates)
+
+
 # ============================================================
 # Test 8: 仅"本院认为"无 case_ref → 不抽取
 # ============================================================

@@ -32,3 +32,28 @@ def test_duplicate_exact_titles_do_not_accept_a_broad_region_court():
 
     assert match is None
     assert basis is None
+
+
+def test_duplicate_supplier_records_with_same_number_court_and_date_are_one_case():
+    records = [
+        PkulawCaseRecord(
+            title="李某诉周某案",
+            case_number="（2019）京73民终225号",
+            court="北京知识产权法院",
+            last_instance_date="2020.05.26",
+            url="https://example.com/a",
+        ),
+        PkulawCaseRecord(
+            title="李霞与周梅森案",
+            case_number="（2019）京73民终225号",
+            court="北京知识产权法院",
+            last_instance_date="2020.05.26",
+            holding="裁判观点",
+            url="https://example.com/b",
+        ),
+    ]
+
+    match, basis = _match_case_record("(2019)京73民终225号", None, None, records)
+
+    assert match is records[1]
+    assert basis == "exact_case_number_cluster"

@@ -152,6 +152,55 @@ def test_qwen_revision_requires_backend_approval_protocol(monkeypatch):
     assert revision.machine_applicable is True
 
 
+def test_qwen_revision_cannot_change_deterministically_verified_citation(monkeypatch):
+    response = json.dumps({
+        "verdict": "issue",
+        "issues": [{
+            "error_type": "曲解权威文本原意",
+            "risk_level": "HIGH",
+            "diff_summary": "文书遗漏法定前提",
+            "suggestion": "补充前提。",
+            "revised_text": "依据《示例法》第二条，满足前提时应当履行义务。",
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+    _install_mock_client(monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)))
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="示例法", source_type="law", article_no="第一条",
+        article_text="满足前提时，应当履行义务。",
+        data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
+    )
+    result = checker.compare(
+        "依据《示例法》第一条，应当履行义务。", "上下文", "《示例法》第一条", evidence
+    )
+    assert result.findings[0].revision is None
+
+
+def test_qwen_location_recheck_is_explicitly_structured(monkeypatch):
+    response = json.dumps({
+        "verdict": "issue",
+        "issues": [{
+            "error_type": "曲解权威文本原意",
+            "risk_level": "HIGH",
+            "diff_summary": "文书讨论独立著作权，原文规定出版者赔偿责任，两者主题完全无关",
+            "suggestion": "重新检索正确条款。",
+            "location_recheck_required": True,
+            "revised_text": None,
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+    _install_mock_client(monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)))
+    checker = QwenSemanticChecker(api_key="test-key")
+    evidence = ArticleEvidence(
+        law_title="示例解释", source_type="judicial_interpretation", article_no="第二十条",
+        article_text="出版者未尽合理注意义务的，应当承担赔偿责任。",
+        data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
+    )
+    result = checker.compare("不同作者独立创作的作品各自享有著作权。", "", "《示例解释》第二十条", evidence)
+    assert result.findings[0].location_recheck_required is True
+
+
 def test_qwen_malformed_json_is_repaired_once(monkeypatch):
     responses = iter([
         '{"verdict":"issue","issues":[{"error_type":"曲解权威文本原意" "risk_level":"HIGH"}]}',
