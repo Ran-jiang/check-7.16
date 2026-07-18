@@ -9,7 +9,7 @@ $ShareName = "CCitecheckAddins"
 $CatalogUrl = "\\localhost\$ShareName"
 $CatalogId = "{A8F4FDD5-AB97-4DBE-90A0-24CE1657868B}"
 $CatalogKey = "HKCU:\Software\Microsoft\Office\16.0\WEF\TrustedCatalogs\$CatalogId"
-$ExpectedManifestId = "8a36ad2d-89f5-4c71-a761-743f6949dfee"
+$ExpectedManifestId = "b01e1d79-81a3-4162-9c0a-c80fa9b1203b"
 $ExpectedHost = "https://cciteheck-api.onrender.com"
 
 function Test-Administrator {

@@ -4,7 +4,7 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
-  <Id>8a36ad2d-89f5-4c71-a761-743f6949dfee</Id>
+  <Id>b01e1d79-81a3-4162-9c0a-c80fa9b1203b</Id>
   <Version>1.0.1.0</Version>
   <ProviderName>CCiteheck</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>

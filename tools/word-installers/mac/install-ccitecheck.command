@@ -4,7 +4,7 @@ set -euo pipefail
 MANIFEST_URL="https://raw.githubusercontent.com/Ran-jiang/check-7.16/main/apps/word_addin/manifest.render.xml"
 INSTALL_DIR="$HOME/Library/Containers/com.microsoft.Word/Data/Documents/wef"
 MANIFEST_PATH="$INSTALL_DIR/manifest.render.xml"
-EXPECTED_ID="8a36ad2d-89f5-4c71-a761-743f6949dfee"
+EXPECTED_ID="b01e1d79-81a3-4162-9c0a-c80fa9b1203b"
 EXPECTED_HOST="https://cciteheck-api.onrender.com"
 
 echo "CCitecheck Word Add-in installer"
