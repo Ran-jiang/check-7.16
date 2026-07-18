@@ -1,6 +1,7 @@
 import { normalizeCaseResult, normalizeStatuteResult, findingLabel } from "/assets/result-models.js"
 import { caseViewOf } from "/assets/case-view-model.js"
 import { statuteViewOf } from "/assets/statute-view-model.js"
+import { orderChecksByDocument } from "./web-order.js"
 
 const state = { entry: "file", file: null, result: null, status: "all", accepted: new Set(), selected: null }
 const $ = id => document.getElementById(id)
@@ -80,10 +81,11 @@ function renderWorkspace() {
 
 function checks() {
   if (!state.result) return []
-  return [
+  const items = [
     ...state.result.verification.statute_results.map(item => ({ ...normalizeStatuteResult(item), check_kind: "statute" })),
     ...state.result.verification.case_results.map(item => ({ ...normalizeCaseResult(item), check_kind: "case" })),
-  ].sort((a, b) => locationOrder(a) - locationOrder(b))
+  ]
+  return orderChecksByDocument(items, state.result.preview_blocks)
 }
 
 function renderStatusFilters() {
@@ -217,7 +219,6 @@ function centerInPane(element, pane) {
 function revisedBlockText(text) { for (const check of checks()) if (state.accepted.has(check.check_id)) { const r = revisionOf(check); if (r && text.includes(r.original_text)) text = text.replace(r.original_text, r.revised_text) } return text }
 function revisedClaim(check) { const r = revisionOf(check); return state.accepted.has(check.check_id) && r ? r.revised_text : check.claim_text }
 function revisionOf(check) { const revisions = (check.findings || []).map(item => item.revision).filter(item => item?.machine_applicable && item.revised_text); return revisions.length === 1 ? revisions[0] : null }
-function locationOrder(check) { return Number(String(check.source_locations?.[0]?.block_id || "").match(/\d+/)?.[0] || Number.MAX_SAFE_INTEGER) }
 function showLanding() { showOnly("landing") }
 function showOnly(id) { for (const section of ["landing", "progress", "workspace"]) $(section).classList.toggle("is-hidden", section !== id); window.scrollTo({ top: 0, behavior: "smooth" }) }
 function cycleProgress() { const messages = ["正在解析文书结构", "正在连接权威法律来源", "正在核对法规与案例引用"]; let i = 0; $("progress-title").textContent = messages[0]; const timer = setInterval(() => { if ($("progress").classList.contains("is-hidden")) return clearInterval(timer); $("progress-title").textContent = messages[++i % messages.length] }, 2400) }
