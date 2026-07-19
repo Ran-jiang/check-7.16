@@ -84,6 +84,10 @@ foreach ($svc in @(@{n="CCiteheck-API"; t="task-api.xml.tmpl"}, @{n="CCiteheck-E
 
 # 6. 健康检查（127.0.0.1 与 localhost 都试：Windows 上 localhost 可能先解析到
 # IPv6 ::1，而服务绑定的是 IPv4 127.0.0.1）
+# PowerShell 5.1 的 Invoke-RestMethod 对本机开发证书常校验失败（无
+# -SkipCertificateCheck），这里对 loopback 请求放行证书校验并强制 TLS 1.2。
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 Write-Host "[4/6] 等待服务就绪..."
 $okApi = $false
 foreach ($i in 1..30) {
