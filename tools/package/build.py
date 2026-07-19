@@ -179,7 +179,8 @@ def copy_project(staging: Path) -> None:
 def copy_payload(staging: Path, bundle_dir: Path, target_platform: str) -> None:
     common = PKG_DIR / "payload" / "common"
     shutil.copy2(common / "env.template", staging / ".env.template")
-    shutil.copy2(common / "README-安装说明.md", bundle_dir / "README-安装说明.md")
+    # 输出用 ASCII 文件名，避免跨平台 zip 中文文件名乱码
+    shutil.copy2(common / "README-安装说明.md", bundle_dir / "README.md")
     (staging / "logs").mkdir(exist_ok=True)
     (staging / "logs" / ".keep").write_text("")
 
