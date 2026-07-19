@@ -28,7 +28,8 @@ for ZIP in "${ARGS[@]}"; do
   NAME="$(basename "$ZIP")"
   WORK="$(mktemp -d)"
   echo "== 注入 $NAME"
-  unzip -qq "$ZIP" -d "$WORK"
+  # ditto 对跨平台 zip 的中文文件名与可执行权限处理都比 unzip 稳
+  ditto -x -k "$ZIP" "$WORK"
   BUNDLE="$(find "$WORK" -maxdepth 1 -type d -name "CCiteheck-*" | head -1)"
   [ -n "$BUNDLE" ] || { echo "包结构异常：未找到 CCiteheck-* 根目录"; exit 1; }
   [ -d "$BUNDLE/payload" ] || { echo "包结构异常：缺少 payload/"; exit 1; }
