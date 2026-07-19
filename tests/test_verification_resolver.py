@@ -729,6 +729,37 @@ def test_match_law_record_prefers_explicit_current_version():
     assert matched is records[1]
 
 
+def test_match_law_record_bare_name_resolves_to_current_reenacted_version():
+    """裸名引用（如《国家安全法》）在旧版废止、新版现行同名时应命中现行版，
+    避免把重新制定后仍施行的法误判为废止。"""
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawLawRecord
+    from ccitecheck.tracing.sources.pkulaw.matching import match_law_record
+
+    records = [
+        PkulawLawRecord(title="中华人民共和国国家安全法", timeliness=["废止或失效"]),
+        PkulawLawRecord(title="中华人民共和国国家安全法(2015)", timeliness=["现行有效"]),
+        PkulawLawRecord(title="中华人民共和国国家安全法(2009修正)", timeliness=["废止或失效"]),
+        PkulawLawRecord(title="中华人民共和国国家安全法实施细则", timeliness=["废止或失效"]),
+    ]
+    matched = match_law_record("中华人民共和国国家安全法", records)
+    assert matched is records[1]
+    assert matched.timeliness == ["现行有效"]
+
+
+def test_match_law_record_bare_name_matches_year_suffixed_single_article():
+    """get_article 常返回带纯年份后缀的版本标题（如"…国家安全法(2015)"），
+    裸名引用校验单条返回时也应认定为同一部法。"""
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawArticle
+    from ccitecheck.tracing.sources.pkulaw.matching import match_law_record
+
+    article = PkulawArticle(
+        title="中华人民共和国国家安全法(2015)",
+        article_no="第二条",
+        article_text="国家安全是指……",
+    )
+    assert match_law_record("中华人民共和国国家安全法", [article]) is article
+
+
 def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
     return Claim(
         claim_id=claim_id,
