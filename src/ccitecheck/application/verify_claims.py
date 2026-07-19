@@ -896,17 +896,18 @@ def _assess_item_location(item: _CheckItem, lookup_result: LookupResult):
             "抽取结果未记录各项分别属于哪一款",
         )
     evidence = lookup_result.evidence
-    # 本地精编库的条文换行可信：单行即确为一款，可据此判定超范围款号
-    from_local = (
+    # 本地精编库与北大法宝的条文都以换行保留款边界（实测多款条文均含换行），
+    # 故其单行条文即确为一款，可据此判定超范围款号；EUR-Lex 等其他来源不假定。
+    reliable_paragraphs = (
         evidence is not None
         and evidence.data_source is not None
-        and evidence.data_source.tier == SourceTier.LOCAL_SQLITE
+        and evidence.data_source.tier in (SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK)
     )
     structure = (
         parse_article_structure(
             evidence.article_no or item.article_no or "",
             evidence.article_text,
-            trust_single_paragraph=from_local,
+            trust_single_paragraph=reliable_paragraphs,
         )
         if evidence is not None and evidence.article_text
         else None
