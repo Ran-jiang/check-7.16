@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
 import io
+import json
 import os
 import tempfile
 import time
@@ -49,6 +51,8 @@ FEISHU_ADDIN_ROOT = PROJECT_ROOT / "apps" / "feishu"
 WEB_ROOT = PROJECT_ROOT / "apps" / "web"
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
+# 保活间隔：核查超过该秒数仍未完成时，向连接发送保活空白防止 WKWebView 超时
+KEEPALIVE_SECONDS = 15
 
 load_project_env()
 app = FastAPI(title="CCiteheck API", version="1.0.0")
@@ -141,23 +145,45 @@ def _validate_scope(request) -> None:
         raise HTTPException(status_code=400, detail="请至少选择一种核查范围（法规引用或司法案例）")
 
 
-@app.post("/api/checks", response_model=DocumentCheckResponse)
-def check_document(request: DocumentCheckRequest) -> DocumentCheckResponse:
-    return _run_document_check(request, capture_debug=True)
-
-
-def _run_document_check(request: DocumentCheckRequest, *, capture_debug: bool) -> DocumentCheckResponse:
+@app.post("/api/checks")
+async def check_document(request: DocumentCheckRequest):
+    # 快速校验（大小、格式、范围）同步返回正确状态码；随后进入保活流式响应，
+    # 核查在线程池执行，期间每隔 15 秒发送保活空白，避免 Word 插件所在的
+    # WKWebView 因大文书核查超过 ~60 秒网络超时而报 "Load failed"。
     _validate_scope(request)
-    document_bytes = _decode_document(request.docx_base64)
+    document_bytes = _decode_and_validate(request.docx_base64)
+
+    async def stream():
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(
+            None,
+            lambda: _run_document_check(request, document_bytes, capture_debug=True),
+        )
+        while True:
+            try:
+                response = await asyncio.wait_for(asyncio.shield(future), timeout=KEEPALIVE_SECONDS)
+                break
+            except asyncio.TimeoutError:
+                yield b" "  # 保活：JSON 允许前导空白，客户端 JSON.parse 忽略
+            except HTTPException as exc:
+                yield json.dumps({"__stream_error__": True, "detail": exc.detail}).encode("utf-8")
+                return
+            except Exception as exc:  # noqa: BLE001 - 兜底避免连接悬挂
+                yield json.dumps({"__stream_error__": True, "detail": f"核查失败：{exc}"}).encode("utf-8")
+                return
+        yield response.model_dump_json().encode("utf-8")
+
+    return StreamingResponse(stream(), media_type="application/json")
+
+
+def _run_document_check(
+    request: DocumentCheckRequest, document_bytes: bytes, *, capture_debug: bool
+) -> DocumentCheckResponse:
     debug_run_id = create_run("document", document_bytes) if capture_debug else None
     write_json(debug_run_id, "request.json", {
         **request.model_dump(exclude={"docx_base64"}),
         "docx_base64_length": len(request.docx_base64),
     })
-    if len(document_bytes) > MAX_DOCUMENT_BYTES:
-        raise HTTPException(status_code=413, detail="文档超过 25 MB 限制")
-    if not document_bytes.startswith(b"PK"):
-        raise HTTPException(status_code=400, detail="文件不是有效的 DOCX 文档")
 
     try:
         with tempfile.TemporaryDirectory(prefix="ccitecheck-document-") as temporary_dir:
@@ -199,9 +225,9 @@ def _run_document_check(request: DocumentCheckRequest, *, capture_debug: bool) -
 
 @app.post("/api/web/checks", response_model=WebCheckResponse)
 def check_web_document(request: DocumentCheckRequest) -> WebCheckResponse:
-    document_bytes = _decode_document(request.docx_base64)
+    document_bytes = _decode_and_validate(request.docx_base64)
     # 公网网页文书不进入本地 debug_runs，确保一小时会话是唯一临时副本。
-    response = _run_document_check(request, capture_debug=False)
+    response = _run_document_check(request, document_bytes, capture_debug=False)
     parsed = _parse_preview(document_bytes)
     session = WEB_SESSIONS.create(response.file_name, document_bytes, response.verification)
     return WebCheckResponse(
@@ -422,3 +448,12 @@ def _decode_document(encoded: str) -> bytes:
         return base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(status_code=400, detail="DOCX Base64 数据无效") from exc
+
+
+def _decode_and_validate(encoded: str) -> bytes:
+    document_bytes = _decode_document(encoded)
+    if len(document_bytes) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="文档超过 25 MB 限制")
+    if not document_bytes.startswith(b"PK"):
+        raise HTTPException(status_code=400, detail="文件不是有效的 DOCX 文档")
+    return document_bytes

@@ -11,6 +11,48 @@ from ccitecheck.infrastructure.database import connect, init_db, upsert_article,
 def _reject_named_temporary_file(*args, **kwargs):
     raise AssertionError("API must use a closed, reopenable temporary DOCX path")
 
+def test_document_check_streams_keepalive_for_slow_processing(tmp_path, monkeypatch):
+    """核查耗时超过保活间隔时，响应正文以保活空白开头且仍能被 JSON 解析，
+    避免 Word 插件所在 WKWebView 因长时间无数据而超时。"""
+    import time
+    from io import BytesIO
+    import base64, importlib
+    from docx import Document
+
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+    document = Document()
+    document.add_paragraph("依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。")
+    buffer = BytesIO()
+    document.save(buffer)
+
+    api_module = importlib.import_module("apps.api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module, "KEEPALIVE_SECONDS", 0.05)
+    original = api_module._run_document_check
+
+    def slow(*args, **kwargs):
+        time.sleep(0.25)  # 跨过多个保活间隔
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(api_module, "_run_document_check", slow)
+    client = TestClient(api_module.app)
+    response = client.post(
+        "/api/checks",
+        json={
+            "file_name": "test.docx",
+            "docx_base64": base64.b64encode(buffer.getvalue()).decode(),
+            "semantic_check": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.content[:1] == b" "  # 保活空白开头
+    payload = response.json()  # 前导空白不影响 JSON 解析
+    assert payload["summary"]["reference_total"] == 1
+    assert "__stream_error__" not in payload
+
+
 
 def test_word_addin_document_check_api(tmp_path, monkeypatch):
     db_path = tmp_path / "laws.sqlite"
