@@ -282,6 +282,43 @@ def test_pkulaw_article_uses_semantic_fallback_after_exact_miss():
     assert result.trace.metadata["route_attempts"][1]["service"] == "law_semantic_exact"
 
 
+class FakePrefixRecallClient:
+    """模拟法宝：精确错名查不到，但前缀能召回正确法名。"""
+    correct = "互联网论坛社区服务管理规定"
+
+    def get_article(self, title, article_no):
+        raise PkulawNotFoundError("未找到数据")
+
+    def search_law_articles_for_article(self, title, article_no):
+        return []
+
+    def get_law_list(self, title="", fulltext=""):
+        # 精确错名或全文查不到；仅当查询是正确法名的前缀时命中
+        if title and self.correct.startswith(title):
+            return [PkulawLawRecord(title=self.correct)]
+        raise PkulawNotFoundError("未找到数据")
+
+
+def test_pkulaw_not_found_recalls_similar_name_for_suggestion():
+    from ccitecheck.judgment.statutes import assess_statute
+
+    request = LookupRequest(
+        law_title="互联网论坛服务管理规定",
+        source_type="departmental_rule",
+        article_no="第五条",
+    )
+    result = PkulawFallbackSource(FakePrefixRecallClient()).lookup(request)
+
+    assert result.status == LookupStatus.LAW_NOT_FOUND
+    assert "互联网论坛社区服务管理规定" in result.trace.metadata["candidate_titles"]
+
+    findings = assess_statute(
+        request.law_title, request.article_no, result, [result.trace], []
+    )
+    assert findings
+    assert "疑似应为《互联网论坛社区服务管理规定》" in findings[0].suggestion
+
+
 def test_pkulaw_unnumbered_lookup_reports_tool_text_limit():
     result = PkulawFallbackSource(FakeLawListClient()).lookup(
         LookupRequest(

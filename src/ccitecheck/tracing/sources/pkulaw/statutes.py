@@ -31,11 +31,37 @@ from .client import (
     normalize_article_no,
 )
 from .matching import match_law_record
+from ....infrastructure.database import normalize_title, strip_version_annotation
 
 
 class PkulawFallbackSource:
     def __init__(self, client: Optional["StatuteLookupClient"] = None):
         self.client = client
+
+    def _recall_similar_titles(self, law_title: str) -> list[str]:
+        """精确法名未命中时，用递减前缀召回法宝中的近似法名（如文书漏字），
+        供上层相似度提示"疑似应为《…》"。最多两次前缀查询。"""
+        core = strip_version_annotation(normalize_title(law_title)).replace(
+            "中华人民共和国", "", 1
+        )
+        if len(core) < 6:
+            return []
+        titles: list[str] = []
+        seen: set[str] = set()
+        for length in (len(core) * 2 // 3, len(core) // 2):
+            if length < 4:
+                continue
+            try:
+                records = self._client().get_law_list(title=core[:length])
+            except (PkulawNotFoundError, PkulawMcpError):
+                continue
+            for record in records:
+                if record.title and record.title not in seen:
+                    seen.add(record.title)
+                    titles.append(record.title)
+            if titles:
+                break
+        return titles
 
     def lookup(self, request: LookupRequest) -> LookupResult:
         return (
@@ -243,7 +269,11 @@ class PkulawFallbackSource:
             trace.status = LookupStatus.LAW_NOT_FOUND
             trace.message = "北大法宝检索完成，未找到该法规"
             trace.metadata.update(
-                search_completed=True, candidate_titles=[r.title for r in records[:5]]
+                search_completed=True,
+                candidate_titles=[
+                    *(r.title for r in records[:5]),
+                    *self._recall_similar_titles(request.law_title),
+                ],
             )
             return LookupResult(trace.status, None, trace)
         trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
@@ -303,7 +333,11 @@ class PkulawFallbackSource:
         trace.status = LookupStatus.LAW_NOT_FOUND
         trace.message = "北大法宝检索完成，未找到该法规"
         trace.metadata.update(
-            search_completed=True, candidate_titles=[r.title for r in records[:5]]
+            search_completed=True,
+            candidate_titles=[
+                *(r.title for r in records[:5]),
+                *self._recall_similar_titles(request.law_title),
+            ],
         )
         return LookupResult(trace.status, None, trace)
 
