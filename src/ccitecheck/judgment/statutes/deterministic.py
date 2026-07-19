@@ -85,7 +85,26 @@ def assess_statute(
             suggestion=suggestion,
         )]
 
+    # 欧盟法规经 EUR-Lex 检索未命中：同样报法源未检索到，避免编造的欧盟
+    # 法规因无 finding 而误判通过。
+    if result.status == LookupStatus.LAW_NOT_FOUND and _completed_eurlex_not_found(attempts):
+        cited = strip_version_annotation(law_title)
+        return [StatuteFinding(
+            code=StatuteErrorCode.SOURCE_NOT_FOUND,
+            risk_level="HIGH",
+            summary=f"EUR-Lex 未检索到《{cited}》",
+            suggestion=f"EUR-Lex 未检索到《{cited}》，请核实欧盟法规名称是否准确。",
+        )]
+
     return []
+
+
+def _completed_eurlex_not_found(attempts: list[SourceTrace]) -> SourceTrace | None:
+    return next((
+        trace for trace in attempts
+        if trace.tier == SourceTier.EURLEX
+        and trace.status == LookupStatus.LAW_NOT_FOUND
+    ), None)
 
 
 def _is_repealed(result: LookupResult) -> bool:

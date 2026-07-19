@@ -669,6 +669,27 @@ def _normalize_law_title(title: str) -> str:
     """
     title = title.strip()
     title = _strip_noise_prefix(title)
+    title = _strip_reference_modifiers(title)
+    return title
+
+
+# 引用时的描述性/介词前缀：不是法名的一部分（现行反不正当竞争法=反不正当竞争法，
+# 以刑法=刑法）。仅在剥离后仍是合法法名时才剥，避免误伤。
+_MODIFIER_PREFIXES = ("现行", "新", "旧", "原", "以")
+
+
+def _strip_reference_modifiers(title: str) -> str:
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _MODIFIER_PREFIXES:
+            if not title.startswith(prefix):
+                continue
+            remainder = title[len(prefix):]
+            if len(remainder) >= 2 and _is_legal_source(remainder):
+                title = remainder
+                changed = True
+                break
     return title
 
 

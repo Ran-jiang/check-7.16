@@ -173,3 +173,10 @@ def test_pkulaw_source_also_trusts_single_line_paragraph():
     reliable = {SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK}
     assert SourceTier.PKULAW_FALLBACK in reliable
     assert SourceTier.EURLEX not in reliable
+
+
+def test_reference_modifiers_stripped_from_bare_law_name():
+    """裸引用的描述性/介词前缀不属于法名：以刑法=刑法，现行反不正当竞争法=反不正当竞争法。"""
+    from ccitecheck.recognition.statutes import extract_legal_sources
+    assert extract_legal_sources("以刑法第二百八十五条第三款认定非法获取数据罪。")[0].title == "刑法"
+    assert extract_legal_sources("现行反不正当竞争法第十三条第三款关注数据获取。")[0].title == "反不正当竞争法"
