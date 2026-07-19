@@ -149,7 +149,9 @@ def test_eu_statute_routes_to_eurlex_and_skips_semantic(tmp_path: Path, monkeypa
     check = frontend_doc.statute_results[0]
     assert check.jurisdiction == "EU"
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
-    assert check.meaning_check.skipped_reason == "retrieval_incomplete"
+    # 无条号引用只核验存在性，不做语义核查
+    assert check.meaning_check is None
+    assert check.outcome == "pass"
     assert check.evidence.source_metadata["celex"] == "32016R0679"
 
 

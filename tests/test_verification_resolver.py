@@ -229,7 +229,9 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
     assert check.cited_locators == []
     assert check.evidence.related_articles[0].article_no == "第一条"
-    assert check.meaning_check is not None
+    # 无条号引用只核验存在性：召回相关条款供参考，但不做语义核查
+    assert check.meaning_check is None
+    assert check.outcome == "pass"
 
 
 class FakeLawListClient:

@@ -460,9 +460,12 @@ def _run_judgments(
                 skipped_semantic_result("citation_structure_unavailable"),
             )
             continue
-        if (
-            lookup_result.status == LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
-            and _is_existence_only_reference(item)
+        # 只写法规名、未写条号的引用一律只核验存在性与效力，不再召回相关
+        # 条款做语义核查（本地库有全文也不做）。法源不存在/已废止由上面的
+        # findings 反映；法源存在且有效即通过。
+        if _is_existence_only_reference(item) and lookup_result.status in (
+            LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE,
+            LookupStatus.RELEVANT_ARTICLES_FOUND,
         ):
             results[index] = (findings, None)
             continue
