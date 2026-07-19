@@ -17,8 +17,10 @@ Write-Host "================"
 
 Write-Host "[1/4] 停止并移除常驻服务..."
 foreach ($t in "CCiteheck-API", "CCiteheck-EurLex") {
-    schtasks /end /tn $t 2>$null | Out-Null
-    schtasks /delete /tn $t /f 2>$null | Out-Null
+    if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue
+    }
 }
 Get-Process pythonw, node | Where-Object { $_.Path -like "$InstallDir*" } | Stop-Process -Force
 

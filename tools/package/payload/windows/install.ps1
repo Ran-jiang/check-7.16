@@ -18,13 +18,15 @@ Write-Host "CCiteheck 本地服务安装器" -ForegroundColor Cyan
 Write-Host "========================"
 
 # 1. 预检
+# 注意：全程避免 "原生命令 2>$null" 写法——ErrorActionPreference=Stop 下
+# 原生命令的 stderr 重定向会被包装成异常直接中断脚本
 if (Get-Process -Name WINWORD -ErrorAction SilentlyContinue) {
     Fail "Microsoft Word 正在运行，请完全退出 Word 后重新运行安装器。"
 }
-$oldTasks = @(schtasks /query /tn "CCiteheck-API" 2>$null)
+$oldInstall = Get-ScheduledTask -TaskName "CCiteheck-API" -ErrorAction SilentlyContinue
 foreach ($port in 3000, 3010) {
     $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($conn -and -not $oldTasks) {
+    if ($conn -and -not $oldInstall) {
         $owner = (Get-Process -Id $conn[0].OwningProcess -ErrorAction SilentlyContinue).ProcessName
         Fail "端口 $port 已被进程「$owner」占用，请先释放该端口。"
     }
@@ -32,8 +34,10 @@ foreach ($port in 3000, 3010) {
 
 # 2. 停旧服务
 foreach ($t in "CCiteheck-API", "CCiteheck-EurLex") {
-    schtasks /end /tn $t 2>$null | Out-Null
-    schtasks /delete /tn $t /f 2>$null | Out-Null
+    if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue
+    }
 }
 Get-Process pythonw, node -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -like "$InstallDir*" } |
@@ -67,12 +71,12 @@ if ($LASTEXITCODE -ne 0) { Fail "HTTPS 证书安装未完成" }
 Write-Host "[3/6] 注册开机自启服务..."
 foreach ($svc in @(@{n="CCiteheck-API"; t="task-api.xml.tmpl"}, @{n="CCiteheck-EurLex"; t="task-eurlex.xml.tmpl"})) {
     $xml = (Get-Content (Join-Path $InstallDir $svc.t) -Raw) -replace "__ROOT__", $InstallDir
-    $xmlPath = Join-Path $env:TEMP "$($svc.n).xml"
-    $xml | Out-File -FilePath $xmlPath -Encoding Unicode
-    schtasks /create /tn $svc.n /xml $xmlPath /f | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "计划任务 $($svc.n) 注册失败" }
-    schtasks /run /tn $svc.n | Out-Null
-    Remove-Item $xmlPath -Force
+    try {
+        Register-ScheduledTask -TaskName $svc.n -Xml $xml -Force | Out-Null
+        Start-ScheduledTask -TaskName $svc.n
+    } catch {
+        Fail "计划任务 $($svc.n) 注册或启动失败：$($_.Exception.Message)"
+    }
 }
 
 # 6. 健康检查
