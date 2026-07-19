@@ -43,17 +43,20 @@ Get-Process pythonw, node -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -like "$InstallDir*" } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-# 3. 拷贝 payload（升级时保留 .env）
+# 3. 拷贝 payload（升级时保留 .env——必须按字节复制，
+#    Get/Set-Content 文本往返会以 ANSI 编码写坏 UTF-8 配置文件）
 Write-Host "[1/6] 安装文件到 $InstallDir ..."
-$keepEnv = $null
+$keepEnvFile = $null
 if (Test-Path (Join-Path $InstallDir ".env")) {
-    $keepEnv = Get-Content (Join-Path $InstallDir ".env") -Raw
+    $keepEnvFile = Join-Path $env:TEMP "ccitecheck-env-backup"
+    Copy-Item (Join-Path $InstallDir ".env") $keepEnvFile -Force
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -Path (Join-Path $Src "payload\*") -Destination $InstallDir -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $InstallDir "logs") -Force | Out-Null
-if ($keepEnv) {
-    Set-Content -Path (Join-Path $InstallDir ".env") -Value $keepEnv -NoNewline
+if ($keepEnvFile) {
+    Copy-Item $keepEnvFile (Join-Path $InstallDir ".env") -Force
+    Remove-Item $keepEnvFile -Force
 } elseif (-not (Test-Path (Join-Path $InstallDir ".env"))) {
     Copy-Item (Join-Path $InstallDir ".env.template") (Join-Path $InstallDir ".env")
     Write-Host "提示：包内未含密钥，已用模板生成 .env——语义核查需要填入 DASHSCOPE_API_KEY。" -ForegroundColor Yellow
