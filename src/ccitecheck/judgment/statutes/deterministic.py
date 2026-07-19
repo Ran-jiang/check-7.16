@@ -57,17 +57,31 @@ def assess_statute(
 
     pkulaw = _completed_pkulaw_not_found(attempts)
     if result.status == LookupStatus.LAW_NOT_FOUND and pkulaw is not None:
-        candidates = list(pkulaw.metadata.get("candidate_titles", []))
-        suggested = suggest_similar_title(law_title, [*known_titles, *candidates])
-        suggestion = (
-            f"北大法宝未检索到《{strip_version_annotation(law_title)}》，疑似应为《{suggested}》，请核实法规名称。"
-            if suggested
-            else "北大法宝未检索到该法规，请人工核对法规名称。"
+        cited = strip_version_annotation(law_title)
+        # 已取回正确法规该条原文时，直接用其法名并提示对照下方权威原文
+        corrected = (
+            result.evidence.law_title
+            if result.evidence and result.evidence.article_text
+            else None
         )
+        if corrected:
+            corrected_no = result.evidence.article_no or article_no or ""
+            suggestion = (
+                f"北大法宝未检索到《{cited}》，疑似应为《{strip_version_annotation(corrected)}》"
+                f"{corrected_no}，下方为该法规对应条文原文，请据此核实法规名称。"
+            )
+        else:
+            candidates = list(pkulaw.metadata.get("candidate_titles", []))
+            suggested = suggest_similar_title(law_title, [*known_titles, *candidates])
+            suggestion = (
+                f"北大法宝未检索到《{cited}》，疑似应为《{suggested}》，请核实法规名称。"
+                if suggested
+                else "北大法宝未检索到该法规，请人工核对法规名称。"
+            )
         return [StatuteFinding(
             code=StatuteErrorCode.SOURCE_NOT_FOUND,
             risk_level="HIGH",
-            summary=f"北大法宝未检索到《{strip_version_annotation(law_title)}》",
+            summary=f"北大法宝未检索到《{cited}》",
             suggestion=suggestion,
         )]
 

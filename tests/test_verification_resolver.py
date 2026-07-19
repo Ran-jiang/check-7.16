@@ -287,6 +287,13 @@ class FakePrefixRecallClient:
     correct = "互联网论坛社区服务管理规定"
 
     def get_article(self, title, article_no):
+        if title == self.correct:
+            return PkulawArticle(
+                title=self.correct,
+                article_no=article_no,
+                article_text="互联网论坛社区服务提供者应当落实主体责任……",
+                url="https://pkulaw.com/chl/example.html",
+            )
         raise PkulawNotFoundError("未找到数据")
 
     def search_law_articles_for_article(self, title, article_no):
@@ -312,11 +319,18 @@ def test_pkulaw_not_found_recalls_similar_name_for_suggestion():
     assert result.status == LookupStatus.LAW_NOT_FOUND
     assert "互联网论坛社区服务管理规定" in result.trace.metadata["candidate_titles"]
 
+    # 取回正确法规该条原文作为参考证据（含链接）
+    assert result.evidence is not None
+    assert result.evidence.law_title == "互联网论坛社区服务管理规定"
+    assert result.evidence.article_no == "第五条"
+    assert result.evidence.article_text.startswith("互联网论坛社区服务提供者")
+
     findings = assess_statute(
         request.law_title, request.article_no, result, [result.trace], []
     )
     assert findings
-    assert "疑似应为《互联网论坛社区服务管理规定》" in findings[0].suggestion
+    assert "疑似应为《互联网论坛社区服务管理规定》第五条" in findings[0].suggestion
+    assert "下方为该法规对应条文原文" in findings[0].suggestion
 
 
 def test_pkulaw_unnumbered_lookup_reports_tool_text_limit():

@@ -30,8 +30,24 @@ from .client import (
     PkulawNotFoundError,
     normalize_article_no,
 )
+import difflib
+
 from .matching import match_law_record
 from ....infrastructure.database import normalize_title, strip_version_annotation
+
+
+def _best_similar_title(cited: str, candidates: list[str]) -> Optional[str]:
+    """从召回候选中选与引用法名最相近者（与 suggest_similar_title 同口径）。"""
+    if not candidates:
+        return None
+    target = strip_version_annotation(normalize_title(cited))
+    match = difflib.get_close_matches(target, candidates, n=1, cutoff=0.8)
+    if match:
+        return match[0]
+    short = target.replace("中华人民共和国", "", 1)
+    shorts = [c.replace("中华人民共和国", "", 1) for c in candidates]
+    match = difflib.get_close_matches(short, shorts, n=1, cutoff=0.8)
+    return candidates[shorts.index(match[0])] if match else None
 
 
 class PkulawFallbackSource:
@@ -62,6 +78,33 @@ class PkulawFallbackSource:
             if titles:
                 break
         return titles
+
+    def _fetch_corrected_article(self, request, trace, recalled: list[str]):
+        """引用法名有误但存在近似正确法名时，取回正确法规的该条原文与链接。"""
+        if not request.article_no:
+            return None
+        best = _best_similar_title(request.law_title, recalled)
+        if not best:
+            return None
+        try:
+            article = self._client().get_article(best, request.article_no)
+        except (PkulawNotFoundError, PkulawMcpError):
+            return None
+        if not article.article_text or match_law_record(best, [article]) is None:
+            return None
+        trace.source_url = article.url
+        trace.metadata["suggested_title"] = article.title
+        return ArticleEvidence(
+            law_title=article.title,
+            source_type=request.source_type,
+            article_no=article.article_no,
+            article_text=article.article_text,
+            version_label=_first(article.timeliness),
+            version_status=_first(article.timeliness),
+            effective_from=article.implement_date,
+            source_metadata=trace.metadata,
+            data_source=trace,
+        )
 
     def lookup(self, request: LookupRequest) -> LookupResult:
         return (
@@ -268,14 +311,15 @@ class PkulawFallbackSource:
         if matched is None:
             trace.status = LookupStatus.LAW_NOT_FOUND
             trace.message = "北大法宝检索完成，未找到该法规"
+            recalled = self._recall_similar_titles(request.law_title)
             trace.metadata.update(
                 search_completed=True,
-                candidate_titles=[
-                    *(r.title for r in records[:5]),
-                    *self._recall_similar_titles(request.law_title),
-                ],
+                candidate_titles=[*(r.title for r in records[:5]), *recalled],
             )
-            return LookupResult(trace.status, None, trace)
+            # 找到高度近似的正确法名时，取回该法对应条文与链接作为参考证据，
+            # 供用户直接对照更正（引用仍标为法名有误）。
+            corrected = self._fetch_corrected_article(request, trace, recalled)
+            return LookupResult(trace.status, corrected, trace)
         trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
         trace.message = f"北大法宝已收录该法规，但未返回{request.article_no}"
         trace.source_url = matched.url
