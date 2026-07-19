@@ -967,7 +967,7 @@ def _build_statute_results(
                 findings=all_findings,
                 outcome=(
                     "bug" if item.out_of_scope
-                    else _statute_outcome(all_findings, meaning_check, item.reference_role)
+                    else _statute_outcome(all_findings, meaning_check, item.reference_role, item.jurisdiction)
                 ),
                 message=(
                     meaning_check.notes if meaning_check
@@ -1034,6 +1034,7 @@ def _statute_outcome(
     findings: list[StatuteFinding],
     meaning_check: StatuteMeaningCheck | None,
     reference_role: str,
+    jurisdiction: str = "CN",
 ) -> str:
     if findings:
         return "issue"
@@ -1042,6 +1043,10 @@ def _statute_outcome(
     if meaning_check is None:
         return "pass"
     if meaning_check.execution_status != ExecutionStatus.COMPLETED:
+        # 欧盟法规经 EUR-Lex 仅能核验存在性，无条文可作语义比对时语义会被
+        # 跳过；存在性已确认即视为通过，不因此判为待核实。
+        if jurisdiction == "EU" and meaning_check.execution_status == ExecutionStatus.SKIPPED:
+            return "pass"
         return "bug"
     return "pass" if meaning_check.verdict == CheckVerdict.PASS else "bug"
 

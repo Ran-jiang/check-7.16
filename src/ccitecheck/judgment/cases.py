@@ -209,7 +209,13 @@ def _exact_queries(claim, ref) -> list[tuple[str, str]]:
     """按优先级排列的精准检索词；前一组未命中记录时才尝试下一组。"""
     title = _case_search_title(ref.case_name or "")
     if ref.case_number:
-        return [(title, ref.case_number.strip())]
+        # 案号是唯一标识，单独用案号检索；与文书案名做 AND 会因案名脱敏/
+        # 有误而漏检（法宝对 title+fulltext 取交集）。案名仅用于随后的身份比对。
+        number = ref.case_number.strip()
+        attempts = [("", number)]
+        if title:
+            attempts.append((title, number))
+        return attempts
     if _guiding_case_id(_normalize_case_name(ref.case_name or "")):
         return [(title, "")]
     parties = _case_parties(ref.case_name or "")

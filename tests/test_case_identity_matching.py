@@ -213,3 +213,19 @@ def test_recognition_captures_document_type_after_case_number():
 
     refs = extract_case_refs("在（2018）最高法民再396号案中，法院认为……")
     assert refs[0].document_type is None
+
+
+def test_numbered_case_queries_by_number_alone_first():
+    """有案号时应先单用案号检索（案号唯一），不与可能脱敏/有误的案名做
+    AND，否则法宝取交集会漏检。"""
+    from ccitecheck.judgment.cases import _exact_queries
+    from types import SimpleNamespace
+
+    claim = SimpleNamespace(text="……", claim_type=None)
+    ref = SimpleNamespace(
+        case_number="（2021）京73民终1011号",
+        case_name="某网络信息技术有限公司诉某信息科技有限公司不正当竞争纠纷案",
+        court=None,
+    )
+    queries = _exact_queries(claim, ref)
+    assert queries[0] == ("", "（2021）京73民终1011号")  # 首选：单用案号
