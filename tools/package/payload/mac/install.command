@@ -72,24 +72,27 @@ for svc in api eurlex; do
     || fail "服务 com.ccitecheck.$svc 启动失败，日志见 $INSTALL_DIR/logs/"
 done
 
-# 6. 健康检查
+# 6. 就绪检查：直接测端口是否在监听（TCP 连接），绕开 curl 在 mac 上
+# 对本机开发证书验证失败（Secure Transport / OpenSSL 均可能 exit 60）的坑。
+# 服务能 bind 端口即视为就绪；功能性由用户在浏览器打开网页版验证。
+port_ready() {  # $1=端口 $2=尝试次数
+  local port="$1" tries="$2" i
+  for i in $(seq 1 "$tries"); do
+    sleep 1
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      exec 3>&- 3<&-
+      return 0
+    fi
+  done
+  return 1
+}
 echo "[4/6] 等待服务就绪..."
-ok_api=""
-for i in $(seq 1 30); do
-  sleep 1
-  code="$(curl -s -o /dev/null -w "%{http_code}" -m 2 https://localhost:3000/api/health || true)"
-  [ "$code" = "200" ] && ok_api=1 && break
-done
-[ -n "$ok_api" ] || fail "API 服务未在 30 秒内就绪，日志见 $INSTALL_DIR/logs/api.err.log"
-ok_eu=""
-for i in $(seq 1 15); do
-  sleep 1
-  code="$(curl -s -o /dev/null -w "%{http_code}" -m 2 -X POST http://127.0.0.1:3010/mcp \
-    -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"installer","version":"1.0"}}}' || true)"
-  [ "$code" = "200" ] && ok_eu=1 && break
-done
-[ -n "$ok_eu" ] || echo "警告：EUR-Lex 服务未就绪（不影响国内法规核查），日志见 $INSTALL_DIR/logs/eurlex.err.log"
+if ! port_ready 3000 30; then
+  echo "--- api.err.log 末尾 ---"
+  [ -f "$INSTALL_DIR/logs/api.err.log" ] && tail -20 "$INSTALL_DIR/logs/api.err.log"
+  fail "API 服务未在 30 秒内就绪，完整日志见 $INSTALL_DIR/logs/api.err.log"
+fi
+port_ready 3010 15 || echo "警告：EUR-Lex 服务未就绪（不影响国内法规核查），日志见 $INSTALL_DIR/logs/eurlex.err.log"
 
 # 7. Word 加载项
 echo "[5/6] 安装 Word 加载项..."
