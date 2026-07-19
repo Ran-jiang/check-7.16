@@ -518,11 +518,13 @@ def _run_judgments(
 
 
 def _is_existence_only_reference(item: _CheckItem) -> bool:
-    """同一句并列列举多个无条号法源时，只核验存在性与效力。"""
-    if item.article_no or item.article is not None:
-        return False
-    sources = list(getattr(item.claim.entities, "legal_sources", []))
-    return len(sources) > 1 and all(not source.articles for source in sources)
+    """只写法规名、未写条号的引用（含单部法规），仅核验存在性与效力。
+
+    调用点已限定在 LAW_FOUND_TEXT_UNAVAILABLE：法规存在但法宝取不回条文
+    全文、又无条号可定位时，存在性已确认即视为通过，不再标待核实。
+    本地库有全文的无条号引用走相关条款召回（relevant_articles_found），
+    不经此路径。"""
+    return not item.article_no and item.article is None
 
 
 def _locator_revision(

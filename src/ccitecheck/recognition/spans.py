@@ -135,6 +135,36 @@ def locate_claim_article_spans(claim: Claim) -> None:
             article.reference_role = "inherited" if source.resolution == "inherited" else "direct"
             located.append((start, end, article, source.title))
 
+    # 承前引用兜底：文书写"同条第X款""第五款""前款"等，条号已由抽取承前
+    # 解析，但文本无字面"第X条"、主对齐失败。定位到其实际款/项文字，使其
+    # 可参与语义核查、可定位原文。
+    anchor_end: dict[str, int] = {}
+    for start, end, article, _title in located:
+        key = _normalize_article_no(article.article)
+        anchor_end[key] = max(anchor_end.get(key, 0), end)
+    for source in getattr(claim.entities, "legal_sources", []):
+        for article in source.articles:
+            if article.span_status != "error":
+                continue
+            suffixes = [*article.paragraphs, *article.items]
+            if not suffixes:
+                continue
+            search_from = anchor_end.get(_normalize_article_no(article.article), 0)
+            pos = text.find(suffixes[0], search_from)
+            if pos < 0:
+                continue
+            cite_start = pos - 2 if text[max(0, pos - 2):pos] == "同条" else pos
+            cite_end = pos + len(suffixes[0])
+            for suffix in suffixes[1:]:
+                nxt = text.find(suffix, cite_end)
+                if nxt >= 0:
+                    cite_end = max(cite_end, nxt + len(suffix))
+            article.mention_span = (cite_start, cite_end)
+            article.citation_span = (cite_start, cite_end)
+            article.span_status = "located"
+            article.reference_role = "inherited"
+            located.append((cite_start, cite_end, article, source.title))
+
     located.sort(key=lambda item: item[0])
     # 显式的另一法源出现在前一条引用的命题中，是内部转引。
     for index, (start, _end, article, title) in enumerate(located):
