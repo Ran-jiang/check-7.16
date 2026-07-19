@@ -165,3 +165,11 @@ def test_pkulaw_source_also_trusts_single_line_paragraph():
     reliable = {SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK}
     assert SourceTier.PKULAW_FALLBACK in reliable
     assert SourceTier.EURLEX not in reliable
+
+
+def test_pkulaw_source_also_trusts_single_line_paragraph():
+    """北大法宝与本地库一样以换行保留款边界，其单行条文亦按可靠单款处理。"""
+    from ccitecheck.domain.evidence import SourceTier
+    reliable = {SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK}
+    assert SourceTier.PKULAW_FALLBACK in reliable
+    assert SourceTier.EURLEX not in reliable
