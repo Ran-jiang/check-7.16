@@ -67,7 +67,7 @@ Copy-Item (Join-Path $Src "uninstall.ps1") (Join-Path $InstallDir "uninstall.ps1
 Write-Host "[2/6] 安装并信任 localhost HTTPS 证书..."
 & (Join-Path $InstallDir "runtime\node\node.exe") `
     (Join-Path $InstallDir "vendor\certs\node_modules\office-addin-dev-certs\cli.js") `
-    install --days 3650
+    install --days 365
 if ($LASTEXITCODE -ne 0) { Fail "HTTPS 证书安装未完成" }
 
 # 5. 注册并启动常驻服务（计划任务，登录自启+失败重启+隐藏窗口）

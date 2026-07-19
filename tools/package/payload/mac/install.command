@@ -60,7 +60,7 @@ chmod +x "$INSTALL_DIR"/bin/*.sh "$INSTALL_DIR/uninstall.command" 2>/dev/null ||
 echo "[2/6] 安装并信任 localhost HTTPS 证书（可能需要输入登录密码）..."
 "$INSTALL_DIR/runtime/node/bin/node" \
   "$INSTALL_DIR/vendor/certs/node_modules/office-addin-dev-certs/cli.js" \
-  install --days 3650 || fail "HTTPS 证书安装未完成"
+  install --days 365 || fail "HTTPS 证书安装未完成"
 
 # 5. 注册并启动常驻服务
 echo "[3/6] 注册开机自启服务..."
