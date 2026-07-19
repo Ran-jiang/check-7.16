@@ -102,3 +102,29 @@ def test_historical_version_can_resolve_a_missing_current_paragraph():
     )
 
     assert _matching_historical_location(item, [historical]) == historical
+
+
+def test_item_without_paragraph_resolves_within_single_item_paragraph():
+    """引用只写"项"未写"款"（如"第五条第一项"，条文为单引言款 + 各项）时，
+    应定位到唯一含项的款内对应项，而非因缺款号判为结构不可用。"""
+    text = (
+        "本法不适用于：\n"
+        "（一）法律、法规，国家机关的决议、决定、命令和其他具有立法、行政、司法性质的文件，及其官方正式译文；\n"
+        "（二）单纯事实消息；\n"
+        "（三）历法、通用数表、通用表格和公式。"
+    )
+    structure = parse_article_structure("第五条", text)
+
+    valid = assess_location(
+        structure,
+        [StatuteLocator(article_no="第五条", item_no="第一项")],
+    )
+    assert valid.status == LocationStatus.VALID
+    assert valid.authoritative_text.startswith("（一）法律、法规")
+
+    out_of_range = assess_location(
+        structure,
+        [StatuteLocator(article_no="第五条", item_no="第九项")],
+    )
+    assert out_of_range.status == LocationStatus.INVALID
+    assert "不存在第九项" in out_of_range.message

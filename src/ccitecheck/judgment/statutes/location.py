@@ -42,6 +42,27 @@ def assess_location(
 
     selected: list[str] = []
     for locator in locators:
+        if locator.paragraph_no is None and locator.item_no is not None:
+            # 引用只写"项"未写"款"（如"第五条第一项"，条文为单引言款 + 各项）：
+            # 定位到唯一含项的款；仅当含项的款不唯一时才无法确定。
+            item_paragraphs = [p for p in structure.paragraphs if p.items]
+            if len(item_paragraphs) == 1:
+                paragraph = item_paragraphs[0]
+            elif len(structure.paragraphs) == 1:
+                paragraph = structure.paragraphs[0]
+            else:
+                return LocationAssessment(
+                    LocationStatus.STRUCTURE_UNAVAILABLE,
+                    f"条文含多个列项款，无法确定{locator.item_no}所属款",
+                )
+            item_index = locator_ordinal(locator.item_no, "项")
+            if item_index is None or item_index > len(paragraph.items):
+                return LocationAssessment(
+                    LocationStatus.INVALID,
+                    f"该条共{len(paragraph.items)}项，其中不存在{locator.item_no}",
+                )
+            selected.append(paragraph.items[item_index - 1].text)
+            continue
         paragraph_index = locator_ordinal(locator.paragraph_no or "", "款")
         if paragraph_index is None:
             return LocationAssessment(
