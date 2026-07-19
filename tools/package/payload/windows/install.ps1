@@ -82,17 +82,25 @@ foreach ($svc in @(@{n="CCiteheck-API"; t="task-api.xml.tmpl"}, @{n="CCiteheck-E
     }
 }
 
-# 6. 健康检查
+# 6. 健康检查（127.0.0.1 与 localhost 都试：Windows 上 localhost 可能先解析到
+# IPv6 ::1，而服务绑定的是 IPv4 127.0.0.1）
 Write-Host "[4/6] 等待服务就绪..."
 $okApi = $false
 foreach ($i in 1..30) {
     Start-Sleep -Seconds 1
-    try {
-        $health = Invoke-RestMethod -Uri "https://localhost:3000/api/health" -TimeoutSec 2
-        if ($health.status -eq "ok") { $okApi = $true; break }
-    } catch {}
+    foreach ($host_ in "127.0.0.1", "localhost") {
+        try {
+            $health = Invoke-RestMethod -Uri "https://$host_:3000/api/health" -TimeoutSec 2
+            if ($health.status -eq "ok") { $okApi = $true; break }
+        } catch {}
+    }
+    if ($okApi) { break }
 }
-if (-not $okApi) { Fail "API 服务未在 30 秒内就绪，日志见 $InstallDir\logs\api.log" }
+if (-not $okApi) {
+    Write-Host "--- api.log 末尾 ---" -ForegroundColor Yellow
+    if (Test-Path "$InstallDir\logs\api.log") { Get-Content "$InstallDir\logs\api.log" -Tail 20 }
+    Fail "API 服务未在 30 秒内就绪，完整日志见 $InstallDir\logs\api.log"
+}
 $okEu = $false
 $initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"installer","version":"1.0"}}}'
 foreach ($i in 1..15) {

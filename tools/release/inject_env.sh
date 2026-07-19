@@ -34,13 +34,23 @@ for ZIP in "${ARGS[@]}"; do
   [ -n "$BUNDLE" ] || { echo "包结构异常：未找到 CCiteheck-* 根目录"; exit 1; }
   [ -d "$BUNDLE/payload" ] || { echo "包结构异常：缺少 payload/"; exit 1; }
 
-  # 注入 .env 并强制修正 EUR-Lex 网关端点
-  cp "$ENV_FILE" "$BUNDLE/payload/.env"
-  if grep -q '^EURLEX_MCP_GATEWAY=' "$BUNDLE/payload/.env"; then
-    sed -i '' 's|^EURLEX_MCP_GATEWAY=.*|EURLEX_MCP_GATEWAY=http://127.0.0.1:3010/mcp|' "$BUNDLE/payload/.env"
-  else
-    printf '\nEURLEX_MCP_GATEWAY=http://127.0.0.1:3010/mcp\n' >> "$BUNDLE/payload/.env"
-  fi
+  # 注入 .env 并强制修正 EUR-Lex 网关端点。
+  # 用 Python 读写而非 sed：macOS sed 在非 UTF-8 locale 下会破坏中文多字节，
+  # 生成的坏字节会让服务读取 .env 时崩溃。
+  ENV_FILE="$ENV_FILE" OUT="$BUNDLE/payload/.env" python3 - <<'PY'
+import os, io
+src, out = os.environ["ENV_FILE"], os.environ["OUT"]
+text = io.open(src, encoding="utf-8").read()
+lines, seen = [], False
+for line in text.splitlines():
+    if line.startswith("EURLEX_MCP_GATEWAY="):
+        lines.append("EURLEX_MCP_GATEWAY=http://127.0.0.1:3010/mcp"); seen = True
+    else:
+        lines.append(line)
+if not seen:
+    lines.append("EURLEX_MCP_GATEWAY=http://127.0.0.1:3010/mcp")
+io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+PY
 
   # 校验
   grep -Eq '^DASHSCOPE_API_KEY=.{8,}' "$BUNDLE/payload/.env" || { echo "注入后校验失败"; exit 1; }
