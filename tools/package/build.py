@@ -201,6 +201,12 @@ def copy_payload(staging: Path, bundle_dir: Path, target_platform: str) -> None:
             shutil.copy2(tmpl, staging / tmpl.name)
         for script in ("install.bat", "install.ps1", "uninstall.ps1"):
             shutil.copy2(plat / script, bundle_dir / script)
+        # Windows PowerShell 5.1 对无 BOM 文件按 ANSI 代码页解析，
+        # 含中文的 .ps1 必须带 UTF-8 BOM 才能正确解析
+        for ps1 in bundle_dir.glob("*.ps1"):
+            data = ps1.read_bytes()
+            if not data.startswith(b"\xef\xbb\xbf"):
+                ps1.write_bytes(b"\xef\xbb\xbf" + data)
 
 
 def assert_no_secrets(bundle_dir: Path) -> None:

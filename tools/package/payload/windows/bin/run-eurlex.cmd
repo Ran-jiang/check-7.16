@@ -1,5 +1,5 @@
 @echo off
-rem EUR-Lex MCP 本地服务（HTTP 127.0.0.1:3010，端点 /mcp）
+rem EUR-Lex MCP local service (HTTP 127.0.0.1:3010, endpoint /mcp)
 set "ROOT=%~dp0.."
 set "MCP_TRANSPORT_TYPE=http"
 set "MCP_HTTP_PORT=3010"

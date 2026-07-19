@@ -1,3 +1,3 @@
-' 隐藏窗口运行传入的 cmd 脚本（计划任务动作入口，避免控制台窗口闪现）
+' Run the given cmd script with a hidden window (scheduled task entry)
 Set sh = CreateObject("Wscript.Shell")
 sh.Run """" & WScript.Arguments(0) & """", 0, False

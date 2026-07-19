@@ -1,9 +1,10 @@
 @echo off
-rem CCiteheck 安装入口：自动请求管理员权限后执行 install.ps1
+rem CCiteheck installer entry: self-elevate then run install.ps1
+rem (ASCII only in this file: cmd.exe parses batch files with the OEM codepage)
 cd /d "%~dp0"
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-  echo 正在请求管理员权限...
+  echo Requesting administrator permission...
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )

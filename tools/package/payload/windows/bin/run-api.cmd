@@ -1,5 +1,5 @@
 @echo off
-rem CCiteheck API 服务（HTTPS :3000），由计划任务经 run-hidden.vbs 拉起
+rem CCiteheck API service (HTTPS :3000), started by scheduled task via run-hidden.vbs
 set "ROOT=%~dp0.."
 set "PYTHONPATH=%ROOT%\src;%ROOT%;%ROOT%\runtime\site-packages"
 "%ROOT%\runtime\python\pythonw.exe" -m apps.api.server ^
