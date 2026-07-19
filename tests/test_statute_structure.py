@@ -128,3 +128,31 @@ def test_item_without_paragraph_resolves_within_single_item_paragraph():
     )
     assert out_of_range.status == LocationStatus.INVALID
     assert "不存在第九项" in out_of_range.message
+
+
+def test_local_single_line_article_rejects_out_of_range_paragraph():
+    """本地精编库单行条文（真实一款）被引"第二款"时应判定不存在该款，
+    而非因边界不可靠退化为结构不可用。"""
+    text = "个人信息处理者可以在合理的范围内处理已合法公开的个人信息；个人明确拒绝的除外。个人信息处理者处理已公开的个人信息，对个人权益有重大影响的，应当取得个人同意。"
+    structure = parse_article_structure("第二十七条", text, trust_single_paragraph=True)
+    assert structure.paragraph_boundaries_reliable is True
+
+    assessment = assess_location(
+        structure,
+        [StatuteLocator(article_no="第二十七条", paragraph_no="第二款")],
+    )
+    assert assessment.status == LocationStatus.INVALID
+    assert "不存在第二款" in assessment.message
+
+
+def test_untrusted_single_line_article_stays_structure_unavailable():
+    """来源不可信（如法宝压平）时单行条文仍保守判为结构不可用，避免误报。"""
+    text = "第一句。第二句。"
+    structure = parse_article_structure("第九条", text)
+    assert structure.paragraph_boundaries_reliable is False
+
+    assessment = assess_location(
+        structure,
+        [StatuteLocator(article_no="第九条", paragraph_no="第二款")],
+    )
+    assert assessment.status == LocationStatus.STRUCTURE_UNAVAILABLE
