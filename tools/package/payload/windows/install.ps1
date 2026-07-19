@@ -82,41 +82,28 @@ foreach ($svc in @(@{n="CCiteheck-API"; t="task-api.xml.tmpl"}, @{n="CCiteheck-E
     }
 }
 
-# 6. 健康检查（127.0.0.1 与 localhost 都试：Windows 上 localhost 可能先解析到
-# IPv6 ::1，而服务绑定的是 IPv4 127.0.0.1）
-# PowerShell 5.1 的 Invoke-RestMethod 对本机开发证书常校验失败（无
-# -SkipCertificateCheck），这里对 loopback 请求放行证书校验并强制 TLS 1.2。
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-Write-Host "[4/6] 等待服务就绪..."
-$okApi = $false
-foreach ($i in 1..30) {
-    Start-Sleep -Seconds 1
-    foreach ($host_ in "127.0.0.1", "localhost") {
+# 6. 就绪检查：直接测端口是否在监听（TCP 连接），绕开 PowerShell 5.1 的
+# HTTPS 客户端在本机开发证书、TLS、localhost 解析上的各种坑。
+function Test-PortReady([int]$port, [int]$tries) {
+    foreach ($i in 1..$tries) {
+        Start-Sleep -Seconds 1
         try {
-            $health = Invoke-RestMethod -Uri "https://$host_:3000/api/health" -TimeoutSec 2
-            if ($health.status -eq "ok") { $okApi = $true; break }
+            $client = New-Object System.Net.Sockets.TcpClient
+            $client.Connect("127.0.0.1", $port)
+            if ($client.Connected) { $client.Close(); return $true }
         } catch {}
     }
-    if ($okApi) { break }
+    return $false
 }
-if (-not $okApi) {
+Write-Host "[4/6] 等待服务就绪..."
+if (-not (Test-PortReady 3000 30)) {
     Write-Host "--- api.log 末尾 ---" -ForegroundColor Yellow
     if (Test-Path "$InstallDir\logs\api.log") { Get-Content "$InstallDir\logs\api.log" -Tail 20 }
     Fail "API 服务未在 30 秒内就绪，完整日志见 $InstallDir\logs\api.log"
 }
-$okEu = $false
-$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"installer","version":"1.0"}}}'
-foreach ($i in 1..15) {
-    Start-Sleep -Seconds 1
-    try {
-        Invoke-WebRequest -Uri "http://127.0.0.1:3010/mcp" -Method Post -Body $initBody `
-            -ContentType "application/json" -Headers @{Accept = "application/json, text/event-stream"} `
-            -TimeoutSec 2 -UseBasicParsing | Out-Null
-        $okEu = $true; break
-    } catch {}
+if (-not (Test-PortReady 3010 15)) {
+    Write-Host "警告：EUR-Lex 服务未就绪（不影响国内法规核查），日志见 $InstallDir\logs\eurlex.log" -ForegroundColor Yellow
 }
-if (-not $okEu) { Write-Host "警告：EUR-Lex 服务未就绪（不影响国内法规核查），日志见 $InstallDir\logs\eurlex.log" -ForegroundColor Yellow }
 
 # 7. Word 加载项（本机只读共享 manifest 目录 + 受信任目录注册）
 Write-Host "[5/6] 安装 Word 加载项..."
