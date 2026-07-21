@@ -40,5 +40,9 @@
   {"title": "中华人民共和国环境保护法", "source_type": "law", "category": "安全环保", "authority": "全国人大常委会", "priority": 39},
   {"title": "最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 40, "aliases": ["民法典合同编通则解释", "合同编通则解释"]},
   {"title": "最高人民法院关于适用《中华人民共和国民法典》有关担保制度的解释", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 41, "aliases": ["民法典担保解释", "担保制度解释"]},
-  {"title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（四）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 42, "aliases": ["公司法解释四", "公司法司法解释四", "公司法解释（四）"]}
+  {"title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（四）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 42, "aliases": ["公司法解释四", "公司法司法解释四", "公司法解释（四）"]},
+  {"title": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（一）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 43, "aliases": ["婚姻家庭编解释（一）"]},
+  {"title": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（二）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 44, "aliases": ["婚姻家庭编解释（二）"]},
+  {"title": "最高人民法院关于审理民间借贷案件适用法律若干问题的规定", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 45, "aliases": ["民间借贷规定"]},
+  {"title": "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 46, "aliases": ["民诉解释"]}
 ]

@@ -770,6 +770,22 @@ def test_match_law_record_accepts_promulgation_notice_title():
     )
 
 
+def test_match_law_record_accepts_fullwidth_angle_brackets_in_citation():
+    from ccitecheck.tracing.sources.pkulaw.client import PkulawLawRecord
+    from ccitecheck.tracing.sources.pkulaw.matching import match_law_record
+
+    record = PkulawLawRecord(
+        title="最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释"
+    )
+
+    matched = match_law_record(
+        "最高人民法院关于适用＜中华人民共和国民法典＞合同编通则若干问题的解释",
+        [record],
+    )
+
+    assert matched is record
+
+
 def test_match_law_record_prefers_explicit_current_version():
     from ccitecheck.tracing.sources.pkulaw.client import PkulawLawRecord
     from ccitecheck.tracing.sources.pkulaw.matching import match_law_record

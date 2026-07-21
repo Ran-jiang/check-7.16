@@ -1,15 +1,30 @@
 from pathlib import Path
 
 from ccitecheck.infrastructure.database import (
+    find_law,
     find_current_article,
     init_db,
     list_article_versions,
     list_historical_article_versions,
+    normalize_title,
     seed_common_laws,
     connect,
     upsert_article,
     upsert_law,
 )
+
+
+def test_normalize_title_unifies_book_title_marks_and_parentheses():
+    canonical = "最高人民法院关于适用中华人民共和国民法典婚姻家庭编的解释（一）"
+    variants = (
+        "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（一）",
+        "最高人民法院关于适用＜中华人民共和国民法典＞婚姻家庭编的解释(一)",
+        "最高人民法院关于适用<中华人民共和国民法典>婚姻家庭编的解释(一)",
+        "最高人民法院关于适用﹤中华人民共和国民法典﹥婚姻家庭编的解释(一)",
+        "最高人民法院 关于适用〈中华人民共和国民法典〉 婚姻家庭编的解释(一)",
+    )
+
+    assert {normalize_title(title) for title in variants} == {canonical}
 
 
 def test_seed_common_laws_and_alias_lookup(tmp_path: Path):
@@ -32,6 +47,17 @@ def test_seed_common_laws_and_alias_lookup(tmp_path: Path):
         ).fetchone()
         assert alias is not None
         assert alias["law_id"] == law["id"]
+
+        expected_aliases = {
+            "婚姻家庭编解释（一）": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（一）",
+            "婚姻家庭编解释（二）": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（二）",
+            "民间借贷规定": "最高人民法院关于审理民间借贷案件适用法律若干问题的规定",
+            "民诉解释": "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释",
+        }
+        for short_title, canonical_title in expected_aliases.items():
+            matched = find_law(conn, short_title)
+            assert matched is not None
+            assert matched["title"] == canonical_title
 
 
 def test_import_bundle_and_find_current_article(tmp_path: Path):

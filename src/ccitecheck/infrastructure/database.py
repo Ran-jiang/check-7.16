@@ -601,8 +601,27 @@ def get_structure_path_for_article(
     return row["path_label"] if row else None
 
 
+_TITLE_TRANSLATION = str.maketrans(
+    {
+        "《": "",
+        "》": "",
+        "〈": "",
+        "〉": "",
+        "＜": "",
+        "＞": "",
+        "<": "",
+        ">": "",
+        "﹤": "",
+        "﹥": "",
+        "(": "（",
+        ")": "）",
+    }
+)
+
+
 def normalize_title(title: str) -> str:
-    return "".join(title.split()).replace("《", "").replace("》", "").replace("〈", "").replace("〉", "")
+    """删除法名中的空白与书名号变体，并将半角圆括号统一为全角。"""
+    return "".join(title.split()).translate(_TITLE_TRANSLATION)
 
 
 _VERSION_ANNOTATION = re.compile(
