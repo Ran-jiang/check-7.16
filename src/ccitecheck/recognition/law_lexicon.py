@@ -36,14 +36,16 @@ class LawLexicon:
 
     def __init__(self, entries: list[LawLexiconEntry]):
         unique: dict[str, LawLexiconEntry] = {}
+        ambiguous: set[str] = set()
         for entry in entries:
             surface = "".join(entry.surface_title.split())
-            if not surface:
+            if not surface or surface in ambiguous:
                 continue
             current = unique.get(surface)
             if current is not None and current.canonical_title != entry.canonical_title:
                 # 有歧义的别名不参与自动裁定。
                 unique.pop(surface, None)
+                ambiguous.add(surface)
                 continue
             unique[surface] = LawLexiconEntry(surface, entry.canonical_title, entry.law_id)
         self.entries = sorted(unique.values(), key=lambda item: len(item.surface_title), reverse=True)

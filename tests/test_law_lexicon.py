@@ -25,6 +25,16 @@ def test_longest_suffix_match_prefers_longest_known_title():
     assert matched.canonical_title == "中华人民共和国民事诉讼法"
 
 
+def test_ambiguous_alias_is_never_reintroduced_by_later_duplicate():
+    lexicon = LawLexicon([
+        LawLexiconEntry("共用别名", "法规甲"),
+        LawLexiconEntry("共用别名", "法规乙"),
+        LawLexiconEntry("共用别名", "法规甲"),
+    ])
+
+    assert lexicon.longest_suffix_match("根据共用别名") is None
+
+
 def test_sqlite_lexicon_maps_alias_to_canonical_title(tmp_path: Path):
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)

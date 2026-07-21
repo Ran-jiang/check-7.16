@@ -204,6 +204,7 @@ def _build_inherited_sources(
         ]
         inherited.append(LegalSource(
             title=source.title,
+            canonical_title=source.canonical_title,
             source_type=source.source_type,
             articles=copied_articles,
             resolution="inherited",
