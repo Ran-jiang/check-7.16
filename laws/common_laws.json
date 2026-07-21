@@ -44,5 +44,6 @@
   {"title": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（一）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 43, "aliases": ["婚姻家庭编解释（一）"]},
   {"title": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（二）", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 44, "aliases": ["婚姻家庭编解释（二）"]},
   {"title": "最高人民法院关于审理民间借贷案件适用法律若干问题的规定", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 45, "aliases": ["民间借贷规定"]},
-  {"title": "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 46, "aliases": ["民诉解释"]}
+  {"title": "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释", "source_type": "judicial_interpretation", "category": "司法解释", "authority": "最高人民法院", "priority": 46, "aliases": ["民诉解释"]},
+  {"title": "中华人民共和国刑法", "source_type": "law", "category": "刑事法律", "authority": "全国人大", "priority": 47}
 ]

@@ -34,6 +34,7 @@ import difflib
 
 from .matching import match_law_record
 from ....infrastructure.database import normalize_title, strip_version_annotation
+from .law_name_resolver import ResolvedLawName, resolve_law_name
 
 
 def _best_similar_title(cited: str, candidates: list[str]) -> Optional[str]:
@@ -53,6 +54,25 @@ def _best_similar_title(cited: str, candidates: list[str]) -> Optional[str]:
 class PkulawFallbackSource:
     def __init__(self, client: Optional["StatuteLookupClient"] = None):
         self.client = client
+        self._law_name_cache: dict[tuple[str, str], ResolvedLawName | None] = {}
+
+    def resolve_law_name(
+        self, raw_left_window: str, article_no: str, context_text: str
+    ) -> ResolvedLawName | None:
+        key = (normalize_title(raw_left_window), article_no)
+        if key in self._law_name_cache:
+            return self._law_name_cache[key]
+        try:
+            resolved = resolve_law_name(
+                self._client(),
+                raw_left_window=raw_left_window,
+                article_no=article_no,
+                context_text=context_text,
+            )
+        except PkulawMcpError:
+            resolved = None
+        self._law_name_cache[key] = resolved
+        return resolved
 
     def _recall_similar_titles(self, law_title: str) -> list[str]:
         """精确法名未命中时，用递减前缀召回法宝中的近似法名（如文书漏字），

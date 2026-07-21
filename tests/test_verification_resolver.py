@@ -145,6 +145,57 @@ def test_unresolved_bare_law_reports_ambiguous_name_without_lookup(tmp_path: Pat
     assert "无法确定" in check.findings[0].summary
 
 
+def test_unresolved_bare_law_can_be_strictly_resolved_before_lookup(tmp_path: Path):
+    from types import SimpleNamespace
+
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    text = "依照城市房地产管理法第38条处理。"
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(source_doc_id="doc-resolved", source_doc_hash="sha256:r", source_file="test.docx"),
+        claims=[Claim(
+            claim_id="cl_resolved", claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
+            text=text, anchor_ids=["line00001"],
+            entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
+                title="", raw_title_candidate="依照城市房地产管理法",
+                source_span=(9, 10), source_type=LegalSourceType.LAW,
+                resolution="bare_unresolved",
+                articles=[ArticleRef(article="第38条", source_span=(9, 10))],
+            )]),
+        )],
+    )
+
+    class Source:
+        def resolve_law_name(self, raw, article_no, context):
+            return SimpleNamespace(
+                surface_title="城市房地产管理法",
+                canonical_title="中华人民共和国城市房地产管理法",
+            )
+
+        def lookup(self, request):
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK,
+                source_name="fake pkulaw",
+                status=LookupStatus.ARTICLE_FOUND,
+            )
+            evidence = ArticleEvidence(
+                law_title=request.law_title,
+                source_type="law",
+                article_no=request.article_no,
+                article_text="权威条文。",
+                data_source=trace,
+            )
+            return LookupResult(LookupStatus.ARTICLE_FOUND, evidence, trace)
+
+    frontend_doc = verify_claim_document(claim_doc, db_path, sources=[Source()])
+
+    check = frontend_doc.statute_results[0]
+    assert check.source_resolution == "bare_pkulaw"
+    assert check.law_title == "城市房地产管理法"
+    assert check.lookup_status == LookupStatus.ARTICLE_FOUND
+    assert not any(f.code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS for f in check.findings)
+
+
 class FakeSemanticChecker:
     def compare(self, doc_quote, quote_context, cited_source, evidence):
         return StatuteMeaningCheck(

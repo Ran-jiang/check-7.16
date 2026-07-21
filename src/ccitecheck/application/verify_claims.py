@@ -87,6 +87,7 @@ def verify_claim_document(
     )
     searcher = case_searcher or PkulawCaseSource()
     items = _collect_check_items(claim_document) if include_statutes else []
+    _resolve_unresolved_law_names(source_chain, items)
     lookup_results = _run_lookups(source_chain, items, database_path)
     historical_versions = _load_historical_versions(
         database_path, items, lookup_results
@@ -231,6 +232,44 @@ def _out_of_scope_message(jurisdiction: str) -> str | None:
     if jurisdiction == "FOREIGN":
         return "该法规属于当前不支持的外国法域，超出本产品核查边界，请人工核验。"
     return None
+
+
+def _resolve_unresolved_law_names(
+    source_chain: list[StatuteSource], items: list[_CheckItem]
+) -> None:
+    resolver = next((
+        getattr(source, "resolve_law_name", None)
+        for source in source_chain
+        if callable(getattr(source, "resolve_law_name", None))
+    ), None)
+    if resolver is None:
+        return
+    grouped: dict[tuple[str, str, str], list[_CheckItem]] = {}
+    for item in items:
+        if item.source_resolution != "bare_unresolved" or not item.article_no:
+            continue
+        key = (
+            item.raw_title_candidate or "",
+            item.article_no,
+            item.claim.context_text or item.claim.text,
+        )
+        grouped.setdefault(key, []).append(item)
+    if not grouped:
+        return
+
+    def resolve(key):
+        raw, article_no, context = key
+        return resolver(raw, article_no, context)
+
+    with ThreadPoolExecutor(max_workers=min(4, len(grouped))) as pool:
+        outcomes = dict(zip(grouped, pool.map(resolve, grouped)))
+    for key, resolved in outcomes.items():
+        if resolved is None:
+            continue
+        for item in grouped[key]:
+            item.display_title = resolved.surface_title
+            item.law_title = resolved.canonical_title
+            item.source_resolution = "bare_pkulaw"
 
 
 def _run_lookups(
