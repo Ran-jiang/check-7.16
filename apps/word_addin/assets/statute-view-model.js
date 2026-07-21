@@ -10,10 +10,14 @@ export const LOOKUP_STATUS_LABELS = {
 
 export const STATUTE_ERROR_LABELS = {
   source_not_found: "北大法宝未检索到所引法源", citation_location_error: "条款编号或引用定位错误",
+  source_name_ambiguous: "法规名称无法确定",
   source_repealed: "法源已废止或失效", source_amended: "法源已修改", meaning_distorted: "曲解权威文本原意",
 }
 
 export function formatReference(check) {
+  if (check.source_resolution === "bare_unresolved") {
+    return `${check.law_title || "未确定法名"}${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`
+  }
   return `《${check.law_title}》${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`
 }
 

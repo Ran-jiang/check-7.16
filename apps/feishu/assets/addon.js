@@ -238,7 +238,7 @@ function findingText(finding) {
 function statuteCategory(code, state) {
   if (state === "pass") return "passed"
   if (["source_repealed", "source_amended"].includes(code)) return "timeliness"
-  if (["source_not_found", "citation_location_error"].includes(code)) return "source"
+  if (["source_not_found", "source_name_ambiguous", "citation_location_error"].includes(code)) return "source"
   return code === "meaning_distorted" ? "meaning" : "review"
 }
 

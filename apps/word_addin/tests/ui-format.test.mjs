@@ -67,6 +67,17 @@ test("formats one article with multiple paragraphs as one reference", () => {
   }), "《中华人民共和国商标法》第十三条第一款、第三款")
 })
 
+
+test("unresolved bare law keeps raw text without invented book-title marks", () => {
+  assert.equal(formatReference({
+    source_resolution: "bare_unresolved",
+    law_title: "依照城市房地产管理法",
+    article_no: "第38条",
+    paragraphs: [],
+    items: [],
+  }), "依照城市房地产管理法第38条")
+})
+
 import { statuteViewOf } from "../assets/statute-view-model.js"
 import { caseViewOf } from "../assets/case-view-model.js"
 
