@@ -109,6 +109,42 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
     assert check.source_attempts[0].source_name == "国家法律法规数据库"
 
 
+def test_unresolved_bare_law_reports_ambiguous_name_without_lookup(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    text = "依照城市房地产管理法第38条处理。"
+    claim_doc = ClaimDocument(
+        claim_meta=ClaimMeta(
+            source_doc_id="doc-unresolved",
+            source_doc_hash="sha256:unresolved",
+            source_file="test.docx",
+        ),
+        claims=[Claim(
+            claim_id="cl_unresolved",
+            claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
+            text=text,
+            anchor_ids=["line00001"],
+            entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
+                title="",
+                raw_title_candidate="依照城市房地产管理法",
+                source_span=(9, 10),
+                source_type=LegalSourceType.LAW,
+                resolution="bare_unresolved",
+                articles=[ArticleRef(article="第38条", source_span=(9, 10))],
+            )]),
+        )],
+    )
+
+    frontend_doc = verify_claim_document(claim_doc, db_path, sources=[])
+
+    check = frontend_doc.statute_results[0]
+    assert check.outcome == "bug"
+    assert check.source_resolution == "bare_unresolved"
+    assert check.source_attempts == []
+    assert check.findings[0].code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS
+    assert "无法确定" in check.findings[0].summary
+
+
 class FakeSemanticChecker:
     def compare(self, doc_quote, quote_context, cited_source, evidence):
         return StatuteMeaningCheck(
@@ -1125,7 +1161,7 @@ def test_locator_revision_replaces_only_wrong_paragraph_number():
     text = "依据《中华人民共和国民法典》第五百零九条第九款，当事人应当按照约定全面履行自己的义务。"
     item = _CheckItem(
         claim=SimpleNamespace(text=text, context_text=text),
-        law_title="中华人民共和国民法典", source_type="law",
+        law_title="中华人民共和国民法典", display_title="中华人民共和国民法典", source_type="law",
         article=ArticleRef(article="第五百零九条", paragraphs=["第九款"]),
         article_no="第五百零九条", not_verifiable=None,
     )
@@ -1148,7 +1184,7 @@ def test_locator_revision_replaces_only_wrong_item_number():
     text = "依据《个人信息保护法》第十三条第一款第九项，处理个人信息应当取得个人同意。"
     item = _CheckItem(
         claim=SimpleNamespace(text=text, context_text=text),
-        law_title="个人信息保护法", source_type="law",
+        law_title="个人信息保护法", display_title="个人信息保护法", source_type="law",
         article=ArticleRef(article="第十三条", paragraphs=["第一款"], items=["第九项"]),
         article_no="第十三条", not_verifiable=None,
     )

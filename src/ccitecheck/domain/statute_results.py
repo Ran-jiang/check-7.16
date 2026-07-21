@@ -15,6 +15,7 @@ from .revisions import RevisionProposal
 
 class StatuteErrorCode(str, Enum):
     SOURCE_NOT_FOUND = "source_not_found"
+    SOURCE_NAME_AMBIGUOUS = "source_name_ambiguous"
     CITATION_LOCATION_ERROR = "citation_location_error"
     SOURCE_REPEALED = "source_repealed"
     SOURCE_AMENDED = "source_amended"
@@ -100,6 +101,7 @@ class StatuteVerificationResult(BaseModel):
     claim_id: str
     claim_text: str
     law_title: str
+    source_resolution: str = "explicit"
     jurisdiction: str = "CN"
     document_quote: str = ""
     cited_locators: list[StatuteLocator] = Field(default_factory=list)

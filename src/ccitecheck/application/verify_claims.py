@@ -127,6 +127,7 @@ class _CheckItem:
 
     claim: Claim
     law_title: str
+    display_title: str
     source_type: str
     article: ArticleRef | None
     article_no: str | None
@@ -134,10 +135,16 @@ class _CheckItem:
     jurisdiction: str = "CN"
     out_of_scope: str | None = None
     structure: StructureRef | None = None
+    source_resolution: str = "explicit"
+    raw_title_candidate: str | None = None
 
     @property
     def skip_lookup(self) -> bool:
-        return self.not_verifiable is not None or self.out_of_scope is not None
+        return (
+            self.not_verifiable is not None
+            or self.out_of_scope is not None
+            or self.source_resolution == "bare_unresolved"
+        )
 
     @property
     def lookup_key(self) -> tuple:
@@ -179,14 +186,17 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
         ):
             locate_claim_article_spans(claim)
         for legal_source in getattr(claim.entities, "legal_sources", []):
-            not_verifiable = classify_not_verifiable(legal_source.title)
+            query_title = legal_source.canonical_title or legal_source.title
+            display_title = legal_source.title or legal_source.raw_title_candidate or ""
+            not_verifiable = classify_not_verifiable(display_title)
             jurisdiction = legal_source.jurisdiction
             out_of_scope = _out_of_scope_message(jurisdiction)
             if not legal_source.articles and legal_source.structures:
                 for structure in legal_source.structures:
                     items.append(_CheckItem(
                         claim=claim,
-                        law_title=legal_source.title,
+                        law_title=query_title,
+                        display_title=display_title,
                         source_type=legal_source.source_type.value,
                         article=None,
                         article_no=structure.label,
@@ -194,19 +204,24 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
                         jurisdiction=jurisdiction,
                         out_of_scope=out_of_scope,
                         structure=structure,
+                        source_resolution=legal_source.resolution,
+                        raw_title_candidate=legal_source.raw_title_candidate,
                     ))
                 continue
             for article in legal_source.articles or [None]:
                 items.append(
                     _CheckItem(
                         claim=claim,
-                        law_title=legal_source.title,
+                        law_title=query_title,
+                        display_title=display_title,
                         source_type=legal_source.source_type.value,
                         article=article,
                         article_no=article.article if article is not None else None,
                         not_verifiable=not_verifiable,
                         jurisdiction=jurisdiction,
                         out_of_scope=out_of_scope,
+                        source_resolution=legal_source.resolution,
+                        raw_title_candidate=legal_source.raw_title_candidate,
                     )
                 )
     return items
@@ -401,6 +416,15 @@ def _run_judgments(
     semantic_jobs: list[tuple[int, _CheckItem, LookupResult]] = []
 
     for index, item in enumerate(items):
+        if item.source_resolution == "bare_unresolved":
+            candidate = item.raw_title_candidate or "该裸引用"
+            results[index] = ([StatuteFinding(
+                code=StatuteErrorCode.SOURCE_NAME_AMBIGUOUS,
+                risk_level="MEDIUM",
+                summary=f"原文未加书名号，无法确定{item.article_no or '所引条款'}所属法规",
+                suggestion=f"暂无法从“{candidate}”确定完整法规名称，请补写完整法名后再核验。",
+            )], None)
+            continue
         if item.skip_lookup:
             results[index] = ([], None)
             continue
@@ -960,7 +984,8 @@ def _build_statute_results(
                 card_id=card_id,
                 claim_id=item.claim.claim_id,
                 claim_text=item.claim.text,
-                law_title=item.law_title,
+                law_title=item.display_title,
+                source_resolution=item.source_resolution,
                 jurisdiction=item.jurisdiction,
                 document_quote=item.document_quote,
                 cited_locators=_item_locators(item),
@@ -1042,6 +1067,8 @@ def _statute_outcome(
     reference_role: str,
     jurisdiction: str = "CN",
 ) -> str:
+    if any(finding.code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS for finding in findings):
+        return "bug"
     if findings:
         return "issue"
     if reference_role == "nested":
