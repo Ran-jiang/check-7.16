@@ -157,7 +157,9 @@ class LegalSource(BaseModel):
         default_factory=list,
         description="章节引用列表（如第三编第四章；仅在无条款引用时抽取）"
     )
-    resolution: str = Field(
+    resolution: Literal[
+        "explicit", "inherited", "bare_lexicon", "bare_pkulaw", "bare_unresolved"
+    ] = Field(
         default="explicit",
         description="法源识别方式：explicit/inherited/bare_lexicon/bare_pkulaw/bare_unresolved"
     )

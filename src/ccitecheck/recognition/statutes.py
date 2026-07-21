@@ -571,15 +571,7 @@ def _extract_structure_refs(segment: str) -> list[StructureRef]:
 # 裸法条引用（无《》书名号）
 # ============================================================
 
-# 裸法条引用模式：XX法第X条 / XX法典第X条（无书名号包裹）
-# 例："……认定为反不正当竞争法第九条第四款所称的……"
-# 司法解释经常引用其解释的基础法律且不加书名号。
-# 约束：
-#   1. 法名以"法"或"法典"结尾（非贪婪匹配，避免吞掉谓语前缀）
-#   2. 法名前必须是边界词（标点/谓语动词/句首），防止"人民法院→反不正当竞争法"
-#   3. 法名后紧跟条款号引用（第X条）
-#
-# 边界词：这些词/标点后的"XX法"被视为法名起点
+# 右锚点只定位“法/法典 + 首个条款号”；法名左边界由词典后缀匹配裁定。
 BARE_ARTICLE_ANCHOR = re.compile(
     r'(?P<law_suffix>法典|法)'
     r'(?P<article>'
@@ -588,6 +580,15 @@ BARE_ARTICLE_ANCHOR = re.compile(
     r'(?:第[一二三四五六七八九十零\d]+款)?'
     r'(?:第[（(]?[一二三四五六七八九十零\d]+[）)]?项)?'
     r')'
+)
+
+# 同一法名支配的后续并列/范围条款。连接词后必须立即出现完整“第X条”，
+# 因而不会跨入普通正文或另一部法律的引用。
+_BARE_FOLLOWING_ARTICLE = re.compile(
+    r"\s*(?:[、,，]|及|和|或|至|到)\s*"
+    rf"第{_CN_NUM}条(?:之{_CN_NUM_EXTRA})?"
+    rf"(?:第{_CN_NUM}款)?"
+    rf"(?:第[（(]?{_CN_NUM}[）)]?项)?"
 )
 
 # 伪法名后缀：以"法"结尾但不是法律名的词
@@ -623,6 +624,7 @@ def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMat
     previous_end = 0
     window_limit = max(80, lexicon.max_surface_length + 16)
     for anchor in BARE_ARTICLE_ANCHOR.finditer(text):
+        citation_end = _bare_article_chain_end(text, anchor.end())
         law_end = anchor.end("law_suffix")
         window_start = max(previous_end, law_end - window_limit)
         prefix = text[window_start:law_end]
@@ -640,11 +642,11 @@ def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMat
                 raw_title_candidate=None,
                 title_start=matched.start,
                 title_end=matched.end,
-                citation_end=anchor.end(),
-                article_text=anchor.group("article"),
+                citation_end=citation_end,
+                article_text=text[anchor.start("article"):citation_end],
                 resolution="bare_lexicon",
             ))
-            previous_end = anchor.end()
+            previous_end = citation_end
             continue
 
         raw = window.strip()
@@ -658,12 +660,20 @@ def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMat
             raw_title_candidate=raw,
             title_start=anchor.start("law_suffix"),
             title_end=law_end,
-            citation_end=anchor.end(),
-            article_text=anchor.group("article"),
+            citation_end=citation_end,
+            article_text=text[anchor.start("article"):citation_end],
             resolution="bare_unresolved",
         ))
-        previous_end = anchor.end()
+        previous_end = citation_end
     return results
+
+
+def _bare_article_chain_end(text: str, start: int) -> int:
+    """返回同一裸法名支配的连续并列或范围条款末尾。"""
+    end = start
+    while match := _BARE_FOLLOWING_ARTICLE.match(text, end):
+        end = match.end()
+    return end
 
 
 def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalSource]:

@@ -8,6 +8,7 @@ from ccitecheck.recognition.statutes import extract_legal_sources
 def _small_lexicon() -> LawLexicon:
     return LawLexicon([
         LawLexiconEntry("民法典", "中华人民共和国民法典"),
+        LawLexiconEntry("民事诉讼法", "中华人民共和国民事诉讼法"),
         LawLexiconEntry("反不正当竞争法", "中华人民共和国反不正当竞争法"),
     ])
 
@@ -84,6 +85,31 @@ def test_explicit_and_bare_same_law_merge_articles_instead_of_dropping_bare_one(
     assert len(sources) == 1
     assert sources[0].canonical_title == "中华人民共和国民法典"
     assert [article.article for article in sources[0].articles] == ["第10条", "第157条"]
+
+
+def test_bare_law_collects_following_sibling_articles():
+    sources = extract_legal_sources(
+        "除可依照民事诉讼法第114条、第117条采取措施外。",
+        _small_lexicon(),
+    )
+
+    assert len(sources) == 1
+    assert sources[0].title == "民事诉讼法"
+    assert [article.article for article in sources[0].articles] == ["第114条", "第117条"]
+
+
+def test_bare_article_chain_stops_before_another_law():
+    lexicon = LawLexicon([
+        LawLexiconEntry("民事诉讼法", "中华人民共和国民事诉讼法"),
+        LawLexiconEntry("刑法", "中华人民共和国刑法"),
+    ])
+
+    sources = extract_legal_sources("依照民事诉讼法第114条及刑法第20条处理。", lexicon)
+
+    assert [(source.title, [a.article for a in source.articles]) for source in sources] == [
+        ("民事诉讼法", ["第114条"]),
+        ("刑法", ["第20条"]),
+    ]
 
 
 def test_unknown_bare_law_is_unresolved_and_keeps_deterministic_span():

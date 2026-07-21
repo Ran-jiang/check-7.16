@@ -70,7 +70,8 @@ class PkulawFallbackSource:
                 context_text=context_text,
             )
         except PkulawMcpError:
-            resolved = None
+            # 远程服务异常不是法名歧义；本次跳过解析，但允许后续重试。
+            return None
         self._law_name_cache[key] = resolved
         return resolved
 
