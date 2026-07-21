@@ -18,6 +18,7 @@ from .statutes import (
     extract_partial_refs,
     has_article_reference,
 )
+from .law_lexicon import LawLexicon
 
 
 _RELATION_PRIORITY = {
@@ -33,13 +34,14 @@ def extract_rule_candidates(
     indexes: dict,
     include_statutes: bool = True,
     include_cases: bool = True,
+    law_lexicon: LawLexicon | None = None,
 ) -> list[ClaimCandidate]:
     """逐句生成候选；裸条款只沿显式 Block 关系承前。"""
     build_block_relations(parsed_doc)
     candidates: list[ClaimCandidate] = []
     block_map = indexes.get("block_map", {})
     anchor_sources = {
-        anchor.anchor: extract_legal_sources(anchor.text) if include_statutes else []
+        anchor.anchor: extract_legal_sources(anchor.text, law_lexicon) if include_statutes else []
         for anchor in parsed_doc.anchors
     }
     records: dict[str, list[tuple[str, list]]] = {}

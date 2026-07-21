@@ -68,6 +68,8 @@ def locate_claim_article_spans(claim: Claim) -> None:
     sources = list(getattr(claim.entities, "legal_sources", []))
     aliases: list[tuple[str, str]] = []
     for source in sources:
+        if not source.title:
+            continue
         aliases.append((source.title, source.title))
         short = source.title.removeprefix("中华人民共和国")
         if short != source.title:
@@ -94,7 +96,12 @@ def locate_claim_article_spans(claim: Claim) -> None:
             expected = _normalize_article_no(article.article)
             candidates = [i for i, item in enumerate(mentions) if i not in used and item[2] == expected]
             all_mentions = [item for item in mentions if item[2] == expected]
-            if len(all_mentions) == 1 and len(claimed_by.get(expected, ())) == 1:
+            if article.source_span is not None:
+                match_index = next((
+                    i for i in candidates
+                    if mentions[i][0] >= article.source_span[1]
+                ), None)
+            elif len(all_mentions) == 1 and len(claimed_by.get(expected, ())) == 1:
                 match_index = candidates[0] if candidates else None
             else:
                 match_index = next((i for i in candidates if mentions[i][3] == source.title), None)
@@ -111,13 +118,17 @@ def locate_claim_article_spans(claim: Claim) -> None:
                 (item[1] for item in mentions if item[1] <= start),
                 default=max(text.rfind(mark, 0, start) for mark in "。！？；;\n") + 1,
             )
-            alias_start = max(
-                (
-                    text.rfind(alias, previous_end, start)
-                    for alias, owner in aliases
-                    if owner == source.title and text.rfind(alias, previous_end, start) >= 0
-                ),
-                default=start,
+            alias_start = (
+                article.source_span[0]
+                if article.source_span is not None
+                else max(
+                    (
+                        text.rfind(alias, previous_end, start)
+                        for alias, owner in aliases
+                        if owner == source.title and text.rfind(alias, previous_end, start) >= 0
+                    ),
+                    default=start,
+                )
             )
             if alias_start > 0 and text[alias_start - 1] == "《":
                 alias_start -= 1

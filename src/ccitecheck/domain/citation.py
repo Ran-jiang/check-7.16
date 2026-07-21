@@ -93,6 +93,10 @@ class ArticleRef(BaseModel):
         default_factory=list,
         description="项号列表，如['第（一）项']"
     )
+    source_span: tuple[int, int] | None = Field(
+        default=None,
+        description="裸引用中与本条款对应的法名或右锚位置",
+    )
     mention_span: tuple[int, int] | None = None
     citation_span: tuple[int, int] | None = None
     quote_span: tuple[int, int] | None = None
@@ -128,6 +132,18 @@ class LegalSource(BaseModel):
     记录法源名来自哪个 anchor，方便调试和未来 UI 溯源。
     """
     title: str = Field(description="法规名称，不含书名号")
+    canonical_title: Optional[str] = Field(
+        default=None,
+        description="词典或权威数据源确认的规范法名",
+    )
+    raw_title_candidate: Optional[str] = Field(
+        default=None,
+        description="裸引用无法确认法名时保留的原文左侧候选片段",
+    )
+    source_span: Optional[tuple[int, int]] = Field(
+        default=None,
+        description="裸引用法名或确定右锚在 claim.text 中的位置",
+    )
     source_type: LegalSourceType = Field(description="规范类型")
     jurisdiction: str = Field(
         default="CN",
@@ -143,7 +159,7 @@ class LegalSource(BaseModel):
     )
     resolution: str = Field(
         default="explicit",
-        description="法源识别方式：explicit（句中《》直接引用）或 inherited（前向继承）"
+        description="法源识别方式：explicit/inherited/bare_lexicon/bare_pkulaw/bare_unresolved"
     )
     inherited_from_anchor: Optional[str] = Field(
         default=None,
@@ -153,6 +169,12 @@ class LegalSource(BaseModel):
         default=None,
         description="继承来源的稳定文档定位（仅 resolution='inherited' 时有效）",
     )
+
+    @model_validator(mode="after")
+    def require_bare_source_span(self):
+        if self.resolution.startswith("bare_") and self.source_span is None:
+            raise ValueError("裸法名引用必须记录 source_span")
+        return self
 
 
 class CaseRef(BaseModel):

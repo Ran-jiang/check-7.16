@@ -166,6 +166,7 @@ def parse(
             verbose,
             include_statutes=include_statutes,
             include_cases=include_cases,
+            law_db=law_db,
         )
 
     if claims_out is not None and claim_doc is not None:
@@ -199,6 +200,7 @@ def _extract_claims(
     verbose: bool = False,
     include_statutes: bool = True,
     include_cases: bool = True,
+    law_db: str = "data/laws.sqlite",
 ) -> ClaimDocument:
     """识别文档中的可核查引用。"""
     from collections import Counter
@@ -208,6 +210,7 @@ def _extract_claims(
             parsed_doc,
             include_statutes=include_statutes,
             include_cases=include_cases,
+            law_db=law_db,
         )
     except DocumentPipelineError as e:
         typer.echo(f"Claim validation FAILED:\n{e}", err=True)

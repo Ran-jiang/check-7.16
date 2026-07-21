@@ -67,6 +67,7 @@ def extract_claims(
     parsed_doc: ParsedDocument,
     include_statutes: bool = True,
     include_cases: bool = True,
+    law_lexicon=None,
 ) -> ClaimDocument:
     """
     从 ParsedDocument 中识别可核查引用。
@@ -93,7 +94,7 @@ def extract_claims(
     # ---- 2. 规则抽取 ----
     logger.info("开始规则抽取……")
     rule_candidates = extract_rule_candidates(
-        parsed_doc, indexes, include_statutes, include_cases
+        parsed_doc, indexes, include_statutes, include_cases, law_lexicon
     )
     logger.info("规则抽取完成，候选数: %d", len(rule_candidates))
 

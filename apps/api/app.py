@@ -195,6 +195,7 @@ def _run_document_check(
                 parsed_document,
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
+                law_db=LAW_DB,
             )
             write_json(debug_run_id, "claim-document.json", claim_document)
             verification = verify_document_claims(
@@ -347,6 +348,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 parsed_document,
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
+                law_db=LAW_DB,
             )
             write_json(debug_run_id, "claim-document.json", claim_document)
             verification = verify_document_claims(
@@ -423,6 +425,7 @@ def check_feishu_document(request: FeishuDocumentCheckRequest) -> DocumentCheckR
             parsed_document,
             include_statutes=request.include_statutes,
             include_cases=request.include_cases,
+            law_db=LAW_DB,
         )
         verification = verify_document_claims(
             claim_document,

@@ -46,10 +46,14 @@ def extract_document_claims(
     parsed_document: ParsedDocument,
     include_statutes: bool = True,
     include_cases: bool = True,
+    law_db: str | Path | None = None,
 ) -> ClaimDocument:
     """从解析后的文档中识别指定类型的法律引用。"""
     try:
-        return extract_claims(parsed_document, include_statutes, include_cases)
+        from ..recognition.law_lexicon import LawLexicon
+
+        lexicon = LawLexicon.load(law_db) if include_statutes else None
+        return extract_claims(parsed_document, include_statutes, include_cases, lexicon)
     except ValueError as exc:
         raise DocumentPipelineError(str(exc)) from exc
 

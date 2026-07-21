@@ -28,6 +28,7 @@ from ..domain.citation import (
     StructureUnit,
 )
 from .jurisdiction import detect_jurisdiction
+from .law_lexicon import LawLexicon
 
 
 # ============================================================
@@ -439,7 +440,10 @@ def _int_to_cn_num(value: int) -> str:
     return "".join(parts)
 
 
-def extract_legal_sources(text: str) -> list[LegalSource]:
+def extract_legal_sources(
+    text: str,
+    lexicon: LawLexicon | None = None,
+) -> list[LegalSource]:
     """
     从文本中提取所有法律规范引用。
 
@@ -458,10 +462,10 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
     """
     # 查找所有《》引用
     matches = list(LEGAL_SOURCE_PATTERN.finditer(text))
-    bare_matches = list(BARE_LAW_CITATION_PATTERN.finditer(text))
+    lexicon = lexicon or LawLexicon.load()
+    bare_matches = _find_bare_citations(text, lexicon)
 
     legal_sources: list[LegalSource] = []
-    seen_titles: set[str] = set()  # 用于去重（《》和裸引用可能指向同一部法）
 
     if matches:
         for i, m in enumerate(matches):
@@ -476,7 +480,7 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
             else:
                 search_end = len(text)
             next_bare_start = next(
-                (bare.start() for bare in bare_matches if search_start <= bare.start() < search_end),
+                (bare.title_start for bare in bare_matches if search_start <= bare.title_start < search_end),
                 None,
             )
             if next_bare_start is not None:
@@ -489,8 +493,15 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
 
             source_type = infer_source_type(title)
 
+            lexicon_match = lexicon.longest_suffix_match(title)
+            canonical_title = (
+                lexicon_match.canonical_title
+                if lexicon_match is not None and lexicon_match.start == 0
+                else title
+            )
             legal_sources.append(LegalSource(
                 title=title,
+                canonical_title=canonical_title,
                 source_type=source_type,
                 jurisdiction=detect_jurisdiction(title, text[:m.start()]),
                 articles=articles,
@@ -499,17 +510,29 @@ def extract_legal_sources(text: str) -> list[LegalSource]:
                     _extract_structure_refs(segment) if not articles else []
                 ),
             ))
-            seen_titles.add(title)
 
     # ---- 补充：裸法条引用（无《》书名号）----
     # 例："……认定为反不正当竞争法第九条第四款所称的……"
     # 司法解释经常引用其解释的基础法律，且不加书名号。
-    bare_sources = _extract_bare_law_citations(text, seen_titles)
-    legal_sources.extend(bare_sources)
+    bare_sources = _extract_bare_law_citations(bare_matches)
+    for source in bare_sources:
+        key = source.canonical_title or source.title
+        existing = next(
+            (
+                candidate for candidate in legal_sources
+                if (candidate.canonical_title or candidate.title) == key and key
+            ),
+            None,
+        )
+        if existing is None:
+            legal_sources.append(source)
+            continue
+        _merge_articles(existing.articles, source.articles)
 
     # ---- 补充：国家标准/行业标准（无书名号）----
     # 例：GB/T 35273-2020 / GB/T 45674-2025
     # 标准编号本身就是唯一标识，归入 other_normative_document
+    seen_titles = {source.canonical_title or source.title for source in legal_sources if source.title}
     standard_sources = _extract_standard_citations(text, seen_titles)
     legal_sources.extend(standard_sources)
 
@@ -557,12 +580,9 @@ def _extract_structure_refs(segment: str) -> list[StructureRef]:
 #   3. 法名后紧跟条款号引用（第X条）
 #
 # 边界词：这些词/标点后的"XX法"被视为法名起点
-_LAW_NAME_BOUNDARY = r'(?:^|[，。！？；：、]|认定|构成|属于|依据|根据|适用|参照|依照|违反|符合|适用|所称|援引|援用|引用|按照)'
-
-BARE_LAW_CITATION_PATTERN = re.compile(
-    _LAW_NAME_BOUNDARY
-    + r'([一-鿿]{2,12}?(?:法|法典))'   # 法名（非贪婪，2-12字）
-    r'('
+BARE_ARTICLE_ANCHOR = re.compile(
+    r'(?P<law_suffix>法典|法)'
+    r'(?P<article>'
     r'第[一二三四五六七八九十百千零\d]+条'
     r'(?:之[一二三四五六七八九十]+)?'
     r'(?:第[一二三四五六七八九十零\d]+款)?'
@@ -583,52 +603,115 @@ BARE_LAW_EXCLUDE_SUFFIXES = [
 ]
 
 
-def _extract_bare_law_citations(
-    text: str,
-    seen_titles: set[str],
-) -> list[LegalSource]:
-    """
-    提取无《》书名号的裸法条引用。
+@dataclass(frozen=True)
+class BareCitationMatch:
+    title: str
+    canonical_title: str | None
+    raw_title_candidate: str | None
+    title_start: int
+    title_end: int
+    citation_end: int
+    article_text: str
+    resolution: str
 
-    例："……认定为反不正当竞争法第九条第四款所称的……"
-    → LegalSource(title="反不正当竞争法", articles=[ArticleRef("第九条", paragraphs=["第四款"])])
 
-    Args:
-        text: 待分析文本
-        seen_titles: 已通过《》提取的法源名称集合（避免重复）
+_BARE_WINDOW_BOUNDARY = re.compile(r"[，。！？；：、\n]")
 
-    Returns:
-        LegalSource 列表
-    """
-    results: list[LegalSource] = []
-    seen_in_bare: set[str] = set()
 
-    for m in BARE_LAW_CITATION_PATTERN.finditer(text):
-        title = m.group(1)
+def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMatch]:
+    results: list[BareCitationMatch] = []
+    previous_end = 0
+    window_limit = max(80, lexicon.max_surface_length + 16)
+    for anchor in BARE_ARTICLE_ANCHOR.finditer(text):
+        law_end = anchor.end("law_suffix")
+        window_start = max(previous_end, law_end - window_limit)
+        prefix = text[window_start:law_end]
+        boundaries = [match.end() for match in _BARE_WINDOW_BOUNDARY.finditer(prefix)]
+        book_end = prefix.rfind("》") + 1
+        relative_start = max([0, book_end, *boundaries])
+        window_start += relative_start
+        window = text[window_start:law_end]
 
-        # 排除伪法名
-        if not _is_valid_bare_law_name(title):
+        matched = lexicon.longest_suffix_match(window, offset=window_start)
+        if matched is not None:
+            results.append(BareCitationMatch(
+                title=matched.surface_title,
+                canonical_title=matched.canonical_title,
+                raw_title_candidate=None,
+                title_start=matched.start,
+                title_end=matched.end,
+                citation_end=anchor.end(),
+                article_text=anchor.group("article"),
+                resolution="bare_lexicon",
+            ))
+            previous_end = anchor.end()
             continue
 
-        # 去重（已通过《》提取 或 裸引用已处理）
-        normalized = _normalize_law_title(title)
-        if normalized in seen_titles or normalized in seen_in_bare:
+        raw = window.strip()
+        if not raw or not _is_valid_bare_law_name(raw):
+            previous_end = anchor.end()
             continue
-        seen_in_bare.add(normalized)
-
-        # 提取条款号（从匹配的文段中）
-        segment = text[m.start():m.end()]
-        articles = _extract_articles_from_text(segment)
-
-        source_type = infer_source_type(normalized)
-
-        results.append(LegalSource(
-            title=normalized,
-            source_type=source_type,
-            articles=articles,
+        # 未解析引用只记录确定的右锚位置，不猜测法名左边界。
+        results.append(BareCitationMatch(
+            title="",
+            canonical_title=None,
+            raw_title_candidate=raw,
+            title_start=anchor.start("law_suffix"),
+            title_end=law_end,
+            citation_end=anchor.end(),
+            article_text=anchor.group("article"),
+            resolution="bare_unresolved",
         ))
-
+        previous_end = anchor.end()
     return results
+
+
+def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalSource]:
+    results: list[LegalSource] = []
+    by_key: dict[str, LegalSource] = {}
+    for match in matches:
+        articles = _extract_articles_from_text(match.article_text)
+        for article in articles:
+            article.source_span = (match.title_start, match.title_end)
+        key = match.canonical_title or f"unresolved:{match.title_start}:{match.citation_end}"
+        existing = by_key.get(key)
+        if existing is not None:
+            _merge_articles(existing.articles, articles)
+            continue
+        source = LegalSource(
+            title=match.title,
+            canonical_title=match.canonical_title,
+            raw_title_candidate=match.raw_title_candidate,
+            source_span=(match.title_start, match.title_end),
+            source_type=(
+                infer_source_type(match.canonical_title or match.title)
+                if match.canonical_title or match.title
+                else LegalSourceType.LAW
+            ),
+            articles=articles,
+            resolution=match.resolution,
+        )
+        results.append(source)
+        by_key[key] = source
+    return results
+
+
+def _merge_articles(target: list[ArticleRef], incoming: list[ArticleRef]) -> None:
+    for article in incoming:
+        existing = next((
+            item for item in target
+            if item.article == article.article
+            and (
+                item.source_span == article.source_span
+                or item.source_span is None
+                or article.source_span is None
+            )
+        ), None)
+        if existing is None:
+            target.append(article)
+            continue
+        existing.paragraphs = list(dict.fromkeys([*existing.paragraphs, *article.paragraphs]))
+        existing.items = list(dict.fromkeys([*existing.items, *article.items]))
 
 
 def _is_valid_bare_law_name(title: str) -> bool:
@@ -651,92 +734,6 @@ def _is_valid_bare_law_name(title: str) -> bool:
         if title.endswith(exclude):
             return False
     return True
-
-
-def _normalize_law_title(title: str) -> str:
-    """
-    规范化法名：迭代剥离谓语动词等噪声前缀。
-
-    裸引用中法名常被谓语动词包裹：
-      "以认定构成反不正当竞争法" → 剥离 → "反不正当竞争法"
-      "院应当认定为反不正当竞争法" → 剥离 → "反不正当竞争法"
-
-    Args:
-        title: 原始匹配到的文本
-
-    Returns:
-        规范化后的法名
-    """
-    title = title.strip()
-    title = _strip_noise_prefix(title)
-    title = _strip_reference_modifiers(title)
-    return title
-
-
-# 引用时的描述性/介词前缀：不是法名的一部分（现行反不正当竞争法=反不正当竞争法，
-# 以刑法=刑法）。仅在剥离后仍是合法法名时才剥，避免误伤。
-_MODIFIER_PREFIXES = ("现行", "新", "旧", "原", "以")
-
-
-def _strip_reference_modifiers(title: str) -> str:
-    changed = True
-    while changed:
-        changed = False
-        for prefix in _MODIFIER_PREFIXES:
-            if not title.startswith(prefix):
-                continue
-            remainder = title[len(prefix):]
-            if len(remainder) >= 2 and _is_legal_source(remainder):
-                title = remainder
-                changed = True
-                break
-    return title
-
-
-def _strip_noise_prefix(title: str) -> str:
-    """
-    迭代剥离法名开头的噪声前缀。
-
-    例如 "以认定构成反不正当竞争法" → "反不正当竞争法"
-
-    Args:
-        title: 含噪声的法名
-
-    Returns:
-        剥离后的法名
-    """
-    # 若谓语被正则一起吞入，只保留最后一个明确引导语之后的部分。
-    embedded_markers = [
-        "请求依照", "请求依据", "请求根据", "应当依据", "应当依照",
-        "可以参照", "可以认定为", "认定为", "不属于", "违反了",
-    ]
-    for marker in embedded_markers:
-        if marker in title:
-            title = title.rsplit(marker, 1)[-1]
-
-    noise_words = [
-        "人民法院可以认定为", "人民法院可以参照", "人民法院应当依据",
-        "人民法院可以认定构成", "人民法院应当认定为",
-        "人民法院经审查可以认定为", "人民法院认定",
-        "法院可以认定构成", "法院应当认定为",
-        "以认定构成", "可以认定构成", "应当认定为",
-        "经审查可以认定为", "审查可以认定为",
-        "院应当认定为", "院认定",
-        "认定构成", "认定为",
-        "认定", "构成", "属于", "依据", "根据",
-        "适用", "参照", "依照", "违反", "符合",
-        "所称", "的", "为", "被", "经审查", "不予", "依法", "了",
-        "法院", "可以", "应当",
-    ]
-    changed = True
-    while changed:
-        changed = False
-        for noise in noise_words:
-            if title.startswith(noise) and title != noise:
-                title = title[len(noise):]
-                changed = True
-                break
-    return title
 
 
 def has_article_reference(text: str) -> bool:
