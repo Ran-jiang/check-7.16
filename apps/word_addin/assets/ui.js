@@ -32,6 +32,7 @@ export class CheckUi {
     this.messageTimer = null
     this.handlers = { onJump: null, onDecide: null, onHistoryOpen: null }
     this.decisions = {}
+    this.decisionSyncers = new Map()
     this.checks = []
     this.cards = []
     this.ready = false
@@ -117,6 +118,7 @@ export class CheckUi {
   renderResults(result, decisions = {}, options = {}) {
     const { summary, verification } = result
     this.decisions = decisions
+    this.decisionSyncers = new Map()
     this.cards = orderChecksByCitation(buildResultCards(verification))
     this.checks = [
       ...this.cards.flatMap(item => item.check_kind === "statute-group"
@@ -403,18 +405,37 @@ export class CheckUi {
     button.dataset.checkId = view.checkId
     const sync = () => {
       const accepted = this.decisions[view.checkId] === "accepted"
-      button.textContent = accepted ? "修订已写入" : "接受修订"
+      button.textContent = accepted ? "取消修订" : "接受修订"
       button.classList.toggle("is-active", accepted)
-      button.disabled = accepted
+      button.disabled = false
     }
+    // 供 setDecision 原地刷新本按钮，避免整表重渲染导致列表跳动
+    this.decisionSyncers.set(view.checkId, sync)
     sync()
     button.addEventListener("click", async () => {
-      if (this.decisions[view.checkId] === "accepted") return
-      await this.handlers.onApplyFix?.(view.raw)
-      sync()
+      button.disabled = true
+      try {
+        if (this.decisions[view.checkId] === "accepted") {
+          await this.handlers.onUndoFix?.(view.raw)
+        } else {
+          await this.handlers.onApplyFix?.(view.raw)
+        }
+      } finally {
+        sync()
+      }
     })
     row.append(button)
     return row
+  }
+
+  // 原地更新某条结果的决策状态与按钮文案（不重建列表、不改变滚动位置）
+  setDecision(checkId, decision) {
+    if (decision) {
+      this.decisions[checkId] = decision
+    } else {
+      delete this.decisions[checkId]
+    }
+    this.decisionSyncers.get(checkId)?.()
   }
 
   showMessage(message) {

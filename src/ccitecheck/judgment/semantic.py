@@ -93,13 +93,26 @@ class ModelOption:
     provider: str     # dashscope（通义千问）| zhipu（智谱 GLM）
     env_model: str    # 读取实际 model id 的环境变量
     default_model: str
+    env_keys: tuple[str, ...]  # 该模型的密钥环境变量，按优先级
 
 
 SUPPORTED_MODELS: tuple[ModelOption, ...] = (
-    ModelOption("qwen3.7-plus", "通义千问 3.7 Plus", "dashscope", "QWEN_MODEL", "qwen3.7-plus"),
-    ModelOption("qwen3.7-max", "通义千问 3.7 Max", "dashscope", "QWEN_MAX_MODEL", "qwen3.7-max"),
-    ModelOption("glm", "智谱 GLM", "zhipu", "GLM_MODEL", "glm-5.2"),
+    ModelOption("qwen3.7-plus", "通义千问 3.7 Plus", "dashscope", "QWEN_MODEL", "qwen3.7-plus",
+                ("QWEN_PLUS_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
+    ModelOption("qwen3.7-max", "通义千问 3.7 Max", "dashscope", "QWEN_MAX_MODEL", "qwen3.7-max",
+                ("QWEN_MAX_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
+    ModelOption("glm", "智谱 GLM", "zhipu", "GLM_MODEL", "glm-5.2",
+                ("GLM_API_KEY", "ZHIPU_API_KEY")),
 )
+
+
+def model_api_key(option: "ModelOption") -> str | None:
+    """按优先级取该模型的密钥：专用 key 优先，未设则回退共用 key。"""
+    for name in option.env_keys:
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    return None
 _PROVIDER_DEFAULT_BASE = {
     "dashscope": DEFAULT_BASE_URL,
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
@@ -134,19 +147,14 @@ class QwenSemanticChecker:
     def from_env(cls, model: str | None = None) -> "QwenSemanticChecker":
         load_project_env()
         option = resolve_model_option(model)
+        api_key = model_api_key(option)
+        if not api_key:
+            raise SemanticCheckError(
+                f"{option.env_keys[0]} is required for semantic checks with {option.label}"
+            )
         if option.provider == "zhipu":
-            api_key = os.getenv("GLM_API_KEY") or os.getenv("ZHIPU_API_KEY")
-            if not api_key:
-                raise SemanticCheckError(
-                    f"GLM_API_KEY is required for semantic checks with {option.label}"
-                )
             base_url = os.getenv("GLM_BASE_URL") or _PROVIDER_DEFAULT_BASE["zhipu"]
         else:
-            api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
-            if not api_key:
-                raise SemanticCheckError(
-                    "DASHSCOPE_API_KEY is required for semantic checks"
-                )
             base_url = (
                 os.getenv("QWEN_BASE_URL")
                 or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)

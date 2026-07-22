@@ -143,17 +143,14 @@ def health() -> dict[str, str | bool]:
 @app.get("/api/models")
 def list_models() -> dict:
     """可选语义核查模型；configured 表示该模型所需密钥是否已配置。"""
-    from ccitecheck.judgment.semantic import SUPPORTED_MODELS, resolve_model_option
-
-    def configured(provider: str) -> bool:
-        if provider == "zhipu":
-            return bool((os.getenv("GLM_API_KEY") or os.getenv("ZHIPU_API_KEY") or "").strip())
-        return bool((os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY") or "").strip())
+    from ccitecheck.judgment.semantic import (
+        SUPPORTED_MODELS, model_api_key, resolve_model_option,
+    )
 
     return {
         "default": resolve_model_option(None).key,
         "models": [
-            {"key": m.key, "label": m.label, "configured": configured(m.provider)}
+            {"key": m.key, "label": m.label, "configured": bool(model_api_key(m))}
             for m in SUPPORTED_MODELS
         ],
     }

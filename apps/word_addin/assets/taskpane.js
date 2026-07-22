@@ -8,7 +8,7 @@ import {
 } from "./office-document.js"
 import { jumpToSource, seedSourceBookmarks } from "./word-bookmarks.js"
 import { CheckUi } from "./ui.js"
-import { applyTrackedRevision } from "./word-revisions.js"
+import { applyTrackedRevision, undoTrackedRevision } from "./word-revisions.js"
 
 const ui = new CheckUi()
 let documentName = "未命名文档.docx"
@@ -43,10 +43,24 @@ ui.setHandlers({
       const details = await applyTrackedRevision(check)
       saveDecision(lastResult.document_key, check.check_id, "accepted")
       await saveWordDebug("revision_applied", check, details)
-      ui.renderResults(lastResult, readDecisions(lastResult.document_key))
+      // 只更新本卡片状态，不整表重渲染，避免列表跳回顶部
+      ui.setDecision(check.check_id, "accepted")
       ui.showMessage("修订已写入 Word，可在审阅面板接受或拒绝")
     } catch (error) {
       await saveWordDebug("revision_error", check, null, error)
+      ui.showMessage(error.message)
+    }
+  },
+  onUndoFix: async check => {
+    if (!lastResult) return
+    try {
+      const details = await undoTrackedRevision(check)
+      saveDecision(lastResult.document_key, check.check_id, null)
+      await saveWordDebug("revision_undone", check, details)
+      ui.setDecision(check.check_id, null)
+      ui.showMessage("已撤销该修订，文本改回原文")
+    } catch (error) {
+      await saveWordDebug("revision_undo_error", check, null, error)
       ui.showMessage(error.message)
     }
   },
