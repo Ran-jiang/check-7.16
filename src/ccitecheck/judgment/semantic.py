@@ -85,6 +85,42 @@ class SemanticResponseError(SemanticCheckError):
 
 
 @dataclass(frozen=True)
+class ModelOption:
+    """可选模型：同一套提示词，按厂商协议差异发送请求。"""
+
+    key: str          # 前端与 API 使用的标识
+    label: str        # 展示名
+    provider: str     # dashscope（通义千问）| zhipu（智谱 GLM）
+    env_model: str    # 读取实际 model id 的环境变量
+    default_model: str
+
+
+SUPPORTED_MODELS: tuple[ModelOption, ...] = (
+    ModelOption("qwen3.7-plus", "通义千问 3.7 Plus", "dashscope", "QWEN_MODEL", "qwen3.7-plus"),
+    ModelOption("qwen3.7-max", "通义千问 3.7 Max", "dashscope", "QWEN_MAX_MODEL", "qwen3.7-max"),
+    ModelOption("glm", "智谱 GLM", "zhipu", "GLM_MODEL", "glm-5.2"),
+)
+_PROVIDER_DEFAULT_BASE = {
+    "dashscope": DEFAULT_BASE_URL,
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+}
+
+
+def resolve_model_option(key: str | None) -> ModelOption:
+    """按标识取模型；未指定时用 LLM_DEFAULT_MODEL，再退回第一个。"""
+    wanted = (key or os.getenv("LLM_DEFAULT_MODEL") or "").strip()
+    for option in SUPPORTED_MODELS:
+        if option.key == wanted:
+            return option
+    if wanted:
+        # 兼容直接传实际 model id（如 CLI 历史用法）
+        for option in SUPPORTED_MODELS:
+            if os.getenv(option.env_model, option.default_model) == wanted:
+                return option
+    return SUPPORTED_MODELS[0]
+
+
+@dataclass(frozen=True)
 class QwenSemanticChecker:
     api_key: str
     model: str = DEFAULT_MODEL
@@ -92,29 +128,55 @@ class QwenSemanticChecker:
     timeout: int = 60
     retry_budget_seconds: float = 90.0
     retry_max_attempts: int = 4
+    provider: str = "dashscope"
 
     @classmethod
     def from_env(cls, model: str | None = None) -> "QwenSemanticChecker":
         load_project_env()
-        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
-        if not api_key:
-            raise SemanticCheckError(
-                "DASHSCOPE_API_KEY is required for semantic checks"
+        option = resolve_model_option(model)
+        if option.provider == "zhipu":
+            api_key = os.getenv("GLM_API_KEY") or os.getenv("ZHIPU_API_KEY")
+            if not api_key:
+                raise SemanticCheckError(
+                    f"GLM_API_KEY is required for semantic checks with {option.label}"
+                )
+            base_url = os.getenv("GLM_BASE_URL") or _PROVIDER_DEFAULT_BASE["zhipu"]
+        else:
+            api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
+            if not api_key:
+                raise SemanticCheckError(
+                    "DASHSCOPE_API_KEY is required for semantic checks"
+                )
+            base_url = (
+                os.getenv("QWEN_BASE_URL")
+                or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
             )
         return cls(
             api_key=api_key,
-            model=model
-            or os.getenv("QWEN_MODEL")
-            or os.getenv("LLM_MODEL", DEFAULT_MODEL),
-            base_url=(
-                os.getenv("QWEN_BASE_URL")
-                or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
-            ).rstrip("/"),
+            model=os.getenv(option.env_model, option.default_model),
+            base_url=base_url.rstrip("/"),
             timeout=int(os.getenv("QWEN_TIMEOUT_SECONDS", "60")),
             retry_budget_seconds=float(
                 os.getenv("QWEN_RETRY_BUDGET_SECONDS", "90")
             ),
             retry_max_attempts=int(os.getenv("QWEN_RETRY_MAX_ATTEMPTS", "4")),
+            provider=option.provider,
+        )
+
+    def _chat(self, system_prompt: str, user_content: str) -> str:
+        """按厂商协议发起一次对话并返回模型输出文本。"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        if self.provider == "zhipu":
+            return _extract_chat_text(
+                self._post("/chat/completions", {"model": self.model, "messages": messages})
+            )
+        return _extract_output_text(
+            self._post("/responses", {
+                "model": self.model, "input": messages, "enable_thinking": False,
+            })
         )
 
     def compare(
@@ -134,40 +196,18 @@ class QwenSemanticChecker:
             "statute_text": evidence.article_text,
             "source_metadata": _source_metadata(evidence),
         }
-        payload = {
-            "model": self.model,
-            "input": [
-                {"role": "system", "content": PROMPT_PATH.read_text(encoding="utf-8")},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        user_input,
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            "enable_thinking": False,
-        }
-        data = self._post_response(payload)
-        output_text = _extract_output_text(data)
+        output_text = self._chat(
+            PROMPT_PATH.read_text(encoding="utf-8"),
+            json.dumps(user_input, ensure_ascii=False),
+        )
         try:
             raw_comparison = _load_json_object(output_text)
         except (json.JSONDecodeError, ValueError):
-            repair_payload = {
-                "model": self.model,
-                "input": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "将用户提供的内容修复为一个语义等价、可由 JSON.parse() 直接解析的"
-                            "合法 JSON 对象。不得增删事实，不得输出 Markdown 或解释。"
-                        ),
-                    },
-                    {"role": "user", "content": output_text},
-                ],
-                "enable_thinking": False,
-            }
-            repaired = _extract_output_text(self._post_response(repair_payload))
+            repaired = self._chat(
+                "将用户提供的内容修复为一个语义等价、可由 JSON.parse() 直接解析的"
+                "合法 JSON 对象。不得增删事实，不得输出 Markdown 或解释。",
+                output_text,
+            )
             try:
                 raw_comparison = _load_json_object(repaired)
             except (json.JSONDecodeError, ValueError) as exc:
@@ -203,11 +243,9 @@ class QwenSemanticChecker:
         assertions = split_reasoning_sentences(paraphrase_text) or [clean_reasoning_text(paraphrase_text)]
         sentences = split_reasoning_sentences(holding_text)
         truncated = reasoning_is_truncated(sentences)
-        payload = {
-            "model": self.model,
-            "input": [
-                {"role": "system", "content": REASONING_PROMPT_PATH.read_text(encoding="utf-8")},
-                {"role": "user", "content": json.dumps({
+        raw_text = self._chat(
+            REASONING_PROMPT_PATH.read_text(encoding="utf-8"),
+            json.dumps({
                     "case_title": case_title,
                     "assertions": [
                         {"id": index, "text": text}
@@ -217,12 +255,10 @@ class QwenSemanticChecker:
                         {"id": index, "text": text}
                         for index, text in enumerate(sentences, start=1)
                     ],
-                    "reasoning_truncated": truncated,
-                }, ensure_ascii=False)},
-            ],
-            "enable_thinking": False,
-        }
-        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+                "reasoning_truncated": truncated,
+            }, ensure_ascii=False),
+        )
+        raw = _load_json_object(raw_text)
         try:
             return _case_reasoning_check_from_raw(raw, assertions, sentences, truncated)
         except (ValueError, TypeError) as exc:
@@ -238,23 +274,19 @@ class QwenSemanticChecker:
         tried: list[dict[str, str]],
     ) -> str | None:
         """已验证候选均不匹配后，携带验证反馈向模型索取下一个候选条号。"""
-        payload = {
-            "model": self.model,
-            "input": [
-                {"role": "system", "content": REPROPOSAL_PROMPT_PATH.read_text(encoding="utf-8")},
-                {"role": "user", "content": json.dumps({
+        raw_text = self._chat(
+            REPROPOSAL_PROMPT_PATH.read_text(encoding="utf-8"),
+            json.dumps({
                     "law_title": law_title,
                     "document_quote": document_quote,
                     "cited_article": {
                         "article_no": cited_article_no,
                         "article_text": cited_article_text,
                     },
-                    "tried_candidates": tried,
-                }, ensure_ascii=False)},
-            ],
-            "enable_thinking": False,
-        }
-        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+                "tried_candidates": tried,
+            }, ensure_ascii=False),
+        )
+        raw = _load_json_object(raw_text)
         return _valid_article_no(raw.get("candidate_article_no"))
 
     def compare_nested_reference(
@@ -266,20 +298,15 @@ class QwenSemanticChecker:
         child_text: str,
     ) -> NestedReferenceMatch:
         """只判断 child 是否为 parent 权威条文实际转引的规则。"""
-        payload = {
-            "model": self.model,
-            "input": [
-                {"role": "system", "content": NESTED_REFERENCE_PROMPT_PATH.read_text(encoding="utf-8")},
-                {"role": "user", "content": json.dumps({
-                    "parent_source": parent_source,
-                    "parent_text": parent_text,
-                    "child_source": child_source,
-                    "child_text": child_text,
-                }, ensure_ascii=False)},
-            ],
-            "enable_thinking": False,
-        }
-        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+        raw = _load_json_object(self._chat(
+            NESTED_REFERENCE_PROMPT_PATH.read_text(encoding="utf-8"),
+            json.dumps({
+                "parent_source": parent_source,
+                "parent_text": parent_text,
+                "child_source": child_source,
+                "child_text": child_text,
+            }, ensure_ascii=False),
+        ))
         try:
             return NestedReferenceMatch(
                 verdict=str(raw.get("verdict", "")),
@@ -291,10 +318,10 @@ class QwenSemanticChecker:
                 f"Qwen returned invalid nested-reference JSON: {exc}"
             ) from exc
 
-    def _post_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             return post_json_with_retry(
-                f"{self.base_url}/responses",
+                f"{self.base_url}{path}",
                 payload,
                 {
                 "Authorization": f"Bearer {self.api_key}",
@@ -308,7 +335,7 @@ class QwenSemanticChecker:
             )
         except HttpRequestError as exc:
             raise SemanticTransportError(
-                f"Qwen API request failed: {exc}", exc.error_code
+                f"LLM API request failed: {exc}", exc.error_code
             ) from exc
         except HttpResponseJSONError as exc:
             raise SemanticResponseError(
@@ -503,6 +530,17 @@ def _load_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("semantic response must be a JSON object")
     return parsed
+
+
+def _extract_chat_text(data: dict[str, Any]) -> str:
+    """解析 OpenAI 兼容的 chat/completions 响应（智谱 GLM 等）。"""
+    for choice in data.get("choices", []):
+        content = (choice.get("message") or {}).get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+    raise SemanticResponseError(
+        "LLM response did not include message content", "invalid_schema"
+    )
 
 
 def _extract_output_text(data: dict[str, Any]) -> str:

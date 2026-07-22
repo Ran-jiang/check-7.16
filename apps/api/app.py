@@ -140,6 +140,25 @@ def health() -> dict[str, str | bool]:
     }
 
 
+@app.get("/api/models")
+def list_models() -> dict:
+    """可选语义核查模型；configured 表示该模型所需密钥是否已配置。"""
+    from ccitecheck.judgment.semantic import SUPPORTED_MODELS, resolve_model_option
+
+    def configured(provider: str) -> bool:
+        if provider == "zhipu":
+            return bool((os.getenv("GLM_API_KEY") or os.getenv("ZHIPU_API_KEY") or "").strip())
+        return bool((os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY") or "").strip())
+
+    return {
+        "default": resolve_model_option(None).key,
+        "models": [
+            {"key": m.key, "label": m.label, "configured": configured(m.provider)}
+            for m in SUPPORTED_MODELS
+        ],
+    }
+
+
 def _validate_scope(request) -> None:
     if not (request.include_statutes or request.include_cases):
         raise HTTPException(status_code=400, detail="请至少选择一种核查范围（法规引用或司法案例）")
@@ -202,6 +221,7 @@ def _run_document_check(
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                qwen_model=getattr(request, "model", None),
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
@@ -355,6 +375,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
                 claim_document,
                 LAW_DB,
                 semantic_check=request.semantic_check,
+                qwen_model=getattr(request, "model", None),
                 include_statutes=request.include_statutes,
                 include_cases=request.include_cases,
             )
@@ -431,6 +452,7 @@ def check_feishu_document(request: FeishuDocumentCheckRequest) -> DocumentCheckR
             claim_document,
             LAW_DB,
             semantic_check=request.semantic_check,
+            qwen_model=getattr(request, "model", None),
             include_statutes=request.include_statutes,
             include_cases=request.include_cases,
         )

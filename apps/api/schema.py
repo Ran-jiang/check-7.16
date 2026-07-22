@@ -13,6 +13,7 @@ class DocumentCheckRequest(BaseModel):
     file_name: str = Field(min_length=1, max_length=255)
     docx_base64: str = Field(min_length=1)
     semantic_check: bool = True
+    model: str | None = Field(default=None, description="语义核查模型标识，见 /api/models")
     include_statutes: bool = True
     include_cases: bool = True
 
@@ -32,6 +33,7 @@ class SelectionCheckRequest(BaseModel):
     semantic_check: bool = True
     include_statutes: bool = True
     include_cases: bool = True
+    model: str | None = Field(default=None, description="语义核查模型标识，见 /api/models")
     source_blocks: list[SelectionSourceBlock] = Field(default_factory=list)
     debug_docx_base64: str | None = None
 

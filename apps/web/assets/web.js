@@ -35,8 +35,31 @@ function selectFile(file) {
   $("drop-zone").classList.add("has-file")
 }
 
+async function loadModels() {
+  const select = $("web-model")
+  if (!select) return
+  try {
+    const response = await fetch("/api/models")
+    if (!response.ok) throw new Error()
+    const { models, default: fallback } = await response.json()
+    select.innerHTML = ""
+    for (const model of models) {
+      const option = document.createElement("option")
+      option.value = model.key
+      option.textContent = model.configured ? model.label : `${model.label}（未配置密钥）`
+      option.disabled = !model.configured
+      if (model.key === fallback) option.selected = true
+      select.append(option)
+    }
+  } catch {
+    select.innerHTML = '<option value="">默认模型</option>'
+  }
+}
+loadModels()
+
 async function runCheck() {
-  const scope = { include_statutes: $("web-statutes").checked, include_cases: $("web-cases").checked, semantic_check: true }
+  const selectedModel = $("web-model") && $("web-model").value
+  const scope = { include_statutes: $("web-statutes").checked, include_cases: $("web-cases").checked, semantic_check: true, ...(selectedModel ? { model: selectedModel } : {}) }
   if (!scope.include_statutes && !scope.include_cases) return toast("请至少选择一种核查范围")
   let path, payload
   if (state.entry === "file") {

@@ -1,4 +1,4 @@
-import { captureDebugEvent, checkDocument, checkHealth, checkSelection } from "./api-client.js"
+import { captureDebugEvent, checkDocument, checkHealth, checkSelection, listModels } from "./api-client.js"
 import { readDecisions, readHistory, readResultSnapshot, recordHistory, saveDecision } from "./history.js"
 import {
   connectToWord,
@@ -68,16 +68,37 @@ async function connect() {
     ui.setDocument(documentName, "已连接 · 可核查全文或选中片段", true)
     document.getElementById("selection-button").disabled = false
     if (!health.pkulaw_configured) ui.showMessage("案例库凭证未配置，司法案例核查当前不可用")
+    await loadModels()
   } catch (error) {
     ui.setDocument("无法开始核查", error.message, false)
     document.getElementById("selection-button").disabled = true
   }
 }
 
+async function loadModels() {
+  const select = document.getElementById("model-select")
+  try {
+    const { models, default: fallback } = await listModels()
+    select.innerHTML = ""
+    for (const model of models) {
+      const option = document.createElement("option")
+      option.value = model.key
+      option.textContent = model.configured ? model.label : `${model.label}（未配置密钥）`
+      option.disabled = !model.configured
+      if (model.key === fallback) option.selected = true
+      select.append(option)
+    }
+  } catch {
+    select.innerHTML = "<option value=\"\">默认模型</option>"
+  }
+}
+
 function checkScope() {
+  const select = document.getElementById("model-select")
   const scope = {
     include_statutes: document.getElementById("statute-toggle").checked,
     include_cases: document.getElementById("case-toggle").checked,
+    model: select && select.value ? select.value : undefined,
   }
   if (!scope.include_statutes && !scope.include_cases) {
     ui.showMessage("请至少选择一种核查范围（法律法规引用或司法案例引用）")

@@ -147,3 +147,8 @@ body[data-screen="progress"] .brand-back, body[data-screen="workspace"] .brand-b
   .workspace-actions a, .workspace-actions button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+
+/* 语义核查模型选择 */
+.model-row { display: flex; align-items: center; gap: 8px; }
+.model-select { font: inherit; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+.model-select:disabled { opacity: .6; }

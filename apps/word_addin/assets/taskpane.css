@@ -405,3 +405,15 @@ label.scope-row { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* 语义核查模型选择 */
+.model-select {
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  max-width: 60%;
+}
+.model-select:disabled { opacity: .6; }

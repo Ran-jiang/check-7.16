@@ -528,3 +528,43 @@ def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
 
     user_content = json.loads(captured["payload"]["input"][1]["content"])
     assert "target_paragraph" not in user_content
+
+
+def test_model_selection_switches_provider_and_protocol(monkeypatch):
+    """三个可选模型：千问走 DashScope /responses，GLM 走 /chat/completions。"""
+    from ccitecheck.judgment.semantic import QwenSemanticChecker, resolve_model_option
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-qwen")
+    monkeypatch.setenv("GLM_API_KEY", "sk-glm")
+    monkeypatch.delenv("LLM_DEFAULT_MODEL", raising=False)
+
+    plus = QwenSemanticChecker.from_env("qwen3.7-plus")
+    assert plus.provider == "dashscope" and plus.model == "qwen3.7-plus"
+
+    mx = QwenSemanticChecker.from_env("qwen3.7-max")
+    assert mx.provider == "dashscope" and mx.model == "qwen3.7-max"
+
+    glm = QwenSemanticChecker.from_env("glm")
+    assert glm.provider == "zhipu"
+    assert "bigmodel" in glm.base_url
+
+    # 未知标识回退到第一个模型
+    assert resolve_model_option("不存在的模型").key == "qwen3.7-plus"
+
+
+def test_glm_uses_chat_completions_endpoint(monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"verdict":"pass"}'}}]})
+
+    _install_mock_client(monkeypatch, handler)
+    checker = QwenSemanticChecker(api_key="k", model="glm-5.2",
+                                  base_url="https://open.bigmodel.cn/api/paas/v4", provider="zhipu")
+    text = checker._chat("系统提示", "用户内容")
+
+    assert captured["url"].endswith("/chat/completions")
+    assert "messages" in captured["body"] and "input" not in captured["body"]
+    assert text == '{"verdict":"pass"}'

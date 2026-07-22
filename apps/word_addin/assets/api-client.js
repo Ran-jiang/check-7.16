@@ -36,6 +36,12 @@ export async function checkHealth() {
   return response.json()
 }
 
+export async function listModels() {
+  const response = await fetch("/api/models")
+  if (!response.ok) throw new Error("无法获取可用模型")
+  return response.json()
+}
+
 export async function captureDebugEvent(payload) {
   await fetch("/api/debug-events", {
     method: "POST",
