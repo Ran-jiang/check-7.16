@@ -44,9 +44,9 @@ body[data-screen="progress"] .brand-back, body[data-screen="workspace"] .brand-b
 .drop-zone small { margin-top: 5px; color: var(--ink-3); }
 .text-label { display: block; margin-bottom: 7px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
 #source-text { width: 100%; min-height: 210px; resize: vertical; border: 1px solid #aeb5bc; padding: 14px; color: var(--ink); background: #fafbfc; line-height: 1.8; }
-.scope-options { display: flex; gap: 20px; margin: 22px 0; padding: 0; border: 0; }
+.scope-options { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 22px 0; padding: 0; border: 0; }
 .scope-options legend { width: 100%; margin-bottom: 8px; color: var(--ink-3); font-size: 12px; font-weight: 700; }
-.scope-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.scope-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
 .scope-options input { accent-color: var(--blue); }
 .primary-button, .secondary-button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--blue); border-radius: 4px; padding: 0 20px; font-weight: 600; text-decoration: none; cursor: pointer; }
 .primary-button { width: 100%; background: var(--blue); color: white; }
@@ -150,5 +150,5 @@ body[data-screen="progress"] .brand-back, body[data-screen="workspace"] .brand-b
 
 /* 语义核查模型选择 */
 .model-row { display: flex; align-items: center; gap: 8px; }
-.model-select { font: inherit; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+.model-select { font: inherit; max-width: 200px; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
 .model-select:disabled { opacity: .6; }

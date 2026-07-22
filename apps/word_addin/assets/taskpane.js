@@ -99,8 +99,13 @@ async function loadModels() {
       option.value = model.key
       option.textContent = model.configured ? model.label : `${model.label}（未配置密钥）`
       option.disabled = !model.configured
-      if (model.key === fallback) option.selected = true
       select.append(option)
+    }
+    // 必须在全部插入后再设默认值：对未入 DOM 的 option 设 selected 会错乱
+    if (fallback) select.value = fallback
+    if (!select.value || select.selectedIndex < 0) {
+      const first = [...select.options].find(o => !o.disabled)
+      if (first) select.value = first.value
     }
   } catch {
     select.innerHTML = "<option value=\"\">默认模型</option>"
