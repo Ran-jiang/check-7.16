@@ -101,7 +101,7 @@ SUPPORTED_MODELS: tuple[ModelOption, ...] = (
                 ("QWEN_PLUS_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
     ModelOption("qwen3.7-max", "通义千问 3.7 Max", "dashscope", "QWEN_MAX_MODEL", "qwen3.7-max",
                 ("QWEN_MAX_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
-    ModelOption("glm", "智谱 GLM", "zhipu", "GLM_MODEL", "glm-5.2",
+    ModelOption("glm", "智谱 GLM-5.2", "zhipu", "GLM_MODEL", "glm-5.2",
                 ("GLM_API_KEY", "ZHIPU_API_KEY")),
 )
 

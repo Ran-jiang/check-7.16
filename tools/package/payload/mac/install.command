@@ -47,8 +47,34 @@ fi
 mkdir -p "$INSTALL_DIR"
 ditto "$SRC/payload/" "$INSTALL_DIR/" || fail "文件拷贝失败"
 mkdir -p "$INSTALL_DIR/logs"
+# 本版随包分发的 .env（内部分发版含真实密钥）；被旧配置覆盖前先存一份，
+# 供升级时合并新增配置项使用。
+PKG_ENV=""
+if [ -f "$INSTALL_DIR/.env" ] && [ -n "$KEEP_ENV" ]; then
+  PKG_ENV="$(mktemp)"; cp "$INSTALL_DIR/.env" "$PKG_ENV"
+fi
 if [ -n "$KEEP_ENV" ]; then
-  cp "$KEEP_ENV" "$INSTALL_DIR/.env"; rm -f "$KEEP_ENV"
+  # 保留既有取值，同时把本版新增的配置项合并进来（否则新增的密钥/开关
+  # 永远进不到老安装里）
+  cp "$KEEP_ENV" "$INSTALL_DIR/.env"
+  NEW_ENV="$PKG_ENV"
+  [ -n "$NEW_ENV" ] || NEW_ENV="$INSTALL_DIR/.env.template"
+  if [ -f "$NEW_ENV" ]; then
+    "$INSTALL_DIR/runtime/python/bin/python3" - "$INSTALL_DIR/.env" "$NEW_ENV" <<'PYEOF'
+import re, sys
+cur_path, new_path = sys.argv[1], sys.argv[2]
+cur = open(cur_path, encoding="utf-8").read()
+new = open(new_path, encoding="utf-8").read()
+have = {m.group(1) for m in re.finditer(r'^([A-Z_][A-Z0-9_]*)=', cur, re.M)}
+add = [l for l in new.splitlines()
+       if (m := re.match(r'^([A-Z_][A-Z0-9_]*)=', l)) and m.group(1) not in have]
+if add:
+    open(cur_path, "a", encoding="utf-8").write(
+        "\n# 本次升级新增的配置项\n" + "\n".join(add) + "\n")
+    print(f"  已合并 {len(add)} 项新增配置")
+PYEOF
+  fi
+  rm -f "$KEEP_ENV" "$PKG_ENV"
 elif [ ! -f "$INSTALL_DIR/.env" ]; then
   cp "$INSTALL_DIR/.env.template" "$INSTALL_DIR/.env"
   echo "提示：包内未含密钥，已用模板生成 .env——语义核查需要填入 DASHSCOPE_API_KEY。"

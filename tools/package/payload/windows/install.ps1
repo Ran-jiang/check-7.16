@@ -55,8 +55,26 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -Path (Join-Path $Src "payload\*") -Destination $InstallDir -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $InstallDir "logs") -Force | Out-Null
 if ($keepEnvFile) {
+    # 本版随包分发的 .env 先存一份，供合并新增配置项
+    $pkgEnvFile = Join-Path $env:TEMP "ccitecheck-env-package"
+    if (Test-Path (Join-Path $InstallDir ".env")) {
+        Copy-Item (Join-Path $InstallDir ".env") $pkgEnvFile -Force
+    }
     Copy-Item $keepEnvFile (Join-Path $InstallDir ".env") -Force
-    Remove-Item $keepEnvFile -Force
+    # 保留既有取值，同时补入本版新增的配置项，避免新增密钥进不到老安装
+    $mergeFrom = if (Test-Path $pkgEnvFile) { $pkgEnvFile } else { Join-Path $InstallDir ".env.template" }
+    if (Test-Path $mergeFrom) {
+        $have = @(Get-Content (Join-Path $InstallDir ".env") | ForEach-Object {
+            if ($_ -match '^([A-Z_][A-Z0-9_]*)=') { $Matches[1] } })
+        $add = @(Get-Content $mergeFrom | Where-Object {
+            $_ -match '^([A-Z_][A-Z0-9_]*)=' -and ($have -notcontains $Matches[1]) })
+        if ($add.Count -gt 0) {
+            Add-Content (Join-Path $InstallDir ".env") (@("", "# 本次升级新增的配置项") + $add)
+            Write-Host "  已合并 $($add.Count) 项新增配置"
+        }
+    }
+    Remove-Item $keepEnvFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $pkgEnvFile -Force -ErrorAction SilentlyContinue
 } elseif (-not (Test-Path (Join-Path $InstallDir ".env"))) {
     Copy-Item (Join-Path $InstallDir ".env.template") (Join-Path $InstallDir ".env")
     Write-Host "提示：包内未含密钥，已用模板生成 .env——语义核查需要填入 DASHSCOPE_API_KEY。" -ForegroundColor Yellow
