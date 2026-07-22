@@ -43,7 +43,10 @@ function statuteTypeLabel(check, state, findings) {
     if (check.lookup_status === "law_found_text_unavailable" && !(check.cited_locators || []).length) return "法源存在性核验通过"
     if (check.jurisdiction === "EU" && !check.meaning_check) return "欧盟法规：已核验存在性"
     if (/[编章节]$/.test(check.article_no || "")) return "章节引用：已核验存在"
-    if (check.reference_role === "nested") return "内部转引：仅核验存在性"
+    if (check.reference_role === "nested") {
+      if (check.relation_status === "resolved") return "内部转引：已确认关系并更正引用位置"
+      return "内部转引：与主法条援引的规则一致"
+    }
     return "法律引用无问题"
   }
   if (check.meaning_check?.skipped_reason === "structure_ambiguous") return "章节引用存在多个候选，请人工确认"
@@ -60,6 +63,9 @@ function statuteVerdict(check, state, findings) {
   if (check.lookup_status === "out_of_scope") {
     const message = (check.source_attempts || []).find(item => item.status === "out_of_scope")?.message
     return message ? { riskText: null, suggestion: message } : null
+  }
+  if (check.reference_role === "nested" && check.relation_message) {
+    return { riskText: null, suggestion: check.relation_message }
   }
   return state === "bug" && check.meaning_check?.notes ? { riskText: null, suggestion: check.meaning_check.notes } : null
 }

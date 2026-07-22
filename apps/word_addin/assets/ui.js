@@ -254,12 +254,15 @@ export class CheckUi {
     const top = element("div", "result-topline")
     top.append(element("div", "card-type", `本段共 ${views.length} 条引用`))
     const counts = element("div", "multi-counts")
-    const issueCount = views.filter(view => view.state === "issue").length
-    const bugCount = views.filter(view => view.state === "bug").length
-    const passCount = views.filter(view => view.state === "pass").length
+    const primaryViews = views.filter(view => view.raw.reference_role !== "nested")
+    const nestedCount = views.length - primaryViews.length
+    const issueCount = primaryViews.filter(view => view.state === "issue").length
+    const bugCount = primaryViews.filter(view => view.state === "bug").length
+    const passCount = primaryViews.filter(view => view.state === "pass").length
     if (issueCount) counts.append(element("span", "count-issue", `${issueCount} 未通过`))
     if (bugCount) counts.append(element("span", "count-bug", `${bugCount} 待核实`))
     if (passCount) counts.append(element("span", "count-pass", `${passCount} 通过`))
+    if (nestedCount) counts.append(element("span", "count-nested", `${nestedCount} 内部转引`))
     top.append(counts)
     container.append(top)
 
@@ -280,7 +283,8 @@ export class CheckUi {
 
   // 核查行：默认收起为一行（条目 + 徽章），展开显示结论、建议、权威原文与决策
   createReferenceRow(view) {
-    const row = element("details", `reference-row is-${view.state}`)
+    const nestedClass = view.raw.reference_role === "nested" ? " is-nested-reference" : ""
+    const row = element("details", `reference-row is-${view.state}${nestedClass}`)
     const summary = element("summary", "reference-row-summary")
     summary.append(element("span", "reference-source", view.refLine.text))
     const role = REFERENCE_ROLE_LABELS[view.raw.reference_role]

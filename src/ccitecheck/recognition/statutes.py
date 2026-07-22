@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import re
 
 from ..domain.legal_numbers import chinese_number_to_int
+from ..infrastructure.database import normalize_title
 
 from ..domain.citation import (
     ArticleRef,
@@ -39,6 +40,11 @@ from .law_lexicon import LawLexicon
 # 支持中文书名号和全角书名号
 # 注意：书名号内文本可能包含空格、标点、数字等
 LEGAL_SOURCE_PATTERN = re.compile(r"《([^》]+)》")
+
+_SHORT_NAME_BRIDGE = re.compile(
+    r"\s*[（(]\s*(?:以下简称|下称|简称为|简称)\s*"
+)
+_SHORT_NAME_CLOSE = re.compile(r"\s*[）)]")
 
 # 国家标准/行业标准模式：GB/T XXXXX-XXXX 等（无书名号）
 # 例：GB/T 35273-2020 / GB/T 45674-2025 / GB 12345-2020
@@ -464,8 +470,12 @@ def extract_legal_sources(
     matches = list(LEGAL_SOURCE_PATTERN.finditer(text))
     lexicon = lexicon or LawLexicon.load()
     bare_matches = _find_bare_citations(text, lexicon)
+    declared_aliases, declaration_indices = _declared_short_name_aliases(
+        text, matches, lexicon
+    )
 
     legal_sources: list[LegalSource] = []
+    explicit_by_key: dict[str, LegalSource] = {}
 
     if matches:
         for i, m in enumerate(matches):
@@ -493,13 +503,10 @@ def extract_legal_sources(
 
             source_type = infer_source_type(title)
 
-            lexicon_match = lexicon.longest_suffix_match(title)
-            canonical_title = (
-                lexicon_match.canonical_title
-                if lexicon_match is not None and lexicon_match.start == 0
-                else title
-            )
-            legal_sources.append(LegalSource(
+            canonical_title = declared_aliases.get(
+                normalize_title(title)
+            ) or _canonical_explicit_title(title, lexicon)
+            source = LegalSource(
                 title=title,
                 canonical_title=canonical_title,
                 source_type=source_type,
@@ -509,7 +516,20 @@ def extract_legal_sources(
                 structures=(
                     _extract_structure_refs(segment) if not articles else []
                 ),
-            ))
+            )
+            key = normalize_title(canonical_title or title)
+            existing = explicit_by_key.get(key)
+            if existing is None:
+                legal_sources.append(source)
+                explicit_by_key[key] = source
+                continue
+            had_articles = bool(existing.articles)
+            _merge_articles(existing.articles, source.articles)
+            _merge_structures(existing.structures, source.structures)
+            # 简称声明中，真正承载条款的简称用于展示；查询仍使用 canonical_title。
+            if i in declaration_indices and source.articles and not had_articles:
+                existing.title = source.title
+                existing.canonical_title = source.canonical_title
 
     # ---- 补充：裸法条引用（无《》书名号）----
     # 例："……认定为反不正当竞争法第九条第四款所称的……"
@@ -537,6 +557,44 @@ def extract_legal_sources(
     legal_sources.extend(standard_sources)
 
     return legal_sources
+
+
+def _canonical_explicit_title(title: str, lexicon: LawLexicon) -> str:
+    """用与词典一致的符号归一化解析显式书名号法名。"""
+    return lexicon.canonical_title_for(title) or title
+
+
+def _declared_short_name_aliases(
+    text: str,
+    matches: list[re.Match],
+    lexicon: LawLexicon,
+) -> tuple[dict[str, str], set[int]]:
+    """解析文内简称；声明后的同名引用在当前文本块内持续有效。"""
+    aliases: dict[str, str] = {}
+    declaration_indices: set[int] = set()
+    for index in range(1, len(matches)):
+        full_match = matches[index - 1]
+        short_match = matches[index]
+        bridge = text[full_match.end():short_match.start()]
+        if not _SHORT_NAME_BRIDGE.fullmatch(bridge):
+            continue
+        if _SHORT_NAME_CLOSE.match(text[short_match.end():]) is None:
+            continue
+        full_title = full_match.group(1).strip()
+        short_title = short_match.group(1).strip()
+        if not _is_legal_source(full_title) or not _is_legal_source(short_title):
+            continue
+        canonical = _canonical_explicit_title(full_title, lexicon)
+        known_short = lexicon.canonical_title_for(short_title)
+        if (
+            known_short is not None
+            and normalize_title(known_short) != normalize_title(canonical)
+        ):
+            # 文内简称与全局唯一映射冲突时，不自动覆盖。
+            continue
+        aliases[normalize_title(short_title)] = canonical
+        declaration_indices.add(index)
+    return aliases, declaration_indices
 
 
 # 章节引用链：紧跟在《法名》之后的 第X编/分编/章/节 连写（无条号时）
@@ -722,6 +780,15 @@ def _merge_articles(target: list[ArticleRef], incoming: list[ArticleRef]) -> Non
             continue
         existing.paragraphs = list(dict.fromkeys([*existing.paragraphs, *article.paragraphs]))
         existing.items = list(dict.fromkeys([*existing.items, *article.items]))
+
+
+def _merge_structures(target: list[StructureRef], incoming: list[StructureRef]) -> None:
+    existing_labels = {structure.label for structure in target}
+    for structure in incoming:
+        if structure.label in existing_labels:
+            continue
+        target.append(structure)
+        existing_labels.add(structure.label)
 
 
 def _is_valid_bare_law_name(title: str) -> bool:

@@ -1,6 +1,6 @@
 """确定性规则判定与识别质量修复的单元测试（不依赖网络）。"""
 
-from ccitecheck.recognition.cases import NAMED_CASE_PATTERN
+from ccitecheck.recognition.cases import NAMED_CASE_PATTERN, extract_case_refs
 from ccitecheck.recognition.statutes import _extract_articles_from_text
 from ccitecheck.infrastructure.database import strip_version_annotation
 from ccitecheck.judgment.statutes import (
@@ -39,6 +39,30 @@ def test_named_case_pattern_matches_real_case_names():
     ]
     for text in positives:
         assert NAMED_CASE_PATTERN.search(text) is not None, text
+
+
+def test_named_case_validation_rejects_statute_text_polluted_by_case_words():
+    texts = [
+        "《民诉解释》第392条明确规定：“民事诉讼法第207条（现为第211条）第13项规定的审判人员审理该案件时有贪污受贿行为。”",
+        "B、C、D选项：《民诉解释》第286条规定：“人民法院受理公益诉讼案件，不影响受害人依法提起诉讼。”",
+    ]
+
+    for text in texts:
+        assert extract_case_refs(text) == [], text
+
+
+def test_named_case_validation_preserves_supported_case_name_variants():
+    texts = {
+        "甲公司诉乙公司买卖合同纠纷案": "甲公司诉乙公司买卖合同纠纷案",
+        "参见斯广树诉天津联通电信服务合同纠纷案": "斯广树诉天津联通电信服务合同纠纷案",
+        "案例：王老吉诉加多宝虚假宣传案": "王老吉诉加多宝虚假宣传案",
+        "张三诉李四案": "张三诉李四案",
+        "甲公司诉乙公司、丙公司合同纠纷案": "甲公司诉乙公司、丙公司合同纠纷案",
+    }
+
+    for text, expected in texts.items():
+        refs = extract_case_refs(text)
+        assert [ref.case_name for ref in refs] == [expected], text
 
 
 # ---------- D2 版本注记剥离 ----------

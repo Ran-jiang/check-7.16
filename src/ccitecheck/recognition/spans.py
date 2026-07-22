@@ -177,22 +177,11 @@ def locate_claim_article_spans(claim: Claim) -> None:
             located.append((cite_start, cite_end, article, source.title))
 
     located.sort(key=lambda item: item[0])
-    # 显式的另一法源出现在前一条引用的命题中，是内部转引。
-    for index, (start, _end, article, title) in enumerate(located):
-        if index == 0 or article.reference_role == "inherited":
-            continue
-        _prev_start, prev_end, parent, parent_title = located[index - 1]
-        bridge = text[prev_end:start]
-        short_title = title.removeprefix("中华人民共和国")
-        if (title in bridge or short_title in bridge) and re.search(r"属于|所称|规定的|依照|根据", bridge):
-            article.reference_role = "nested"
-            article.parent_reference_id = (parent_title, parent.article)
-
     for index, (start, end, article, _title) in enumerate(located):
         next_start = next(
             (
                 item[0] for item in located[index + 1:]
-                if item[0] > start and item[2].reference_role != "nested"
+                if item[0] > start
             ),
             len(text),
         )
@@ -208,9 +197,5 @@ def locate_claim_article_spans(claim: Claim) -> None:
             article.quote_span = (prop_start, boundary)
         else:
             article.quote_span = None
-
-        if article.reference_role == "nested":
-            article.quote_span = None
-
 
 __all__ = ["locate_claim_article_spans"]

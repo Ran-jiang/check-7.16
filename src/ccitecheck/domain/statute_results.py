@@ -68,6 +68,12 @@ class StatuteLocationResolution(BaseModel):
     source_trace: SourceTrace | None = None
 
 
+class NestedReferenceMatch(BaseModel):
+    verdict: Literal["match", "not_nested", "locator_mismatch", "insufficient"]
+    matched_locator: str | None = None
+    reason: str = ""
+
+
 class StatuteFinding(BaseModel):
     code: StatuteErrorCode
     risk_level: Literal["HIGH", "MEDIUM"]
@@ -112,6 +118,12 @@ class StatuteVerificationResult(BaseModel):
     message: str = ""
     meaning_check: StatuteMeaningCheck | None = None
     reference_role: Literal["direct", "nested", "inherited"] = "direct"
+    parent_check_id: str | None = None
+    relation_status: Literal[
+        "confirmed", "parent_failed", "parent_unavailable",
+        "locator_mismatch", "resolved", "insufficient",
+    ] | None = None
+    relation_message: str = ""
     source_locations: list[SourceLocation] = Field(default_factory=list)
     source_attempts: list[SourceTrace] = Field(default_factory=list)
 
@@ -122,6 +134,7 @@ __all__ = [
     "StatuteLocator",
     "StatuteLocationCandidate",
     "StatuteLocationResolution",
+    "NestedReferenceMatch",
     "StatuteMeaningCheck",
     "StatuteVersion",
     "StructuredArticle",

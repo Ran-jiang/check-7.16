@@ -33,6 +33,10 @@ from ..infrastructure.database import (
     list_law_titles,
     resolve_structure_path,
 )
+from .nested_references import (
+    finalize_nested_dependencies,
+    resolve_nested_relations,
+)
 from ..judgment.cases import verify_case_claims
 from ..judgment.semantic import SemanticChecker, SemanticCheckError
 from ..judgment.statutes import (
@@ -89,6 +93,7 @@ def verify_claim_document(
     items = _collect_check_items(claim_document) if include_statutes else []
     _resolve_unresolved_law_names(source_chain, items)
     lookup_results = _run_lookups(source_chain, items, database_path)
+    resolve_nested_relations(items, lookup_results, semantic_checker)
     historical_versions = _load_historical_versions(
         database_path, items, lookup_results
     )
@@ -107,6 +112,7 @@ def verify_claim_document(
     _verify_semantic_locator_candidates(
         source_chain, items, judgments, lookup_results, semantic_checker
     )
+    finalize_nested_dependencies(items, judgments)
     statute_results = _aggregate_duplicate_statute_results(
         _build_statute_results(items, lookup_results, judgments)
     )
@@ -138,6 +144,11 @@ class _CheckItem:
     structure: StructureRef | None = None
     source_resolution: str = "explicit"
     raw_title_candidate: str | None = None
+    parent_index: int | None = None
+    relation_status: str | None = None
+    relation_message: str = ""
+    relation_candidate_article_no: str | None = None
+    nested_context: str = ""
 
     @property
     def skip_lookup(self) -> bool:
@@ -160,6 +171,8 @@ class _CheckItem:
 
     @property
     def document_quote(self) -> str:
+        if self.nested_context:
+            return self.nested_context
         if self.article and self.article.span_status == "located" and self.article.quote_span:
             start, end = self.article.quote_span
             if 0 <= start < end <= len(self.claim.text):
@@ -467,6 +480,27 @@ def _run_judgments(
         if item.skip_lookup:
             results[index] = ([], None)
             continue
+        if item.relation_status in {"parent_unavailable", "insufficient"}:
+            results[index] = (
+                [], skipped_semantic_result("nested_relation_unverifiable")
+            )
+            continue
+        if item.relation_status == "locator_mismatch":
+            results[index] = ([], StatuteMeaningCheck(
+                verdict=CheckVerdict.ISSUE,
+                findings=[StatuteFinding(
+                    code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+                    risk_level="HIGH",
+                    summary="内部转引与主法条实际援引的位置不对应",
+                    suggestion=(
+                        item.relation_message
+                        or "主法条原文援引了同一规则，但当前条号不对应，请核实引用位置。"
+                    ),
+                    location_recheck_required=True,
+                    candidate_article_no=item.relation_candidate_article_no,
+                )],
+            ))
+            continue
         lookup_result, attempts = lookup_results[item.lookup_key]
         if item.structure is not None:
             if lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING:
@@ -654,6 +688,12 @@ def _verify_semantic_locator_candidates(
             candidate = finding.candidate_article_no or _regex_candidate(finding, item)
             if candidate is None:
                 _resolve_by_semantic_recall(locator_source, item, finding)
+                if (
+                    finding.resolved_locator is not None
+                    and item.relation_status == "locator_mismatch"
+                ):
+                    item.relation_status = "resolved"
+                    item.relation_message = finding.suggestion
                 continue
             tried = _run_locator_proposal_loop(
                 locator_source, semantic_checker, item, finding, candidate,
@@ -665,6 +705,12 @@ def _verify_semantic_locator_candidates(
                     f"{finding.suggestion} 已复查{tried_list}，"
                     "均与引文内容不符，请人工确认实际引用条款。"
                 )
+            if (
+                finding.resolved_locator is not None
+                and item.relation_status == "locator_mismatch"
+            ):
+                item.relation_status = "resolved"
+                item.relation_message = finding.suggestion
 
 
 def _run_locator_proposal_loop(
@@ -1037,14 +1083,24 @@ def _build_statute_results(
                 findings=all_findings,
                 outcome=(
                     "bug" if item.out_of_scope
-                    else _statute_outcome(all_findings, meaning_check, item.reference_role, item.jurisdiction)
+                    else _statute_outcome(
+                        all_findings, meaning_check, item.reference_role,
+                        item.jurisdiction, item.relation_status,
+                    )
                 ),
                 message=(
-                    meaning_check.notes if meaning_check
-                    else item.out_of_scope or item.not_verifiable or ""
+                    item.relation_message
+                    or (meaning_check.notes if meaning_check else "")
+                    or item.out_of_scope or item.not_verifiable or ""
                 ),
                 meaning_check=meaning_check,
                 reference_role=item.reference_role,
+                parent_check_id=(
+                    f"vc_{item.parent_index + 1:05d}"
+                    if item.parent_index is not None else None
+                ),
+                relation_status=item.relation_status,
+                relation_message=item.relation_message,
                 source_locations=item.claim.source_locations,
                 source_attempts=attempts or [],
             )
@@ -1105,12 +1161,15 @@ def _statute_outcome(
     meaning_check: StatuteMeaningCheck | None,
     reference_role: str,
     jurisdiction: str = "CN",
+    relation_status: str | None = None,
 ) -> str:
     if any(finding.code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS for finding in findings):
         return "bug"
     if findings:
         return "issue"
-    if reference_role == "nested":
+    if relation_status in {"parent_failed", "parent_unavailable", "insufficient"}:
+        return "bug"
+    if reference_role == "nested" and relation_status in {"confirmed", "resolved"}:
         return "pass"
     if meaning_check is None:
         return "pass"

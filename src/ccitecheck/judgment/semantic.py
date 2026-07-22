@@ -22,6 +22,7 @@ from ..domain.case_results import CaseErrorCode, CaseFinding, CaseHoldingCheck
 from ..domain.checks import CheckVerdict
 from ..domain.revisions import RevisionProposal
 from ..domain.statute_results import (
+    NestedReferenceMatch,
     StatuteErrorCode,
     StatuteFinding,
     StatuteMeaningCheck,
@@ -41,6 +42,7 @@ PROMPT_PATH = (
 )
 REASONING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_reasoning_check.md"
 REPROPOSAL_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_locator_reproposal.md"
+NESTED_REFERENCE_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "nested_reference_match.md"
 _ARTICLE_NO_FORMAT = re.compile(r"第[零一二两三四五六七八九十百千0-9]+条")
 _LLM_ISSUE_TYPES = {
     "曲解权威文本原意",
@@ -55,6 +57,15 @@ class SemanticChecker(Protocol):
         cited_source: str,
         evidence: ArticleEvidence,
     ) -> StatuteMeaningCheck: ...
+
+    def compare_nested_reference(
+        self,
+        *,
+        parent_source: str,
+        parent_text: str,
+        child_source: str,
+        child_text: str,
+    ) -> NestedReferenceMatch: ...
 
 
 class SemanticCheckError(RuntimeError):
@@ -245,6 +256,40 @@ class QwenSemanticChecker:
         }
         raw = _load_json_object(_extract_output_text(self._post_response(payload)))
         return _valid_article_no(raw.get("candidate_article_no"))
+
+    def compare_nested_reference(
+        self,
+        *,
+        parent_source: str,
+        parent_text: str,
+        child_source: str,
+        child_text: str,
+    ) -> NestedReferenceMatch:
+        """只判断 child 是否为 parent 权威条文实际转引的规则。"""
+        payload = {
+            "model": self.model,
+            "input": [
+                {"role": "system", "content": NESTED_REFERENCE_PROMPT_PATH.read_text(encoding="utf-8")},
+                {"role": "user", "content": json.dumps({
+                    "parent_source": parent_source,
+                    "parent_text": parent_text,
+                    "child_source": child_source,
+                    "child_text": child_text,
+                }, ensure_ascii=False)},
+            ],
+            "enable_thinking": False,
+        }
+        raw = _load_json_object(_extract_output_text(self._post_response(payload)))
+        try:
+            return NestedReferenceMatch(
+                verdict=str(raw.get("verdict", "")),
+                matched_locator=_valid_article_no(raw.get("matched_locator")),
+                reason=strip_internal_markers(str(raw.get("reason", ""))),
+            )
+        except ValueError as exc:
+            raise SemanticResponseError(
+                f"Qwen returned invalid nested-reference JSON: {exc}"
+            ) from exc
 
     def _post_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:

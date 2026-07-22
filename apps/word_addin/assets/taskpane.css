@@ -296,8 +296,10 @@ label.scope-row { cursor: pointer; }
 .multi-counts .count-issue { color: var(--danger-fg); }
 .multi-counts .count-bug { color: var(--warning-fg); }
 .multi-counts .count-pass { color: var(--success-fg); }
+.multi-counts .count-nested { color: var(--fg-3); }
 .citation-references { display: grid; gap: 8px; margin-top: 12px; }
 .reference-row { border: 1px solid var(--stroke-2); border-radius: 4px; padding: 8px 10px; background: var(--bg-1); }
+.reference-row.is-nested-reference { margin-left: 18px; border-left: 3px solid var(--stroke-2); }
 .reference-row-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
 .reference-row-summary::-webkit-details-marker { display: none; }
 .reference-row-summary::after { content: "▸"; color: var(--fg-3); font-size: 12px; }

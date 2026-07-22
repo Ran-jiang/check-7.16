@@ -17,6 +17,7 @@ CCiteheck 案号与案例线索识别。
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from typing import Optional
 
 from ..domain.citation import CaseRef, CaseReferenceType
@@ -72,6 +73,13 @@ NAMED_CASE_PATTERN = re.compile(
     r"[^。！？；，\n]{2,60}?(?<![被投申上起控])诉(?![讼称求请]|行为)"
     r"[^。！？；，\n]{1,60}?(?:纠纷)?(?<![预方草议答备提立档])案[）)]?"
 )
+
+# 命名案例中连接原告与被告的“诉”。候选清理前后使用同一判定，避免
+# 《民诉解释》中的“诉”在前缀被截掉后，残余正文仍被当作案名。
+_NAMED_CASE_SEPARATOR = re.compile(
+    r"(?<![被投申上起控])诉(?![讼称求请]|行为)"
+)
+
 
 # 外国判例引用 — 英文案名（Roe v. Wade）与美式判例汇编引注（347 U.S. 483）。
 # 这类案例不在中文案例库核查范围内，识别后标记 jurisdiction=FOREIGN，
@@ -197,16 +205,17 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     Returns:
         CaseRef 列表
     """
-    # 纯“本案/该案”等指代不可检索；同句另有明确外部案例线索时仍保留。
+    named_cases = list(_extract_valid_named_case_candidates(text))
+
+    # 纯“本案/该案”等指代不可检索；同句另有经过结构裁定的外部案例线索时仍保留。
     has_explicit_reference = any(
         pattern.search(text)
         for pattern in (
             CASE_NUMBER_PATTERN,
             GUIDING_CASE_PATTERN,
             GAZETTE_TYPICAL_PATTERN,
-            NAMED_CASE_PATTERN,
         )
-    )
+    ) or bool(named_cases)
     if _has_self_reference(text) and not has_explicit_reference:
         return []
 
@@ -249,10 +258,7 @@ def extract_case_refs(text: str) -> list[CaseRef]:
         ))
 
     # 4. 命名案（X诉Y……案）
-    for m in NAMED_CASE_PATTERN.finditer(text):
-        case_name = _clean_named_case_name(m.group(0))
-        if not case_name:
-            continue
+    for case_name in named_cases:
         numbered = [ref for ref in case_refs if ref.case_number]
         guiding = [
             ref
@@ -293,16 +299,40 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     return case_refs
 
 
-def _clean_named_case_name(value: str) -> str:
-    """清除指导案例编号、引导词等非案名边界文本。"""
-    name = value.strip()
+def _extract_valid_named_case_candidates(text: str) -> Iterator[str]:
+    """召回并裁定可外部检索的“X诉Y案”名称。"""
+    for match in NAMED_CASE_PATTERN.finditer(text):
+        # 正则可在“案件”的“案”处提前结束；这种普通名词不是命名案例结尾。
+        if match.end() < len(text) and text[match.end()] == "件":
+            continue
+        name = _normalize_named_case_candidate(match.group(0))
+        if _is_valid_named_case(name):
+            yield name
+
+
+def _normalize_named_case_candidate(raw_text: str) -> str:
+    """清理候选边界；裁定由 ``_is_valid_named_case`` 单独负责。"""
+    name = raw_text.strip()
     if "：" in name or ":" in name:
         name = re.split(r"[：:]", name)[-1].strip()
     name = re.sub(r"^(?:可参见|参见|例如|譬如|如|案例)\s*", "", name)
     name = name.lstrip("0123456789一二三四五六七八九十百号、：: ")
-    if "诉" not in name or len(name) > 90:
-        return ""
-    return name
+    return name.strip("“”‘’\"' ")
+
+
+def _is_valid_named_case(name: str) -> bool:
+    """验证清理后的名称仍具有完整的当事人“X诉Y案”结构。"""
+    if not name or len(name) > 90 or not name.endswith(("案", "案）", "案)")):
+        return False
+    core = name.removesuffix("）").removesuffix(")")
+    if core.endswith(("本案", "该案", "此案", "前案", "原案")):
+        return False
+    separator = _NAMED_CASE_SEPARATOR.search(core)
+    if separator is None:
+        return False
+    left = core[:separator.start()].strip("“”‘’\"'（）() ")
+    right = core[separator.end():-1].strip("“”‘’\"'（）() ")
+    return bool(left and right)
 
 
 def find_holding_trigger_position(

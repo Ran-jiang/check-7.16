@@ -262,5 +262,5 @@ test("structure citations label distinctly from nested references", () => {
     reference_role: "nested",
     lookup_status: "article_found",
   })
-  assert.equal(nested.typeLabel, "内部转引：仅核验存在性")
+  assert.equal(nested.typeLabel, "内部转引：与主法条援引的规则一致")
 })

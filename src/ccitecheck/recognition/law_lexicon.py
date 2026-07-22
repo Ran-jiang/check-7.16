@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 from threading import RLock
 
-from ..infrastructure.database import generate_aliases
+from ..infrastructure.database import generate_aliases, normalize_title
 from ..infrastructure.paths import PROJECT_ROOT
 
 
@@ -128,7 +128,16 @@ class LawLexicon:
                     start=start,
                     end=offset + len(window),
                 )
-        return None
+
+    def canonical_title_for(self, title: str) -> str | None:
+        """对完整显式法名做符号归一化后的唯一映射，不承担文本坐标计算。"""
+        normalized = normalize_title(title)
+        canonicals = {
+            entry.canonical_title
+            for entry in self.entries
+            if normalize_title(entry.surface_title) == normalized
+        }
+        return next(iter(canonicals)) if len(canonicals) == 1 else None
 
 
 __all__ = ["LawLexicon", "LawLexiconEntry", "LawLexiconMatch"]
