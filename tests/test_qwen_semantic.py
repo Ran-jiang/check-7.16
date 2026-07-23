@@ -531,11 +531,12 @@ def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
 
 
 def test_model_selection_switches_provider_and_protocol(monkeypatch):
-    """三个可选模型：千问走 DashScope /responses，GLM 走 /chat/completions。"""
+    """三个可选模型：千问走 DashScope /responses，DeepSeek 走 /chat/completions。"""
     from ccitecheck.judgment.semantic import QwenSemanticChecker, resolve_model_option
 
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-qwen")
-    monkeypatch.setenv("GLM_API_KEY", "sk-glm")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     monkeypatch.delenv("LLM_DEFAULT_MODEL", raising=False)
 
     plus = QwenSemanticChecker.from_env("qwen3.7-plus")
@@ -544,15 +545,15 @@ def test_model_selection_switches_provider_and_protocol(monkeypatch):
     mx = QwenSemanticChecker.from_env("qwen3.7-max")
     assert mx.provider == "dashscope" and mx.model == "qwen3.7-max"
 
-    glm = QwenSemanticChecker.from_env("glm")
-    assert glm.provider == "zhipu"
-    assert "bigmodel" in glm.base_url
+    deepseek = QwenSemanticChecker.from_env("deepseek")
+    assert deepseek.provider == "deepseek"
+    assert deepseek.base_url == "https://api.deepseek.com"
 
     # 未知标识回退到第一个模型
     assert resolve_model_option("不存在的模型").key == "qwen3.7-plus"
 
 
-def test_glm_uses_chat_completions_endpoint(monkeypatch):
+def test_deepseek_uses_chat_completions_endpoint(monkeypatch):
     captured = {}
 
     def handler(request):
@@ -561,8 +562,9 @@ def test_glm_uses_chat_completions_endpoint(monkeypatch):
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"verdict":"pass"}'}}]})
 
     _install_mock_client(monkeypatch, handler)
-    checker = QwenSemanticChecker(api_key="k", model="glm-5.2",
-                                  base_url="https://open.bigmodel.cn/api/paas/v4", provider="zhipu")
+    checker = QwenSemanticChecker(api_key="k", model="deepseek-v4-pro",
+                                  base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                  provider="deepseek")
     text = checker._chat("系统提示", "用户内容")
 
     assert captured["url"].endswith("/chat/completions")

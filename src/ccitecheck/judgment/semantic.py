@@ -90,7 +90,7 @@ class ModelOption:
 
     key: str          # 前端与 API 使用的标识
     label: str        # 展示名
-    provider: str     # dashscope（通义千问）| zhipu（智谱 GLM）
+    provider: str     # dashscope（通义千问 /responses）| deepseek（DeepSeek 官方 /chat/completions）
     env_model: str    # 读取实际 model id 的环境变量
     default_model: str
     env_keys: tuple[str, ...]  # 该模型的密钥环境变量，按优先级
@@ -101,8 +101,8 @@ SUPPORTED_MODELS: tuple[ModelOption, ...] = (
                 ("QWEN_PLUS_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
     ModelOption("qwen3.7-max", "通义千问 3.7 Max", "dashscope", "QWEN_MAX_MODEL", "qwen3.7-max",
                 ("QWEN_MAX_API_KEY", "DASHSCOPE_API_KEY", "LLM_API_KEY")),
-    ModelOption("glm", "智谱 GLM-5.2", "zhipu", "GLM_MODEL", "glm-5.2",
-                ("GLM_API_KEY", "ZHIPU_API_KEY")),
+    ModelOption("deepseek", "DeepSeek V4 Pro", "deepseek", "DEEPSEEK_MODEL", "deepseek-v4-pro",
+                ("DEEPSEEK_API_KEY",)),
 )
 
 
@@ -113,10 +113,6 @@ def model_api_key(option: "ModelOption") -> str | None:
         if value:
             return value
     return None
-_PROVIDER_DEFAULT_BASE = {
-    "dashscope": DEFAULT_BASE_URL,
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
-}
 
 
 def resolve_model_option(key: str | None) -> ModelOption:
@@ -152,8 +148,12 @@ class QwenSemanticChecker:
             raise SemanticCheckError(
                 f"{option.env_keys[0]} is required for semantic checks with {option.label}"
             )
-        if option.provider == "zhipu":
-            base_url = os.getenv("GLM_BASE_URL") or _PROVIDER_DEFAULT_BASE["zhipu"]
+        if option.provider == "deepseek":
+            base_url = (
+                os.getenv("DEEPSEEK_BASE_URL")
+                or os.getenv("QWEN_BASE_URL")
+                or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+            )
         else:
             base_url = (
                 os.getenv("QWEN_BASE_URL")
@@ -177,14 +177,14 @@ class QwenSemanticChecker:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
-        if self.provider == "zhipu":
-            return _extract_chat_text(
-                self._post("/chat/completions", {"model": self.model, "messages": messages})
+        if self.provider == "dashscope":
+            return _extract_output_text(
+                self._post("/responses", {
+                    "model": self.model, "input": messages, "enable_thinking": False,
+                })
             )
-        return _extract_output_text(
-            self._post("/responses", {
-                "model": self.model, "input": messages, "enable_thinking": False,
-            })
+        return _extract_chat_text(
+            self._post("/chat/completions", {"model": self.model, "messages": messages})
         )
 
     def compare(
@@ -541,7 +541,7 @@ def _load_json_object(text: str) -> dict[str, Any]:
 
 
 def _extract_chat_text(data: dict[str, Any]) -> str:
-    """解析 OpenAI 兼容的 chat/completions 响应（智谱 GLM 等）。"""
+    """解析 OpenAI 兼容的 chat/completions 响应（DeepSeek 官方等）。"""
     for choice in data.get("choices", []):
         content = (choice.get("message") or {}).get("content")
         if isinstance(content, str) and content.strip():
