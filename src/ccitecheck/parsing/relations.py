@@ -41,6 +41,16 @@ def build_block_relations(parsed: ParsedDocument) -> ParsedDocument:
             above = _nearest_above_cell(current, cells)
             if above:
                 _add(current, BlockRelationType.TABLE_ABOVE, above)
+
+    note_blocks: dict[tuple[str, str], Block] = {}
+    for block in ordered:
+        if block.note_type and block.note_id:
+            note_blocks.setdefault((block.note_type, block.note_id), block)
+    for block in ordered:
+        for reference in block.note_references:
+            target = note_blocks.get((reference.note_type, reference.note_id))
+            if target is not None:
+                _add(block, BlockRelationType.NOTE_REFERENCE, target)
     return parsed
 
 

@@ -20,7 +20,7 @@ import re
 from collections.abc import Iterator
 from typing import Optional
 
-from ..domain.citation import CaseRef, CaseReferenceType
+from ..domain.citation import CaseRef
 
 
 # ============================================================
@@ -46,6 +46,15 @@ CASE_NUMBER_PATTERN = re.compile(
 CASE_DOCUMENT_TYPE_PATTERN = re.compile(
     r"^(?:之[一二三四五六七八九十])?(?:民事|刑事|行政|执行)?"
     r"(判决书|裁定书|调解书|决定书|支付令)"
+)
+
+# 无案号但具有完整裁判文书标题结构的案例。要求同时出现案由尾词和正式
+# 文书类型，避免把“提交判决书”等普通叙述识别为案例名称。
+JUDGMENT_DOCUMENT_TITLE_PATTERN = re.compile(
+    r"[^。！？；，\n\t]{2,180}?"
+    r"(?:纠纷|责任纠纷|争议)"
+    r"(?:民事|刑事|行政)?(?:一审|二审|再审)?(?:民事|刑事|行政)?"
+    r"(?:判决书|裁定书)"
 )
 
 # 无案号线索 — 白名单模式
@@ -105,7 +114,7 @@ PRONOUN_PATTERNS = [
 
 # 观点触发词（用于 case_holding_paraphrase 判定）
 HOLDING_TRIGGER_PATTERN = re.compile(
-    r"(裁判要旨|裁判规则|裁判认为|法院认为|认为|指出|明确|表明|确立)"
+    r"(裁判要旨|裁判规则|裁判认为|法院认为|认为|指出|明确|表明|确立|载明|记载|判称)"
 )
 
 
@@ -121,6 +130,59 @@ COURT_KEYWORDS = [
     "军事法院", "铁路运输法院", "铁路运输中级法院",
 ]
 
+_FORMAL_COURT_PATTERN = re.compile(
+    r"(?:(?:[一-鿿]{2,12})(?:省|市|自治区|特别行政区|自治州|地区|盟))?"
+    r"(?:最高人民法院|高级人民法院|中级人民法院|基层人民法院|"
+    r"知识产权法院|互联网法院|金融法院|海事法院|军事法院|"
+    r"铁路运输中级法院|铁路运输法院)"
+)
+_COURT_ALIAS_PATTERN = re.compile(
+    r"最高院|[一-鿿]{2,8}?(?:高院|中院)"
+)
+_COURT_PREFIX_WORDS = ("不服", "案中", "由", "经", "在", "向", "号")
+_MUNICIPALITIES = {"北京", "上海", "天津", "重庆"}
+
+
+def _normalize_court_alias(value: str) -> str:
+    if value == "最高院":
+        return "最高人民法院"
+    level = "高级人民法院" if value.endswith("高院") else "中级人民法院"
+    place = value[:-2]
+    for prefix in _COURT_PREFIX_WORDS:
+        if prefix in place:
+            place = place.rsplit(prefix, 1)[-1]
+    if place.endswith(("省", "市", "自治区", "特别行政区", "自治州", "地区", "盟")):
+        locality = place
+    elif place in _MUNICIPALITIES:
+        locality = f"{place}市"
+    elif level == "高级人民法院":
+        locality = f"{place}省"
+    else:
+        locality = f"{place}市"
+    return locality + level
+
+
+def _clean_formal_court(value: str) -> str:
+    for prefix in _COURT_PREFIX_WORDS:
+        if prefix in value:
+            value = value.rsplit(prefix, 1)[-1]
+    return value
+
+
+def _court_mentions(text: str) -> list[tuple[int, int, str]]:
+    mentions = [
+        (match.start(), match.end(), _clean_formal_court(match.group(0)))
+        for match in _FORMAL_COURT_PATTERN.finditer(text)
+    ]
+    occupied = [(start, end) for start, end, _ in mentions]
+    for match in _COURT_ALIAS_PATTERN.finditer(text):
+        if any(start <= match.start() < end for start, end in occupied):
+            continue
+        mentions.append(
+            (match.start(), match.end(), _normalize_court_alias(match.group(0)))
+        )
+    return sorted(mentions)
+
 
 def extract_court_from_context(text: str) -> Optional[str]:
     """
@@ -135,29 +197,8 @@ def extract_court_from_context(text: str) -> Optional[str]:
     Returns:
         法院名称或 None
     """
-    best_court = None
-    for keyword in COURT_KEYWORDS:
-        if keyword in text:
-            # 尝试向左右扩展获取完整法院名
-            pos = text.find(keyword)
-            # 向前查找省市区前缀
-            prefix_end = pos
-            prefix_start = max(0, pos - 10)
-            prefix = text[prefix_start:prefix_end]
-            # 简单匹配：省/市/自治区名
-            province_match = re.search(
-                r"([一-鿿]{2,4}(?:省|市|自治区|特别行政区))?$",
-                prefix
-            )
-            if province_match and province_match.group(1):
-                locality = re.split(r"[号由经在至]", province_match.group(1))[-1]
-                court_name = locality + keyword
-            else:
-                court_name = keyword
-            best_court = court_name
-            # 在案号上下文中，court 通常是距离案号最近的那个
-            # 此处简化处理，返回最后找到的
-    return best_court
+    mentions = _court_mentions(text)
+    return mentions[-1][2] if mentions else None
 
 
 def _court_near_case_number(text: str, start: int, end: int) -> Optional[str]:
@@ -165,7 +206,16 @@ def _court_near_case_number(text: str, start: int, end: int) -> Optional[str]:
     left = max(text.rfind(mark, 0, start) for mark in "。！？；\n") + 1
     right_candidates = [text.find(mark, end) for mark in "。！？；\n"]
     right = min((pos for pos in right_candidates if pos >= 0), default=len(text))
-    return extract_court_from_context(text[left:right])
+    sentence = text[left:right]
+    mentions = _court_mentions(sentence)
+    if not mentions:
+        return None
+    local_start = start - left
+    local_end = end - left
+    return min(
+        mentions,
+        key=lambda item: min(abs(item[1] - local_start), abs(item[0] - local_end)),
+    )[2]
 
 
 # ============================================================
@@ -195,8 +245,7 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     """
     从文本中提取所有案例引用。
 
-    有案号 → CaseRef(reference_type=with_case_number, case_number=...)
-    无案号但命中白名单 → CaseRef(reference_type=without_case_number, ...)
+    有案号时填写 case_number；无案号时填写可检索的 case_name。
     含指代词 → 不提取
 
     Args:
@@ -228,7 +277,6 @@ def extract_case_refs(text: str) -> list[CaseRef]:
         court = _court_near_case_number(text, m.start(), m.end())
         doc_type_match = CASE_DOCUMENT_TYPE_PATTERN.match(text[m.end():m.end() + 10])
         case_refs.append(CaseRef(
-            reference_type=CaseReferenceType.WITH_CASE_NUMBER,
             case_number=full_match,
             case_name=None,
             court=court,
@@ -238,7 +286,6 @@ def extract_case_refs(text: str) -> list[CaseRef]:
     # 2. 指导案例
     for m in GUIDING_CASE_PATTERN.finditer(text):
         case_refs.append(CaseRef(
-            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
             case_number=None,
             case_name=m.group(0),
             court=None,
@@ -251,7 +298,6 @@ def extract_case_refs(text: str) -> list[CaseRef]:
         if re.search(r"附录[一二三四五六七八九十\d]*[：:]?\s*$", prefix):
             continue
         case_refs.append(CaseRef(
-            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
             case_number=None,
             case_name=m.group(0),
             court=None,
@@ -276,20 +322,31 @@ def extract_case_refs(text: str) -> list[CaseRef]:
         # 避免与已添加的重复
         if not any(c.case_name == case_name for c in case_refs):
             case_refs.append(CaseRef(
-                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
                 case_number=None,
                 case_name=case_name,
                 court=None,
             ))
 
-    # 5. 外国判例（英文案名 / 美式判例引注）→ 标记超出核查边界
+    # 5. 无案号完整裁判文书标题
+    for match in JUDGMENT_DOCUMENT_TITLE_PATTERN.finditer(text):
+        case_name = match.group(0).strip()
+        if any(ref.case_name == case_name for ref in case_refs):
+            continue
+        document_type = "判决书" if case_name.endswith("判决书") else "裁定书"
+        case_refs.append(CaseRef(
+            case_number=None,
+            case_name=case_name,
+            court=None,
+            document_type=document_type,
+        ))
+
+    # 6. 外国判例（英文案名 / 美式判例引注）→ 标记超出核查边界
     for pattern in (FOREIGN_CASE_NAME_PATTERN, FOREIGN_REPORTER_PATTERN):
         for m in pattern.finditer(text):
             clue = m.group(0).strip()
             if any(c.case_name == clue for c in case_refs):
                 continue
             case_refs.append(CaseRef(
-                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
                 case_number=None,
                 case_name=clue,
                 court=None,

@@ -11,7 +11,7 @@ import json
 import os
 import tempfile
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 from urllib.parse import quote
 
@@ -32,8 +32,10 @@ from ccitecheck.infrastructure.config import load_project_env
 from ccitecheck.parsing.feishu import parse_feishu_snapshot
 from ccitecheck.output import summarize_verification
 
+from .docx_text import sanitize_for_docx
 from .schema import (
     DebugEventRequest,
+    DebugRecognitionRequest,
     DocumentCheckRequest,
     DocumentCheckResponse,
     FeishuDocumentCheckRequest,
@@ -49,6 +51,10 @@ from .web_sessions import WEB_SESSIONS, render_revised_docx
 ADDIN_ROOT = PROJECT_ROOT / "apps" / "word_addin"
 FEISHU_ADDIN_ROOT = PROJECT_ROOT / "apps" / "feishu"
 WEB_ROOT = PROJECT_ROOT / "apps" / "web"
+DEBUG_WEB_ROOT = Path(os.getenv(
+    "CCITECHECK_DEBUG_WEB_ROOT",
+    PROJECT_ROOT / "apps" / "debug_recognition",
+))
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 # 保活间隔：核查超过该秒数仍未完成时，向连接发送保活空白防止 WKWebView 超时
@@ -71,7 +77,11 @@ if allowed_origins:
     )
 @app.middleware("http")
 async def limit_public_checks(request: Request, call_next):
-    if request.method == "POST" and request.url.path in {"/api/web/checks", "/api/web/checks/text"}:
+    if request.method == "POST" and request.url.path in {
+        "/api/web/checks",
+        "/api/web/checks/text",
+        "/api/debug/recognition",
+    }:
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
         recent = _web_requests[client]
@@ -88,9 +98,9 @@ async def revalidate_static_assets(request, call_next):
     """Office WebView 磁盘缓存极顽固；静态资源强制每次向服务端校验新鲜度。"""
     response = await call_next(request)
     path = request.url.path
-    if path.startswith(("/assets", "/web")) or path.endswith((".html", ".css", ".js")):
+    if path.startswith(("/assets", "/web", "/debug")) or path.endswith((".html", ".css", ".js")):
         response.headers["Cache-Control"] = "no-cache"
-    if path == "/" or path.startswith("/web"):
+    if path == "/" or path.startswith(("/web", "/debug")):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
@@ -107,6 +117,12 @@ app.mount(
     name="feishu-addon",
 )
 app.mount("/web-assets", StaticFiles(directory=WEB_ROOT / "assets"), name="web-assets")
+if DEBUG_WEB_ROOT.is_dir():
+    app.mount(
+        "/debug/recognition/assets",
+        StaticFiles(directory=DEBUG_WEB_ROOT / "assets"),
+        name="debug-recognition-assets",
+    )
 
 
 @app.get("/", include_in_schema=False)
@@ -117,6 +133,12 @@ def root() -> RedirectResponse:
 @app.get("/web/", include_in_schema=False)
 def web_app() -> FileResponse:
     return FileResponse(WEB_ROOT / "index.html")
+
+
+if DEBUG_WEB_ROOT.is_dir():
+    @app.get("/debug/recognition/", include_in_schema=False)
+    def debug_recognition_app() -> FileResponse:
+        return FileResponse(DEBUG_WEB_ROOT / "index.html")
 
 
 @app.get("/taskpane.html", include_in_schema=False)
@@ -159,6 +181,54 @@ def list_models() -> dict:
 def _validate_scope(request) -> None:
     if not (request.include_statutes or request.include_cases):
         raise HTTPException(status_code=400, detail="请至少选择一种核查范围（法规引用或司法案例）")
+
+
+@app.post("/api/debug/recognition")
+def debug_recognition(request: DebugRecognitionRequest) -> dict:
+    """返回完整解析和识别快照；明确不进入溯源、判定或输出阶段。"""
+    _validate_scope(request)
+    document_bytes = _decode_and_validate(request.docx_base64)
+    run_id = create_run("recognition", document_bytes)
+    write_json(run_id, "request.json", {
+        **request.model_dump(exclude={"docx_base64"}),
+        "docx_base64_length": len(request.docx_base64),
+    })
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="ccitecheck-recognition-") as temporary_dir:
+            document_path = Path(temporary_dir) / "document.docx"
+            document_path.write_bytes(document_bytes)
+            parsed_document = parse_and_validate_document(document_path)
+            claim_document = extract_document_claims(
+                parsed_document,
+                include_statutes=request.include_statutes,
+                include_cases=request.include_cases,
+                law_db=LAW_DB,
+            )
+    except DocumentPipelineError as exc:
+        write_json(run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    write_json(run_id, "parsed-document.json", parsed_document)
+    write_json(run_id, "claim-document.json", claim_document)
+    block_types = Counter(block.type.value for block in parsed_document.blocks)
+    claim_types = Counter(claim.claim_type.value for claim in claim_document.claims)
+    response = {
+        "file_name": Path(request.file_name).name,
+        "debug_run_id": run_id,
+        "summary": {
+            "blocks": len(parsed_document.blocks),
+            "anchors": len(parsed_document.anchors),
+            "chunks": len(parsed_document.chunks),
+            "claims": len(claim_document.claims),
+            "block_types": dict(block_types),
+            "claim_types": dict(claim_types),
+        },
+        "parsed_document": parsed_document.model_dump(mode="json"),
+        "claim_document": claim_document.model_dump(mode="json"),
+    }
+    write_json(run_id, "response.json", response)
+    return response
 
 
 @app.post("/api/checks")
@@ -262,7 +332,7 @@ def check_web_text(request: WebTextCheckRequest) -> WebCheckResponse:
 
     document = DocxDocument()
     for line in request.text.splitlines():
-        document.add_paragraph(line)
+        document.add_paragraph(sanitize_for_docx(line))
     output = io.BytesIO()
     document.save(output)
     return check_web_document(DocumentCheckRequest(
@@ -357,7 +427,7 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
             selection_path = Path(temporary_dir) / "selection.docx"
             selection_doc = DocxDocument()
             for line in lines:
-                selection_doc.add_paragraph(line)
+                selection_doc.add_paragraph(sanitize_for_docx(line))
             selection_doc.save(selection_path)
             parsed_document = parse_and_validate_document(selection_path)
             write_json(debug_run_id, "parsed-selection.json", parsed_document)

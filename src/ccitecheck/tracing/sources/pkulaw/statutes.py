@@ -117,7 +117,7 @@ class PkulawFallbackSource:
         trace.metadata["suggested_title"] = article.title
         return ArticleEvidence(
             law_title=article.title,
-            source_type=request.source_type,
+            source_type=_evidence_source_type(article),
             article_no=article.article_no,
             article_text=article.article_text,
             version_label=_first(article.timeliness),
@@ -438,7 +438,7 @@ class PkulawFallbackSource:
         trace.metadata.update(_article_metadata(article))
         evidence = ArticleEvidence(
             law_title=article.title,
-            source_type=request.source_type,
+            source_type=_evidence_source_type(article),
             article_no=article.article_no,
             article_text=article.article_text,
             version_label=_first(article.timeliness),
@@ -456,7 +456,7 @@ class PkulawFallbackSource:
         trace.metadata["retrieval_method"] = "pkulaw_law_semantic"
         evidence = ArticleEvidence(
             law_title=top.title,
-            source_type=request.source_type,
+            source_type=_evidence_source_type(top),
             article_text="\n\n".join(_format_excerpt(x) for x in related),
             version_label=_first(top.timeliness),
             version_status=_first(top.timeliness),
@@ -482,7 +482,7 @@ class PkulawFallbackSource:
     def _metadata_evidence(self, request, trace, record):
         return ArticleEvidence(
             law_title=record.title,
-            source_type=request.source_type,
+            source_type=_evidence_source_type(record),
             article_no=request.article_no,
             article_text=None,
             version_label=_first(record.timeliness),
@@ -495,7 +495,7 @@ class PkulawFallbackSource:
     def _candidate_evidence(self, request, trace, article):
         return ArticleEvidence(
             law_title=article.title,
-            source_type=request.source_type,
+            source_type=_evidence_source_type(article),
             article_no=article.article_no,
             article_text=article.article_text,
             version_label=_first(article.timeliness),
@@ -570,6 +570,11 @@ def _law_record_metadata(record: PkulawLawRecord) -> dict:
         "timeliness": record.timeliness,
         "effectiveness": record.effectiveness,
     }
+
+
+def _evidence_source_type(record: PkulawLawRecord) -> str | None:
+    """只保存权威数据源实际返回的文件类别，不根据标题猜测。"""
+    return str(record.category[0]) if record.category else None
 
 
 def _first(values: list[str]) -> Optional[str]:

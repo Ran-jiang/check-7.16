@@ -21,7 +21,7 @@ export {
 
 const screens = ["home-screen", "progress-screen", "results-screen", "help-screen"]
 
-const REFERENCE_ROLE_LABELS = { nested: "内部转引", inherited: "承前引用" }
+const REFERENCE_ROLE_LABELS = { nested: "内部转引", carry_forward: "承前条款" }
 
 function viewOf(check, options = {}) {
   return check.check_kind === "case" ? caseViewOf(check, options) : statuteViewOf(check, options)
@@ -239,6 +239,7 @@ export class CheckUi {
   createResultCard(check) {
     const view = viewOf(check, { compact: true })
     const card = element("article", `result-card is-${view.state}`)
+    if (check.note_context) card.append(element("div", "card-type", "脚注来源"))
     card.append(...this.createQuoteZone(check.claim_text, check, check.card_id || check.check_id))
     card.append(this.createSectionLabel(view.refLine.label))
     const rows = element("div", "citation-references")
@@ -249,12 +250,12 @@ export class CheckUi {
 
   createMultiReferenceCard(card) {
     const views = card.references.map(reference =>
-      statuteViewOf(reference, { compact: true })
+      viewOf(reference, { compact: true })
     )
     const container = element("article", "result-card statute-group is-multiple")
 
     const top = element("div", "result-topline")
-    top.append(element("div", "card-type", `本段共 ${views.length} 条引用`))
+    top.append(element("div", "card-type", `${card.note_context ? "脚注 · " : ""}本段共 ${views.length} 条引用`))
     const counts = element("div", "multi-counts")
     const primaryViews = views.filter(view => view.raw.reference_role !== "nested")
     const nestedCount = views.length - primaryViews.length

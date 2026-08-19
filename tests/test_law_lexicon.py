@@ -2,7 +2,10 @@ from pathlib import Path
 
 from ccitecheck.infrastructure.database import init_db, upsert_law, connect
 from ccitecheck.recognition.law_lexicon import LawLexicon, LawLexiconEntry
-from ccitecheck.recognition.statutes import extract_legal_sources
+from ccitecheck.recognition.statutes import (
+    extract_legal_sources,
+    extract_unresolved_legal_mentions,
+)
 
 
 def _small_lexicon() -> LawLexicon:
@@ -71,9 +74,8 @@ def test_right_anchored_bare_law_uses_lexicon_without_noise_cleaning():
     assert len(sources) == 1
     assert sources[0].title == "民法典"
     assert sources[0].canonical_title == "中华人民共和国民法典"
-    assert sources[0].resolution == "bare_lexicon"
-    assert sources[0].source_span == (11, 14)
-    assert sources[0].articles[0].source_span == (11, 14)
+    assert sources[0].recognition.form == "bare"
+    assert sources[0].recognition.mention_span == (11, 14)
 
 
 def test_explicit_and_bare_same_law_merge_articles_instead_of_dropping_bare_one():
@@ -203,13 +205,14 @@ def test_bare_article_chain_stops_before_another_law():
 
 
 def test_unknown_bare_law_is_unresolved_and_keeps_deterministic_span():
-    sources = extract_legal_sources("依照城市房地产管理法第38条", _small_lexicon())
+    text = "依照城市房地产管理法第38条"
+    sources = extract_legal_sources(text, _small_lexicon())
+    mentions = extract_unresolved_legal_mentions(text, _small_lexicon())
 
-    assert len(sources) == 1
-    assert sources[0].title == ""
-    assert sources[0].resolution == "bare_unresolved"
-    assert sources[0].raw_title_candidate == "依照城市房地产管理法"
-    assert sources[0].source_span == (9, 10)
+    assert sources == []
+    assert len(mentions) == 1
+    assert mentions[0].raw_text == "城市房地产管理法"
+    assert mentions[0].resolution_anchor_span == (9, 10)
 
 
 def test_pseudo_law_suffix_is_not_recognized():

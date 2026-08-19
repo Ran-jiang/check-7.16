@@ -4,12 +4,10 @@ CCiteheck 法源与条款号识别。
 负责：
   1. 从文本中识别《》书名号引用的法律规范
   2. 提取条款号（条/款/项）并归属到对应的法源
-  3. 推断法律规范类型（source_type）
 
 设计决策：
   - 条款号必须出现在对应法源书名号之后、下一个法源书名号之前
   - 排除明显非法律规范文件（合同、协议、授权书等）
-  - source_type 推断是确定性规则，机关名优先于标题后缀
   - 法源后无条款号时仍构成法源，articles 为空
 """
 
@@ -24,9 +22,10 @@ from ..infrastructure.database import normalize_title
 from ..domain.citation import (
     ArticleRef,
     LegalSource,
-    LegalSourceType,
+    LegalSourceRecognition,
     StructureRef,
     StructureUnit,
+    UnresolvedLegalMention,
 )
 from .jurisdiction import detect_jurisdiction
 from .law_lexicon import LawLexicon
@@ -42,7 +41,9 @@ from .law_lexicon import LawLexicon
 LEGAL_SOURCE_PATTERN = re.compile(r"《([^》]+)》")
 
 _SHORT_NAME_BRIDGE = re.compile(
-    r"\s*[（(]\s*(?:以下简称|下称|简称为|简称)\s*"
+    r"\s*[（(]\s*"
+    r"(?:(?!以下简称|下称|简称为|简称)[^（）()《》]{1,80}[，,；;]\s*)?"
+    r"(?:以下简称|下称|简称为|简称)\s*"
 )
 _SHORT_NAME_CLOSE = re.compile(r"\s*[）)]")
 
@@ -68,6 +69,12 @@ ARTICLE_PATTERN = re.compile(
 # 条号范围：第X条至第Y条
 ARTICLE_RANGE_PATTERN = re.compile(
     rf"第({_CN_NUM})条至第({_CN_NUM})条"
+)
+
+# 省略“第”的阿拉伯数字范围，如“58-69条”“58—69条”。范围仅在已经
+# 归属于某个明确法源的 segment 内抽取，并限制跨度，避免年份和编号误报。
+COMPACT_ARTICLE_RANGE_PATTERN = re.compile(
+    r"(?<![\d])([1-9]\d{0,3})\s*[-—–~～至]\s*([1-9]\d{0,3})条"
 )
 
 # 款：第X款
@@ -184,49 +191,6 @@ NON_LEGAL_KEYWORDS = [
     "回复函", "答复函", "函",
     "账号管理", "用户协议",
 ]
-
-# ============================================================
-# 法源类型推断。
-# ============================================================
-
-def infer_source_type(title: str) -> LegalSourceType:
-    """
-    推断法律规范类型（确定性规则，机关名优先于后缀）。
-
-    简化后只有三类：
-      1. judicial_interpretation — 最高法/最高检机关名 或 含"解释""批复"
-      2. law — 以"法""法典"结尾（排除"办法"等）
-      3. other_normative_document — 白名单内其余全部后缀
-
-    对于含括号注解的标题（如"反不正当竞争法（2019年修正）"），
-    先剥离括号再判断，确保能匹配到正确的后缀。
-
-    白名单外的标题不会进入此函数（由 _is_legal_source 过滤）。
-    因此此函数不做 unknown 处理。
-
-    Args:
-        title: 法规名称（不含书名号）
-
-    Returns:
-        规范类型（绝不会返回 unknown）
-    """
-    # 使用剥离括号注解后的标题做判断
-    check_title = _strip_parenthetical(title)
-
-    # 规则1：司法解释（机关名 或 关键词优先）
-    if ("最高人民法院" in check_title
-            or "最高人民检察院" in check_title
-            or "解释" in check_title
-            or "批复" in check_title):
-        return LegalSourceType.JUDICIAL_INTERPRETATION
-
-    # 规则2：以"法"或"法典"结尾（排除"办法""实施办法""暂行办法"等）
-    if check_title.endswith("法典") or _is_law_suffix(check_title):
-        return LegalSourceType.LAW
-
-    # 规则3：其余在白名单内的 → other_normative_document
-    return LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-
 
 def _is_law_suffix(title: str) -> bool:
     """
@@ -355,7 +319,8 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
     # 查找所有"项"引用
     item_matches = list(ITEM_PATTERN.finditer(text))
 
-    if not article_matches:
+    compact_ranges = list(COMPACT_ARTICLE_RANGE_PATTERN.finditer(text))
+    if not article_matches and not compact_ranges:
         # 没有明确的条款号，返回空列表
         # 法源仍会被保留（articles 为空）
         return []
@@ -393,6 +358,19 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
             paragraphs=paras,
             items=items,
         ))
+
+    # “58-69条”本身不会被 ARTICLE_PATTERN 命中，直接按范围展开。
+    existing = {a.article for a in articles}
+    for rm in compact_ranges:
+        start = int(rm.group(1))
+        end = int(rm.group(2))
+        if not (0 < start <= end and end - start <= 50):
+            continue
+        for number in range(start, end + 1):
+            article_text = f"第{number}条"
+            if article_text not in existing:
+                existing.add(article_text)
+                articles.append(ArticleRef(article=article_text))
 
     # "第X条至第Y条"范围展开：补全被跳过的中间条号
     # （ARTICLE_PATTERN 只命中范围的两端，如"第四十三条至第四十五条"
@@ -501,15 +479,13 @@ def extract_legal_sources(
             # 从该区间提取条款号
             articles = _extract_articles_from_text(segment)
 
-            source_type = infer_source_type(title)
-
             canonical_title = declared_aliases.get(
                 normalize_title(title)
             ) or _canonical_explicit_title(title, lexicon)
             source = LegalSource(
                 title=title,
                 canonical_title=canonical_title,
-                source_type=source_type,
+                recognition={"form": "explicit", "mention_span": m.span(1)},
                 jurisdiction=detect_jurisdiction(title, text[:m.start()]),
                 articles=articles,
                 # 章节引用只在无条款引用时抽取（有条号时章节仅是定位前缀）
@@ -671,7 +647,7 @@ class BareCitationMatch:
     title_end: int
     citation_end: int
     article_text: str
-    resolution: str
+    resolved: bool
 
 
 _BARE_WINDOW_BOUNDARY = re.compile(r"[，。！？；：、\n]")
@@ -702,7 +678,7 @@ def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMat
                 title_end=matched.end,
                 citation_end=citation_end,
                 article_text=text[anchor.start("article"):citation_end],
-                resolution="bare_lexicon",
+                resolved=True,
             ))
             previous_end = citation_end
             continue
@@ -720,7 +696,7 @@ def _find_bare_citations(text: str, lexicon: LawLexicon) -> list[BareCitationMat
             title_end=law_end,
             citation_end=citation_end,
             article_text=text[anchor.start("article"):citation_end],
-            resolution="bare_unresolved",
+            resolved=False,
         ))
         previous_end = citation_end
     return results
@@ -738,9 +714,9 @@ def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalS
     results: list[LegalSource] = []
     by_key: dict[str, LegalSource] = {}
     for match in matches:
+        if not match.resolved:
+            continue
         articles = _extract_articles_from_text(match.article_text)
-        for article in articles:
-            article.source_span = (match.title_start, match.title_end)
         key = match.canonical_title or f"unresolved:{match.title_start}:{match.citation_end}"
         existing = by_key.get(key)
         if existing is not None:
@@ -749,19 +725,38 @@ def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalS
         source = LegalSource(
             title=match.title,
             canonical_title=match.canonical_title,
-            raw_title_candidate=match.raw_title_candidate,
-            source_span=(match.title_start, match.title_end),
-            source_type=(
-                infer_source_type(match.canonical_title or match.title)
-                if match.canonical_title or match.title
-                else LegalSourceType.LAW
+            recognition=LegalSourceRecognition(
+                form="bare",
+                mention_span=(match.title_start, match.title_end),
+                resolver="lexicon",
             ),
             articles=articles,
-            resolution=match.resolution,
         )
         results.append(source)
         by_key[key] = source
     return results
+
+
+def extract_unresolved_legal_mentions(
+    text: str,
+    lexicon: LawLexicon | None = None,
+) -> list[UnresolvedLegalMention]:
+    """返回结构已识别、但法规身份尚未确认的裸法名候选。"""
+    lexicon = lexicon or LawLexicon.load()
+    mentions: list[UnresolvedLegalMention] = []
+    for match in _find_bare_citations(text, lexicon):
+        if match.resolved:
+            continue
+        raw_text = (
+            match.raw_title_candidate or text[match.title_start:match.title_end]
+        ).strip()
+        raw_text = re.sub(r"^(?:依据|根据|依照|按照|参照|适用)\s*", "", raw_text)
+        mentions.append(UnresolvedLegalMention(
+            raw_text=raw_text,
+            articles=_extract_articles_from_text(match.article_text),
+            resolution_anchor_span=(match.title_start, match.title_end),
+        ))
+    return mentions
 
 
 def _merge_articles(target: list[ArticleRef], incoming: list[ArticleRef]) -> None:
@@ -769,11 +764,6 @@ def _merge_articles(target: list[ArticleRef], incoming: list[ArticleRef]) -> Non
         existing = next((
             item for item in target
             if item.article == article.article
-            and (
-                item.source_span == article.source_span
-                or item.source_span is None
-                or article.source_span is None
-            )
         ), None)
         if existing is None:
             target.append(article)
@@ -926,9 +916,8 @@ def _extract_standard_citations(
         # 标准名称部分不做强制要求，有则更好
         results.append(LegalSource(
             title=std_id,
-            source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT,
             articles=[],
-            resolution="explicit",
+            recognition=LegalSourceRecognition(form="explicit", resolver="direct"),
         ))
 
     return results

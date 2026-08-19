@@ -155,6 +155,38 @@ def test_web_page_has_public_security_and_cache_headers():
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+def test_debug_recognition_runs_only_parse_and_recognition(tmp_path, monkeypatch):
+    db_path = tmp_path / "laws.sqlite"
+    _seed_law_db(db_path)
+    document = Document()
+    document.add_heading("合同责任", level=1)
+    document.add_paragraph("依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。")
+    buffer = BytesIO()
+    document.save(buffer)
+
+    api_module = importlib.import_module("apps.api.app")
+    monkeypatch.setattr(api_module, "LAW_DB", db_path)
+    monkeypatch.setattr(api_module, "create_run", lambda *args, **kwargs: None)
+    client = TestClient(api_module.app)
+    response = client.post("/api/debug/recognition", json={
+        "file_name": "识别测试.docx",
+        "docx_base64": base64.b64encode(buffer.getvalue()).decode(),
+        "include_statutes": True,
+        "include_cases": False,
+    })
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["file_name"] == "识别测试.docx"
+    assert payload["summary"]["blocks"] == 2
+    assert payload["summary"]["claims"] == 1
+    assert payload["summary"]["claim_types"] == {"legal_source_claim": 1}
+    assert payload["parsed_document"]["blocks"][0]["type"] == "heading"
+    claim = payload["claim_document"]["claims"][0]
+    assert claim["entities"]["legal_sources"][0]["title"] == "中华人民共和国民法典"
+    assert claim["source_locations"][0]["block_id"] == "word:p:1"
+
+
 def _seed_law_db(db_path):
     init_db(db_path)
     with connect(db_path) as connection:

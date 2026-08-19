@@ -5,21 +5,55 @@ export function buildResultCards(verification) {
   const cards = new Map()
   for (const result of verification.statute_results || []) {
     const normalized = normalizeStatuteResult(result)
-    const card = cards.get(result.card_id) || {
+    const groupId = result.display_group_id || result.card_id
+    const card = cards.get(groupId) || {
       card_id: result.card_id,
+      display_group_id: groupId,
       claim_id: result.claim_id,
       claim_text: result.claim_text,
-      source_locations: result.source_locations,
+      source_locations: result.note_context?.referenced_from || result.source_locations,
+      note_source_locations: result.note_context ? result.source_locations : [],
+      sort_source_locations: result.note_context?.referenced_from || result.source_locations,
+      note_context: result.note_context || null,
       references: [],
       check_kind: "statute-group",
     }
+    if (result.note_context) {
+      card.note_context = result.note_context
+      card.note_source_locations = result.source_locations
+      card.sort_source_locations = result.note_context.referenced_from || card.sort_source_locations
+    }
     card.references.push(normalized)
-    cards.set(result.card_id, card)
+    cards.set(groupId, card)
   }
-  return [
-    ...cards.values(),
-    ...(verification.case_results || []).map(normalizeCaseResult),
-  ]
+  for (const result of verification.case_results || []) {
+    const normalized = normalizeCaseResult(result)
+    const groupId = result.display_group_id || result.check_id
+    const card = cards.get(groupId) || {
+      card_id: result.check_id,
+      display_group_id: groupId,
+      claim_id: result.claim_id,
+      claim_text: result.claim_text,
+      source_locations: result.note_context?.referenced_from || result.source_locations,
+      note_source_locations: result.note_context ? result.source_locations : [],
+      sort_source_locations: result.note_context?.referenced_from || result.source_locations,
+      note_context: result.note_context || null,
+      references: [],
+      check_kind: "statute-group",
+    }
+    if (result.note_context) {
+      card.note_context = result.note_context
+      card.note_source_locations = result.source_locations
+      card.sort_source_locations = result.note_context.referenced_from || card.sort_source_locations
+    }
+    card.references.push(normalized)
+    cards.set(groupId, card)
+  }
+  return [...cards.values()].map(card =>
+    card.references.length === 1 && card.references[0].check_kind === "case"
+      ? card.references[0]
+      : card
+  )
 }
 
 export function normalizeStatuteResult(result) {

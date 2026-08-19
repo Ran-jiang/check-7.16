@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from ccitecheck.domain.citation import (
     CaseCitationEntities, Claim, ClaimCandidate, ClaimType,
     LegalSourceClaimEntities,
-    LegalSource, LegalSourceType,
+    LegalSource,
 )
 from ccitecheck.recognition.validators import validate_claim_document
 
@@ -99,7 +99,7 @@ def _make_valid_claim(anchor_ids: list[str], text: str) -> Claim:
             legal_sources=[
                 LegalSource(
                     title="民法典",
-                    source_type=LegalSourceType.LAW,
+
                     articles=[],
                 )
             ]
@@ -125,7 +125,7 @@ def test_valid_claim_document_passes():
             legal_sources=[
                 LegalSource(
                     title="民法典",
-                    source_type=LegalSourceType.LAW,
+
                     articles=[],
                 )
             ]

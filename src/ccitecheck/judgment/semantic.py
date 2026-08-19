@@ -247,9 +247,14 @@ class QwenSemanticChecker:
                 f"Qwen returned invalid semantic JSON: {exc}"
             ) from exc
 
-    def compare_holding(self, paraphrase_text: str, holding_text: str, case_title: str) -> CaseHoldingCheck:
+    def compare_holding(
+        self,
+        paraphrase_text: str,
+        authoritative_holding_text: str,
+        case_title: str,
+    ) -> CaseHoldingCheck:
         assertions = split_reasoning_sentences(paraphrase_text) or [clean_reasoning_text(paraphrase_text)]
-        sentences = split_reasoning_sentences(holding_text)
+        sentences = split_reasoning_sentences(authoritative_holding_text)
         truncated = reasoning_is_truncated(sentences)
         raw_text = self._chat(
             REASONING_PROMPT_PATH.read_text(encoding="utf-8"),

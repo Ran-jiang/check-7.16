@@ -21,12 +21,11 @@ from ccitecheck.domain.document import (
 )
 from ccitecheck.recognition.rules import extract_rule_candidates
 from ccitecheck.domain.citation import (
-    ClaimType, LegalSourceType,
-    CaseReferenceType,
+    ClaimType,
 )
 from ccitecheck.recognition.service import build_indexes
 from ccitecheck.recognition.statutes import (
-    extract_legal_sources, extract_partial_refs, infer_source_type,
+    extract_legal_sources, extract_partial_refs,
 )
 
 
@@ -121,7 +120,7 @@ def test_single_legal_source_claim():
     legal_sources = c.entities.legal_sources
     assert len(legal_sources) == 1
     assert legal_sources[0].title == "中华人民共和国劳动合同法"
-    assert legal_sources[0].source_type == LegalSourceType.LAW
+    assert "source_type" not in legal_sources[0].model_dump()
     assert len(legal_sources[0].articles) == 1
     assert legal_sources[0].articles[0].article == "第三十七条"
 
@@ -237,11 +236,8 @@ def test_case_number_variants(case_text):
     assert c.claim_type == ClaimType.CASE_CITATION
     case_refs = c.entities.case_refs
     assert len(case_refs) >= 1
-    # 至少有一个 with_case_number
-    has_exact = any(
-        cr.reference_type == CaseReferenceType.WITH_CASE_NUMBER
-        for cr in case_refs
-    )
+    # 有案号直接由 case_number 判断，不再保存可推导的 reference_type。
+    has_exact = any(cr.case_number for cr in case_refs)
     assert has_exact
 
 
@@ -265,12 +261,9 @@ def test_guiding_case():
     ]
     assert len(case_candidates) >= 1
     c = case_candidates[0]
-    # 验证至少有一个 without_case_number 的 case_ref
+    # 验证至少有一个无案号、但有可检索案名的 case_ref
     case_refs = c.entities.case_refs if hasattr(c.entities, "case_refs") else []
-    has_wo_num = any(
-        cr.reference_type == CaseReferenceType.WITHOUT_CASE_NUMBER
-        for cr in case_refs
-    )
+    has_wo_num = any(not cr.case_number and cr.case_name for cr in case_refs)
     assert has_wo_num, f"Expected without_case_number in case_refs={case_refs}"
 
 
@@ -293,8 +286,8 @@ def test_case_holding_paraphrase():
     ]
     assert len(holding_candidates) == 1
     c = holding_candidates[0]
-    assert hasattr(c.entities, "holding_text")
-    assert "优先保护" in c.entities.holding_text or len(c.entities.holding_text) > 0
+    assert c.entities.verification is not None
+    assert "优先保护" in c.entities.verification.text
 
 
 def test_guiding_case_biaoming_is_holding_paraphrase():
@@ -376,41 +369,6 @@ def test_non_legal_source_excluded(non_legal_text):
 
 
 # ============================================================
-# Test 11: source_type 推断
-# ============================================================
-
-def test_source_type_inference():
-    """source_type 推断规则"""
-    # 司法解释
-    assert infer_source_type("最高人民法院关于适用〈民法典〉若干问题的解释") == LegalSourceType.JUDICIAL_INTERPRETATION
-    assert infer_source_type("最高人民法院关于审理商标案件的批复") == LegalSourceType.JUDICIAL_INTERPRETATION
-
-    # 法律
-    assert infer_source_type("中华人民共和国民法典") == LegalSourceType.LAW
-    assert infer_source_type("中华人民共和国商标法") == LegalSourceType.LAW
-    assert infer_source_type("中华人民共和国劳动合同法") == LegalSourceType.LAW
-
-    # 行政法规/规章/规范性文件 → 统一归入 other_normative_document
-    assert infer_source_type("商标法实施条例") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("卫星导航地图管理办法") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("互联网信息服务管理办法") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("商标评审规则") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("关于加强知识产权保护的决定") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("关于审理商标案件的指导意见") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("企业信息公示暂行条例") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-    assert infer_source_type("不动产登记暂行条例实施办法") == LegalSourceType.OTHER_NORMATIVE_DOCUMENT
-
-    # 无后缀 → 不会进入此函数（由 _is_legal_source 在调用前过滤）
-    # 此测试只验证 infer_source_type 对白名单内标题的分类
-
-    # 验证白名单过滤：无后缀标题不会被识别为法源
-    from ccitecheck.recognition.statutes import _is_legal_source
-    assert not _is_legal_source("某公司内部管理制度汇编")
-    assert not _is_legal_source("※※收藏")
-    assert not _is_legal_source("x环线·地图")
-
-
-# ============================================================
 # 法源前向继承（承前省略法源名的指代消解）
 # ============================================================
 
@@ -451,8 +409,8 @@ def test_carry_forward_entity_only_not_anchor_chain():
         assert c.claim_type == ClaimType.LEGAL_SOURCE_CLAIM
         for ls in c.entities.legal_sources:
             assert ls.title == "中华人民共和国反不正当竞争法"
-            assert ls.resolution == "inherited"
-            assert ls.inherited_from_anchor == "line00001"
+            assert ls.recognition.form == "inherited"
+            assert ls.recognition.inherited_from.anchor_id == "line00001"
 
     # 没有任何 claim 跨 2 个以上 anchor
     for c in candidates:

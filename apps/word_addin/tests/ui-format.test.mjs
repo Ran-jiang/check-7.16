@@ -47,6 +47,17 @@ test("cards follow citation order instead of verification state", () => {
   )
 })
 
+test("footnote cards sort by the body reference instead of the appended note block", () => {
+  const checks = [
+    { check_id: "vc_note", source_locations: [{ block_id: "word:footnote:2" }], sort_source_locations: [{ block_id: "word:p:2" }] },
+    { check_id: "vc_body", source_locations: [{ block_id: "word:p:5" }] },
+  ]
+  assert.deepEqual(
+    orderChecksByCitation(checks).map(item => item.check_id),
+    ["vc_note", "vc_body"],
+  )
+})
+
 test("hides obsolete lar links returned by the MCP law-list service", () => {
   const check = { evidence: { data_source: {
     source_url: "[北大法宝](https://www.pkulaw.com/lar/dead.html?way=mcp)",
@@ -70,7 +81,8 @@ test("formats one article with multiple paragraphs as one reference", () => {
 
 test("unresolved bare law keeps raw text without invented book-title marks", () => {
   assert.equal(formatReference({
-    source_resolution: "bare_unresolved",
+    recognition_form: "bare",
+    law_identity_resolved: false,
     law_title: "依照城市房地产管理法",
     article_no: "第38条",
     paragraphs: [],

@@ -80,7 +80,7 @@ def parse_article_records(data: Any) -> list[PkulawArticle]:
         record = flatten_metadata(raw)
         title = first_value(record, "Title", "title")
         article_text = first_value(
-            record, "FullText", "fulltext", "ArticleText", "article_text"
+            record, "FullText", "fulltext", "ArticleText", "article_text", "article"
         )
         if not title or not article_text:
             continue

@@ -9,7 +9,7 @@ from .statute_results import StatuteVerificationResult
 
 
 class FrontendVerificationDocument(BaseModel):
-    schema_version: str = "0.5"
+    schema_version: str = "0.7"
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     source_claim_doc_id: str
     statute_results: list[StatuteVerificationResult] = Field(default_factory=list)

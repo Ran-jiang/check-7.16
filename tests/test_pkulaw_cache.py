@@ -128,7 +128,6 @@ def test_repeating_same_lookup_uses_only_cached_pkulaw_results(cache_db):
     source = PkulawFallbackSource(CachedPkulawClient(fake, cache_db))
     request = LookupRequest(
         law_title="中华人民共和国民法典",
-        source_type="law",
         article_no="第五百七十七条",
         context_text="当事人一方不履行合同义务，应当承担违约责任。",
     )

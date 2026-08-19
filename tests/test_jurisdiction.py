@@ -11,10 +11,8 @@ from ccitecheck.domain.citation import (
     ClaimType,
     CaseCitationEntities,
     CaseRef,
-    CaseReferenceType,
     LegalSource,
     LegalSourceClaimEntities,
-    LegalSourceType,
 )
 from ccitecheck.domain.evidence import CaseLookupStatus, LookupStatus
 from ccitecheck.infrastructure.database import init_db
@@ -98,7 +96,7 @@ def _statute_claim_doc(jurisdiction: str, title: str = "著作权法") -> ClaimD
                     legal_sources=[
                         LegalSource(
                             title=title,
-                            source_type=LegalSourceType.LAW,
+
                             jurisdiction=jurisdiction,
                             articles=[ArticleRef(article="第二条")],
                         )
@@ -161,7 +159,7 @@ def test_foreign_case_is_intercepted_without_recognizer_calls():
                 entities=CaseCitationEntities(
                     case_refs=[
                         CaseRef(
-                            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+
                             case_name="Roe v. Wade",
                             jurisdiction="FOREIGN",
                         )

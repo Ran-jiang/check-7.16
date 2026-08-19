@@ -42,12 +42,24 @@ class BlockRelationType(str, Enum):
     LIST_LEAD = "list_lead"
     TABLE_LEFT = "table_left"
     TABLE_ABOVE = "table_above"
+    NOTE_REFERENCE = "note_reference"
 
 
 class BlockRelation(BaseModel):
     """从当前 block 指向上下文 block 的显式关系。"""
     relation_type: BlockRelationType
     target_block_id: str
+
+
+class NoteReference(BaseModel):
+    """正文中指向脚注或尾注的显式引用点。"""
+
+    note_type: Literal["footnote", "endnote"]
+    note_id: str
+    char_offset: int = Field(
+        ge=0,
+        description="引用标记在归一化 block.text 中对应的插入位置",
+    )
 
 
 # ---- Anchor Layer ----
@@ -91,6 +103,10 @@ class Block(BaseModel):
     para_index: Optional[int] = Field(default=None, description="原始段落序号，table_cell 时为 null")
     note_type: Optional[str] = Field(default=None, description="footnote/endnote；正文为 null")
     note_id: Optional[str] = Field(default=None, description="Word 注释 ID；正文为 null")
+    note_references: list[NoteReference] = Field(
+        default_factory=list,
+        description="正文块中出现的脚注/尾注引用点",
+    )
     # ---- 表格定位 ----
     table_index: Optional[int] = Field(default=None, description="表格编号，从0开始")
     row_index: Optional[int] = Field(default=None, description="行编号，从0开始")

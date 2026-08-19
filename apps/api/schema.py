@@ -18,6 +18,15 @@ class DocumentCheckRequest(BaseModel):
     include_cases: bool = True
 
 
+class DebugRecognitionRequest(BaseModel):
+    """只运行 DOCX 解析与引用识别，不访问外部溯源或语义模型。"""
+
+    file_name: str = Field(min_length=1, max_length=255)
+    docx_base64: str = Field(min_length=1)
+    include_statutes: bool = True
+    include_cases: bool = True
+
+
 class SelectionSourceBlock(BaseModel):
     """选区中一行文本在当前 Word 文档里的真实起点。"""
 

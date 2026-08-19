@@ -15,7 +15,7 @@ export const STATUTE_ERROR_LABELS = {
 }
 
 export function formatReference(check) {
-  if (check.source_resolution === "bare_unresolved") {
+  if (check.law_identity_resolved === false) {
     return `${check.law_title || "未确定法名"}${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`
   }
   return `《${check.law_title}》${check.article_no || ""}${(check.paragraphs || []).join("、")}${(check.items || []).join("、")}`

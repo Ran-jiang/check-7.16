@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ============================================================
@@ -50,32 +50,17 @@ class ClaimType(str, Enum):
     CASE_HOLDING_PARAPHRASE = "case_holding_paraphrase"
 
 
-class LegalSourceType(str, Enum):
-    """
-    法律规范类型。
-
-    只保留三个值，对应明确可路由的数据库：
-      - law: 法律（全国人大及其常委会制定）
-      - judicial_interpretation: 司法解释（最高法/最高检）
-      - other_normative_document: 行政法规、部门规章、地方性法规、
-        地方政府规章、规范性文件等所有其他法律规范
-
-    后缀到类型的映射及推断规则见 recognition.statutes.infer_source_type。
-    """
-    LAW = "law"
-    JUDICIAL_INTERPRETATION = "judicial_interpretation"
-    OTHER_NORMATIVE_DOCUMENT = "other_normative_document"
-
-
-class CaseReferenceType(str, Enum):
-    """案例引用类型"""
-    WITH_CASE_NUMBER = "with_case_number"
-    WITHOUT_CASE_NUMBER = "without_case_number"
-
-
 # ============================================================
 # 实体子模型（按 claim_type 分别定义）
 # ============================================================
+
+class VerificationTarget(BaseModel):
+    """文书中真正需要与权威证据比较的文本。"""
+
+    text: str
+    span: tuple[int, int] | None = None
+    mode: Literal["direct_quote", "paraphrase", "application"] = "paraphrase"
+    strategy: Literal["direct", "claim_fallback"] = "direct"
 
 class ArticleRef(BaseModel):
     """
@@ -93,16 +78,7 @@ class ArticleRef(BaseModel):
         default_factory=list,
         description="项号列表，如['第（一）项']"
     )
-    source_span: tuple[int, int] | None = Field(
-        default=None,
-        description="裸引用中与本条款对应的法名或右锚位置",
-    )
-    mention_span: tuple[int, int] | None = None
-    citation_span: tuple[int, int] | None = None
-    quote_span: tuple[int, int] | None = None
-    reference_role: Literal["direct", "nested", "inherited"] = "direct"
-    parent_reference_id: tuple[str, str] | None = None
-    span_status: Literal["located", "fallback", "error"] = "fallback"
+    model_config = ConfigDict(extra="forbid")
 
 
 class StructureUnit(BaseModel):
@@ -118,33 +94,34 @@ class StructureRef(BaseModel):
     units: list[StructureUnit] = Field(default_factory=list)
 
 
+class InheritedSourceReference(BaseModel):
+    anchor_id: str | None = None
+    source_location: Optional["SourceLocation"] = None
+
+
+class LegalSourceRecognition(BaseModel):
+    form: Literal["explicit", "bare", "inherited"] = "explicit"
+    mention_span: tuple[int, int] | None = None
+    inherited_from: InheritedSourceReference | None = None
+    resolver: Literal["direct", "lexicon", "context"] = Field(
+        default="direct",
+        exclude=True,
+        description="内部调试轨迹；不进入正式业务 JSON",
+    )
+
+
 class LegalSource(BaseModel):
     """
     法律规范来源。
 
     title 为书名号内文本，不含书名号本身。
-    source_type 由 infer_source_type 确定性推断。
-
-    resolution 标记法源的识别方式：
-      - "explicit"：当前句内直接出现《》书名号引用
-      - "inherited"：当前句只有条款号，法源名来自前向继承（承前省略法源名）
-    inherited_from_anchor 仅当 resolution="inherited" 时填写，
-    记录法源名来自哪个 anchor，方便调试和未来 UI 溯源。
+    recognition 分层记录法名的文本形式、原文范围和承前来源。
     """
     title: str = Field(description="法规名称，不含书名号")
     canonical_title: Optional[str] = Field(
         default=None,
         description="词典或权威数据源确认的规范法名",
     )
-    raw_title_candidate: Optional[str] = Field(
-        default=None,
-        description="裸引用无法确认法名时保留的原文左侧候选片段",
-    )
-    source_span: Optional[tuple[int, int]] = Field(
-        default=None,
-        description="裸引用法名或确定右锚在 claim.text 中的位置",
-    )
-    source_type: LegalSourceType = Field(description="规范类型")
     jurisdiction: str = Field(
         default="CN",
         description="法域：CN（中国）、EU（欧盟）或 FOREIGN（其他外国法域）"
@@ -157,37 +134,42 @@ class LegalSource(BaseModel):
         default_factory=list,
         description="章节引用列表（如第三编第四章；仅在无条款引用时抽取）"
     )
-    resolution: Literal[
-        "explicit", "inherited", "bare_lexicon", "bare_pkulaw", "bare_unresolved"
-    ] = Field(
-        default="explicit",
-        description="法源识别方式：explicit/inherited/bare_lexicon/bare_pkulaw/bare_unresolved"
-    )
-    inherited_from_anchor: Optional[str] = Field(
-        default=None,
-        description="继承来源 anchor 编号（仅 resolution='inherited' 时有效）"
-    )
-    inherited_from_location: Optional["SourceLocation"] = Field(
-        default=None,
-        description="继承来源的稳定文档定位（仅 resolution='inherited' 时有效）",
-    )
+    recognition: LegalSourceRecognition = Field(default_factory=LegalSourceRecognition)
+    model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def require_bare_source_span(self):
-        if self.resolution.startswith("bare_") and self.source_span is None:
-            raise ValueError("裸法名引用必须记录 source_span")
-        return self
+
+class UnresolvedLegalMention(BaseModel):
+    """已识别为法规引用结构、但尚未确认具体法规身份的原文候选。"""
+
+    raw_text: str
+    articles: list[ArticleRef] = Field(default_factory=list)
+    reason: Literal["law_identity_unresolved"] = "law_identity_unresolved"
+    resolution_anchor_span: tuple[int, int] | None = None
+
+
+class CitationLocator(BaseModel):
+    article: str
+    paragraph: str | None = None
+    item: str | None = None
+
+
+class CitationOccurrence(BaseModel):
+    """原文中一次独立出现的法规引用及其核验目标。"""
+
+    law_title: str
+    locator: CitationLocator
+    role: Literal["direct", "nested", "carry_forward"] = "direct"
+    citation_span: tuple[int, int] | None = None
+    verification: VerificationTarget | None = None
+    span_status: Literal["located", "fallback", "error"] = "fallback"
 
 
 class CaseRef(BaseModel):
     """
     案例引用。
 
-    有案号时 reference_type=with_case_number，填 case_number。
-    无案号但可通过线索检索时 reference_type=without_case_number，
-    填 case_name 或留空。
+    有案号时填写 case_number；无案号但可检索时填写 case_name。
     """
-    reference_type: CaseReferenceType = Field(description="引用类型")
     case_number: Optional[str] = Field(
         default=None,
         description="案号，如'（2021）最高法民申1234号'"
@@ -208,6 +190,7 @@ class CaseRef(BaseModel):
         default="CN",
         description="法域：CN（中国）或 FOREIGN（外国判例，超出核查边界）"
     )
+    model_config = ConfigDict(extra="forbid")
 
 
 class LegalSourceClaimEntities(BaseModel):
@@ -220,6 +203,14 @@ class LegalSourceClaimEntities(BaseModel):
     legal_sources: list[LegalSource] = Field(
         default_factory=list,
         description="法律规范来源列表"
+    )
+    unresolved_legal_mentions: list[UnresolvedLegalMention] = Field(
+        default_factory=list,
+        description="结构已识别但法规身份尚未确认的候选",
+    )
+    citations: list[CitationOccurrence] = Field(
+        default_factory=list,
+        description="按原文出现次数保存的法规引用；检索层再按 locator 去重",
     )
 
 
@@ -235,17 +226,14 @@ class CaseHoldingParaphraseEntities(BaseModel):
     """
     case_holding_paraphrase 的实体。
 
-    holding_text 必须是 claim.text 的子串（由 arbiter 校验）。
+    verification.text 必须是 claim.text 的子串（由 arbiter 校验）。
     没有明确 case_ref 时绝不抽取此类型——即使出现"法院认为""本院认为"。
     """
     case_refs: list[CaseRef] = Field(
         default_factory=list,
         description="案例引用列表（观点转述通常长度为1）"
     )
-    holding_text: str = Field(
-        default="",
-        description="观点转述文本，必须是 claim.text 的子串"
-    )
+    verification: VerificationTarget | None = None
 
 
 ClaimEntities = Union[
@@ -311,6 +299,15 @@ class SourceLocation(BaseModel):
     col_end: Optional[int] = None
 
 
+class NoteContext(BaseModel):
+    """脚注/尾注核验结果与正文引用点之间的稳定关系。"""
+
+    note_type: Literal["footnote", "endnote"]
+    note_id: str
+    referenced_from: list[SourceLocation] = Field(default_factory=list)
+    reference_anchor_id: str | None = None
+
+
 class ClaimCandidate(BaseModel):
     """
     抽取器产出的中间候选。
@@ -352,7 +349,7 @@ class Claim(BaseModel):
     这是"不改写原文"的结构性保证——claim.text 永远等于原文锚点文本的精确拼接。
 
     原文位置由 source_locations 表达；承前法源位置由
-    LegalSource.inherited_from_location 表达。
+    LegalSource.recognition.inherited_from 表达。
     """
     claim_id: str = Field(description="claim 唯一 ID，格式 cl_00001")
     claim_type: ClaimType = Field(description="主张类型")
@@ -367,6 +364,7 @@ class Claim(BaseModel):
         default_factory=list,
         description="Word 或飞书中的原文定位坐标",
     )
+    note_context: NoteContext | None = None
     @model_validator(mode="before")
     @classmethod
     def restore_entity_type(cls, data):
@@ -384,7 +382,7 @@ class Claim(BaseModel):
 
 class ClaimMeta(BaseModel):
     """引用文档元信息。"""
-    schema_version: str = Field(default="0.3", description="schema 版本号")
+    schema_version: str = Field(default="0.4", description="schema 版本号")
     claim_doc_id: str = Field(
         default_factory=lambda: str(uuid4()),
         description="claim 文档唯一 ID（uuid4）"
@@ -396,7 +394,7 @@ class ClaimMeta(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="抽取时间（ISO-8601）"
     )
-    extractor_version: str = Field(default="0.2", description="抽取器版本")
+    extractor_version: str = Field(default="0.3", description="抽取器版本")
 
 
 class ClaimDocument(BaseModel):

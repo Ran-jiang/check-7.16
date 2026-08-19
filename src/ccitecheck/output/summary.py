@@ -19,10 +19,13 @@ class VerificationSummary(BaseModel):
 
 def summarize_verification(verification: FrontendVerificationDocument) -> VerificationSummary:
     results = [*verification.statute_results, *verification.case_results]
-    claim_ids = {result.claim_id for result in results}
+    display_groups = {
+        result.display_group_id or result.claim_id
+        for result in results
+    }
     return VerificationSummary(
         total=len(results),
-        card_total=len(claim_ids),
+        card_total=len(display_groups),
         reference_total=len(results),
         passed=sum(result.outcome == "pass" for result in results),
         issues=sum(result.outcome == "issue" for result in results),

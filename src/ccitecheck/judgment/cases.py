@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from ..domain.citation import ClaimDocument, ClaimType
+from ..domain.display_groups import display_group_id
 from ..domain.evidence import CaseEvidence, CaseLookupStatus, CaseSourceTrace
 from ..domain.case_results import (
     CaseCandidate,
@@ -89,11 +90,14 @@ def verify_case_claims(
             ))
         checks.append(CaseVerificationResult(
             check_id=f"cc_{next_id:05d}",
+            display_group_id=display_group_id(claim),
             claim_id=claim.claim_id,
             claim_text=claim.text,
+            verification=getattr(claim.entities, "verification", None),
             jurisdiction=ref.jurisdiction,
             anchor_ids=list(claim.anchor_ids),
             source_locations=list(claim.source_locations),
+            note_context=claim.note_context,
             cited_case_number=ref.case_number,
             cited_case_name=ref.case_name,
             cited_court=ref.court,
@@ -501,7 +505,8 @@ def _check_holding(claim, evidence, semantic_checker):
             execution_status=ExecutionStatus.SKIPPED,
             skipped_reason="semantic_disabled",
         )
-    paraphrase = getattr(claim.entities, "holding_text", "") or claim.text
+    verification = getattr(claim.entities, "verification", None)
+    paraphrase = verification.text if verification is not None else claim.text
     try:
         return compare(paraphrase, evidence.holding, evidence.title)
     except Exception as exc:

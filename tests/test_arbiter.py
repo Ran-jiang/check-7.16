@@ -19,7 +19,7 @@ from ccitecheck.recognition.arbitration import (
 from ccitecheck.domain.citation import (
     Claim, ClaimCandidate, ClaimType,
     LegalSourceClaimEntities,
-    LegalSource, LegalSourceType,
+    LegalSource,
 )
 
 
@@ -109,7 +109,7 @@ def test_merge_same_position():
         legal_sources=[
             LegalSource(
                 title="民法典",
-                source_type=LegalSourceType.LAW,
+
                 articles=[],
             )
         ]
@@ -118,7 +118,7 @@ def test_merge_same_position():
         legal_sources=[
             LegalSource(
                 title="中华人民共和国民法典",
-                source_type=LegalSourceType.LAW,
+
                 articles=[],
             )
         ]
@@ -157,7 +157,7 @@ def test_completeness_ruling():
             legal_sources=[
                 LegalSource(
                     title="民法典",
-                    source_type=LegalSourceType.LAW,
+
                     articles=[],
                 )
             ]
@@ -172,7 +172,7 @@ def test_completeness_ruling():
             legal_sources=[
                 LegalSource(
                     title="民法典",
-                    source_type=LegalSourceType.LAW,
+
                     articles=[],
                 )
             ]
@@ -204,7 +204,7 @@ def test_no_merge_different_position():
         legal_sources=[
             LegalSource(
                 title="民法典",
-                source_type=LegalSourceType.LAW,
+
                 articles=[],
             )
         ]
@@ -273,6 +273,6 @@ def test_build_claim_document():
 
     claim_doc = build_claim_document(doc, [claim])
 
-    assert claim_doc.claim_meta.schema_version == "0.3"
+    assert claim_doc.claim_meta.schema_version == "0.4"
     assert len(claim_doc.claims) == 1
     assert claim_doc.claims[0].claim_id == "cl_00001"

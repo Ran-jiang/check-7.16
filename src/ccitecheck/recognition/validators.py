@@ -10,7 +10,7 @@ validate_claim_document 对 ClaimDocument 执行全量不变量校验。
   - anchor_ids 非空、全部存在、编号连续
   - claim_type 合法
   - entities 与 claim_type 的对应关系由 Claim 模型校验
-  - holding_text 为 claim.text 子串
+  - verification.text 为 claim.text 子串
 """
 
 from __future__ import annotations
@@ -124,12 +124,13 @@ def validate_claim_document(
                 f"{claim.claim_type}"
             )
 
-        # holding_text 为 claim.text 子串
-        if hasattr(claim.entities, "holding_text") and claim.entities.holding_text:
-            if claim.entities.holding_text not in claim.text:
+        # verification.text 为 claim.text 子串
+        verification = getattr(claim.entities, "verification", None)
+        if verification is not None and verification.text:
+            if verification.text not in claim.text:
                 violations.append(
                     f"[entities] claim {claim.claim_id}: "
-                    f"holding_text 不是 claim.text 子串"
+                    f"verification.text 不是 claim.text 子串"
                 )
 
     return violations

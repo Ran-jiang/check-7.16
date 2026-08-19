@@ -10,8 +10,16 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from ..domain.citation import ArticleRef, Claim, ClaimDocument, ClaimType, StructureRef
+from ..domain.citation import (
+    ArticleRef,
+    Claim,
+    ClaimDocument,
+    ClaimType,
+    StructureRef,
+    VerificationTarget,
+)
 from ..domain.evidence import ArticleEvidence, ArticleExcerpt, LookupStatus, SourceTier, SourceTrace
+from ..domain.display_groups import display_group_id
 from ..domain.checks import CheckVerdict, ExecutionStatus
 from ..domain.legal_numbers import chinese_number_to_int
 from ..domain.result import FrontendVerificationDocument
@@ -135,57 +143,48 @@ class _CheckItem:
     claim: Claim
     law_title: str
     display_title: str
-    source_type: str
     article: ArticleRef | None
     article_no: str | None
     not_verifiable: str | None
     jurisdiction: str = "CN"
     out_of_scope: str | None = None
     structure: StructureRef | None = None
-    source_resolution: str = "explicit"
+    recognition_form: str = "explicit"
+    law_identity_resolved: bool = True
     raw_title_candidate: str | None = None
+    citation_span: tuple[int, int] | None = None
+    verification: VerificationTarget | None = None
+    reference_role: str = "direct"
+    span_status: str = "fallback"
     parent_index: int | None = None
     relation_status: str | None = None
     relation_message: str = ""
     relation_candidate_article_no: str | None = None
-    nested_context: str = ""
+    relation_parent_authoritative_text: str = ""
 
     @property
     def skip_lookup(self) -> bool:
         return (
             self.not_verifiable is not None
             or self.out_of_scope is not None
-            or self.source_resolution == "bare_unresolved"
+            or not self.law_identity_resolved
         )
 
     @property
     def lookup_key(self) -> tuple:
         if self.article_no:
-            return (self.law_title, self.source_type, self.article_no)
+            return (self.law_title, self.article_no)
         return (
             self.law_title,
-            self.source_type,
             None,
             self.claim.context_text or self.claim.text,
         )
 
     @property
     def document_quote(self) -> str:
-        if self.nested_context:
-            return self.nested_context
-        if self.article and self.article.span_status == "located" and self.article.quote_span:
-            start, end = self.article.quote_span
-            if 0 <= start < end <= len(self.claim.text):
-                return self.claim.text[start:end]
+        if self.verification is not None and self.verification.text:
+            return self.verification.text
         return self.claim.text
-
-    @property
-    def reference_role(self) -> str:
-        return self.article.reference_role if self.article else "direct"
-
-    @property
-    def span_status(self) -> str:
-        return self.article.span_status if self.article else "fallback"
 
 
 def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
@@ -193,15 +192,53 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
     for claim in claim_document.claims:
         if claim.claim_type != ClaimType.LEGAL_SOURCE_CLAIM:
             continue
-        if any(
-            article.span_status == "fallback"
-            for source in getattr(claim.entities, "legal_sources", [])
-            for article in source.articles
-        ):
+        if not getattr(claim.entities, "citations", []):
             locate_claim_article_spans(claim)
-        for legal_source in getattr(claim.entities, "legal_sources", []):
+        citations = getattr(claim.entities, "citations", [])
+        if citations:
+            source_by_title = {
+                (source.canonical_title or source.title): source
+                for source in claim.entities.legal_sources
+            }
+            for citation in citations:
+                source = source_by_title[citation.law_title]
+                article = ArticleRef(
+                    article=citation.locator.article,
+                    paragraphs=(
+                        [citation.locator.paragraph]
+                        if citation.locator.paragraph else []
+                    ),
+                    items=[citation.locator.item] if citation.locator.item else [],
+                )
+                display_title = source.title or citation.law_title
+                items.append(_CheckItem(
+                    claim=claim,
+                    law_title=citation.law_title,
+                    display_title=display_title,
+                    article=article,
+                    article_no=article.article,
+                    not_verifiable=classify_not_verifiable(display_title),
+                    jurisdiction=source.jurisdiction,
+                    out_of_scope=_out_of_scope_message(source.jurisdiction),
+                    recognition_form=source.recognition.form,
+                    citation_span=citation.citation_span,
+                    verification=citation.verification,
+                    reference_role=citation.role,
+                    span_status=citation.span_status,
+                ))
+            # citations 已覆盖所有已确认法源的条款引用；无条款/章节仍走旧路径。
+            if all(source.articles for source in claim.entities.legal_sources):
+                legal_sources = []
+            else:
+                legal_sources = [
+                    source for source in claim.entities.legal_sources
+                    if not source.articles
+                ]
+        else:
+            legal_sources = claim.entities.legal_sources
+        for legal_source in legal_sources:
             query_title = legal_source.canonical_title or legal_source.title
-            display_title = legal_source.title or legal_source.raw_title_candidate or ""
+            display_title = legal_source.title
             not_verifiable = classify_not_verifiable(display_title)
             jurisdiction = legal_source.jurisdiction
             out_of_scope = _out_of_scope_message(jurisdiction)
@@ -211,15 +248,13 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
                         claim=claim,
                         law_title=query_title,
                         display_title=display_title,
-                        source_type=legal_source.source_type.value,
                         article=None,
                         article_no=structure.label,
                         not_verifiable=not_verifiable,
                         jurisdiction=jurisdiction,
                         out_of_scope=out_of_scope,
                         structure=structure,
-                        source_resolution=legal_source.resolution,
-                        raw_title_candidate=legal_source.raw_title_candidate,
+                        recognition_form=legal_source.recognition.form,
                     ))
                 continue
             for article in legal_source.articles or [None]:
@@ -228,16 +263,29 @@ def _collect_check_items(claim_document: ClaimDocument) -> list[_CheckItem]:
                         claim=claim,
                         law_title=query_title,
                         display_title=display_title,
-                        source_type=legal_source.source_type.value,
                         article=article,
                         article_no=article.article if article is not None else None,
                         not_verifiable=not_verifiable,
                         jurisdiction=jurisdiction,
                         out_of_scope=out_of_scope,
-                        source_resolution=legal_source.resolution,
-                        raw_title_candidate=legal_source.raw_title_candidate,
+                        recognition_form=legal_source.recognition.form,
                     )
                 )
+        for mention in getattr(
+            claim.entities, "unresolved_legal_mentions", []
+        ):
+            for article in mention.articles or [None]:
+                items.append(_CheckItem(
+                    claim=claim,
+                    law_title="",
+                    display_title=mention.raw_text,
+                    article=article,
+                    article_no=article.article if article is not None else None,
+                    not_verifiable="法规名称尚未确认，请人工核对或补充正式法名。",
+                    recognition_form="bare",
+                    law_identity_resolved=False,
+                    raw_title_candidate=mention.raw_text,
+                ))
     return items
 
 
@@ -259,7 +307,7 @@ def _resolve_unresolved_law_names(
         return
     grouped: dict[tuple[str, str, str], list[_CheckItem]] = {}
     for item in items:
-        if item.source_resolution != "bare_unresolved" or not item.article_no:
+        if item.law_identity_resolved or not item.article_no:
             continue
         key = (
             item.raw_title_candidate or "",
@@ -282,7 +330,8 @@ def _resolve_unresolved_law_names(
         for item in grouped[key]:
             item.display_title = resolved.surface_title
             item.law_title = resolved.canonical_title
-            item.source_resolution = "bare_pkulaw"
+            item.law_identity_resolved = True
+            item.not_verifiable = None
 
 
 def _run_lookups(
@@ -300,7 +349,6 @@ def _run_lookups(
             item.lookup_key,
             LookupRequest(
                 law_title=item.law_title,
-                source_type=item.source_type,
                 article_no=item.article_no,
                 context_text=item.claim.context_text or item.claim.text,
             ),
@@ -343,7 +391,7 @@ def _lookup_structure(
             trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
             trace.message = f"现行章节结构中不存在{item.structure.label}"
             evidence = ArticleEvidence(
-                law_title=law["title"], source_type=law["source_type"],
+                law_title=law["title"],
                 article_no=item.structure.label, data_source=trace,
             )
             return LookupResult(trace.status, evidence, trace), [trace]
@@ -354,7 +402,7 @@ def _lookup_structure(
             members = list_articles_in_structure(connection, int(node["id"]))
             trace.message = f"已定位章节：{node['path_label']}"
             evidence = ArticleEvidence(
-                law_title=law["title"], source_type=law["source_type"],
+                law_title=law["title"],
                 article_no=item.structure.label, version_status=law["status"],
                 structure_path=node["path_label"], data_source=trace,
                 related_articles=[ArticleExcerpt(
@@ -366,7 +414,7 @@ def _lookup_structure(
         paths = [row["path_label"] for row in candidates[:5]]
         trace.message = f"存在 {len(candidates)} 个候选章节，请补充上级编号"
         evidence = ArticleEvidence(
-            law_title=law["title"], source_type=law["source_type"],
+            law_title=law["title"],
             article_no=item.structure.label, version_status=law["status"],
             structure_path="候选：" + "；".join(paths), data_source=trace,
         )
@@ -410,7 +458,6 @@ def _run_location_repairs(
                 continue
         candidate_result = locator_source.locate_candidates(LookupRequest(
             law_title=item.law_title,
-            source_type=item.source_type,
             article_no=item.article_no,
             context_text=item.document_quote,
         ))
@@ -468,7 +515,7 @@ def _run_judgments(
     semantic_jobs: list[tuple[int, _CheckItem, LookupResult]] = []
 
     for index, item in enumerate(items):
-        if item.source_resolution == "bare_unresolved":
+        if not item.law_identity_resolved:
             candidate = item.raw_title_candidate or "该裸引用"
             results[index] = ([StatuteFinding(
                 code=StatuteErrorCode.SOURCE_NAME_AMBIGUOUS,
@@ -731,7 +778,6 @@ def _run_locator_proposal_loop(
             break
         lookup = locator_source.lookup(LookupRequest(
             law_title=item.law_title,
-            source_type=item.source_type,
             article_no=candidate,
             context_text=item.document_quote,
         ))
@@ -831,7 +877,6 @@ def _resolve_by_semantic_recall(locator_source, item: _CheckItem, finding: Statu
     """无任何候选线索时按语义召回，仅确定性包含成立才批准修订。"""
     recalled = locator_source.locate_candidates(LookupRequest(
         law_title=item.law_title,
-        source_type=item.source_type,
         article_no=item.article_no,
         context_text=item.document_quote,
     ))
@@ -877,7 +922,6 @@ def _resolve_repealed_successors(
             continue
         result = source.locate_successor_candidates(LookupRequest(
             law_title=item.law_title,
-            source_type=item.source_type,
             context_text=item.document_quote,
         ))
         supported = [
@@ -1067,12 +1111,15 @@ def _build_statute_results(
             StatuteVerificationResult(
                 check_id=f"vc_{index + 1:05d}",
                 card_id=card_id,
+                display_group_id=display_group_id(item.claim),
                 claim_id=item.claim.claim_id,
                 claim_text=item.claim.text,
                 law_title=item.display_title,
-                source_resolution=item.source_resolution,
+                recognition_form=item.recognition_form,
+                law_identity_resolved=item.law_identity_resolved,
                 jurisdiction=item.jurisdiction,
                 document_quote=item.document_quote,
+                verification=item.verification,
                 cited_locators=_item_locators(item),
                 lookup_status=(
                     lookup_result.status if lookup_result
@@ -1102,6 +1149,7 @@ def _build_statute_results(
                 relation_status=item.relation_status,
                 relation_message=item.relation_message,
                 source_locations=item.claim.source_locations,
+                note_context=item.claim.note_context,
                 source_attempts=attempts or [],
             )
         )
@@ -1122,6 +1170,7 @@ def _aggregate_duplicate_statute_results(
             continue
         key = (
             result.law_title,
+            result.verification.text if result.verification else result.document_quote,
             tuple(
                 (locator.article_no, locator.paragraph_no, locator.item_no)
                 for locator in result.cited_locators

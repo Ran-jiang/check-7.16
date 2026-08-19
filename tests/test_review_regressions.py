@@ -15,7 +15,6 @@ from ccitecheck.recognition.rules import extract_rule_candidates
 from ccitecheck.domain.citation import (
     CaseCitationEntities,
     CaseRef,
-    CaseReferenceType,
     ClaimCandidate,
     ClaimDocument,
     ClaimType,
@@ -125,12 +124,12 @@ def test_adjacent_table_law_name_and_article_cells_merge_into_one_claim():
     source = candidates[0].entities.legal_sources[0]
     assert source.title == "中华人民共和国民法典"
     assert source.articles[0].article == "第127条"
-    assert source.resolution == "inherited"
-    assert source.inherited_from_anchor == "line00001"
+    assert source.recognition.form == "inherited"
+    assert source.recognition.inherited_from.anchor_id == "line00001"
 
     claims = arbitrate_claim_candidates(candidates, doc)
     assert claims[0].source_locations[-1].cell_index == 1
-    inherited_location = claims[0].entities.legal_sources[0].inherited_from_location
+    inherited_location = claims[0].entities.legal_sources[0].recognition.inherited_from.source_location
     assert inherited_location is not None
     assert inherited_location.cell_index == 0
 
@@ -162,7 +161,7 @@ def test_next_sentence_in_same_paragraph_inherits_unique_law_source(tmp_path: Pa
     second_source = candidates[1].entities.legal_sources[0]
     assert second_source.title == "最高人民法院关于审理涉及驰名商标保护的民事纠纷案件应用法律若干问题的解释"
     assert second_source.articles[0].article == "第十条"
-    assert second_source.resolution == "inherited"
+    assert second_source.recognition.form == "inherited"
 
 
 def test_same_paragraph_partial_paragraph_and_item_inherit_unique_article(tmp_path: Path):
@@ -180,7 +179,7 @@ def test_same_paragraph_partial_paragraph_and_item_inherit_unique_article(tmp_pa
     second_source = candidates[1].entities.legal_sources[0]
     second_article = second_source.articles[0]
     assert second_source.title == "广告法"
-    assert second_source.resolution == "inherited"
+    assert second_source.recognition.form == "inherited"
     assert second_article.article == "第二十八条"
     assert second_article.paragraphs == ["第二款"]
     assert second_article.items == ["第二项"]
@@ -321,7 +320,7 @@ def test_case_without_number_uses_both_routes_before_not_found():
         entities=CaseCitationEntities(
             case_refs=[
                 CaseRef(
-                    reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+
                     case_name="指导案例262号",
                 )
             ]

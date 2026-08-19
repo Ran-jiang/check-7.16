@@ -56,7 +56,7 @@ class ArticleExcerpt(BaseModel):
 
 class ArticleEvidence(BaseModel):
     law_title: str
-    source_type: str
+    source_type: Optional[str] = None
     article_no: Optional[str] = None
     article_text: Optional[str] = None
     version_label: Optional[str] = None

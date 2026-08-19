@@ -4,14 +4,13 @@ from ccitecheck.domain.citation import (
     ArticleRef,
     CaseCitationEntities,
     CaseRef,
-    CaseReferenceType,
     Claim,
     ClaimDocument,
     ClaimMeta,
     ClaimType,
     LegalSource,
     LegalSourceClaimEntities,
-    LegalSourceType,
+    UnresolvedLegalMention,
 )
 from ccitecheck.infrastructure.database import (
     connect,
@@ -58,14 +57,17 @@ def test_nested_locator_mismatch_preserves_candidate_for_existing_repair_chain()
         text=text, anchor_ids=["line1"],
         entities=LegalSourceClaimEntities(legal_sources=[]),
     )
-    parent_ref = ArticleRef(article="第一条", citation_span=(0, 7), span_status="located")
+    parent_ref = ArticleRef(article="第一条")
     child_start = text.index("《乙法》")
-    child_ref = ArticleRef(
-        article="第二条", citation_span=(child_start, child_start + 7),
-        span_status="located",
+    child_ref = ArticleRef(article="第二条")
+    parent = _CheckItem(
+        claim, "甲法", "甲法", parent_ref, "第一条", None,
+        citation_span=(0, 7), span_status="located",
     )
-    parent = _CheckItem(claim, "甲法", "甲法", "law", parent_ref, "第一条", None)
-    child = _CheckItem(claim, "乙法", "乙法", "law", child_ref, "第二条", None)
+    child = _CheckItem(
+        claim, "乙法", "乙法", child_ref, "第二条", None,
+        citation_span=(child_start, child_start + 7), span_status="located",
+    )
 
     def lookup(item, article_text):
         trace = SourceTrace(
@@ -110,14 +112,14 @@ def test_nested_relation_is_insufficient_when_semantic_checker_is_unavailable():
     )
     child_start = text.index("《乙法》")
     parent = _CheckItem(
-        claim, "甲法", "甲法", "law",
-        ArticleRef(article="第一条", citation_span=(0, 7), span_status="located"),
-        "第一条", None,
+        claim, "甲法", "甲法",
+        ArticleRef(article="第一条"), "第一条", None,
+        citation_span=(0, 7), span_status="located",
     )
     child = _CheckItem(
-        claim, "乙法", "乙法", "law",
-        ArticleRef(article="第二条", citation_span=(child_start, child_start + 7), span_status="located"),
-        "第二条", None,
+        claim, "乙法", "乙法",
+        ArticleRef(article="第二条"), "第二条", None,
+        citation_span=(child_start, child_start + 7), span_status="located",
     )
     trace = SourceTrace(
         tier=SourceTier.LOCAL_SQLITE, source_name="test",
@@ -175,11 +177,11 @@ def test_internal_reference_is_confirmed_from_parent_authority(tmp_path: Path):
         entities=LegalSourceClaimEntities(legal_sources=[
             LegalSource(
                 title="最高人民法院关于适用《中华人民共和国民事诉讼法》的解释",
-                source_type=LegalSourceType.JUDICIAL_INTERPRETATION,
+
                 articles=[ArticleRef(article="第二百八十六条")],
             ),
             LegalSource(
-                title="中华人民共和国民事诉讼法", source_type=LegalSourceType.LAW,
+                title="中华人民共和国民事诉讼法",
                 articles=[ArticleRef(article="第一百二十二条")],
             ),
         ]),
@@ -224,8 +226,8 @@ def test_parallel_legal_basis_is_not_internal_reference(tmp_path: Path):
         claim_id="cl_parallel", claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         text=text, anchor_ids=["line1"],
         entities=LegalSourceClaimEntities(legal_sources=[
-            LegalSource(title="甲法", source_type=LegalSourceType.LAW, articles=[ArticleRef(article="第一条")]),
-            LegalSource(title="乙法", source_type=LegalSourceType.LAW, articles=[ArticleRef(article="第二条")]),
+            LegalSource(title="甲法", articles=[ArticleRef(article="第一条")]),
+            LegalSource(title="乙法", articles=[ArticleRef(article="第二条")]),
         ]),
     )
     result = verify_claim_document(ClaimDocument(
@@ -276,7 +278,7 @@ def test_frontend_verification_json_includes_local_article(tmp_path: Path):
                     legal_sources=[
                         LegalSource(
                             title="劳动合同法",
-                            source_type=LegalSourceType.LAW,
+
                             articles=[ArticleRef(article="第三十七条")],
                         )
                     ]
@@ -311,14 +313,13 @@ def test_unresolved_bare_law_reports_ambiguous_name_without_lookup(tmp_path: Pat
             claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
             text=text,
             anchor_ids=["line00001"],
-            entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
-                title="",
-                raw_title_candidate="依照城市房地产管理法",
-                source_span=(9, 10),
-                source_type=LegalSourceType.LAW,
-                resolution="bare_unresolved",
-                articles=[ArticleRef(article="第38条", source_span=(9, 10))],
-            )]),
+            entities=LegalSourceClaimEntities(unresolved_legal_mentions=[
+                UnresolvedLegalMention(
+                    raw_text="城市房地产管理法",
+                    articles=[ArticleRef(article="第38条")],
+                    resolution_anchor_span=(9, 10),
+                )
+            ]),
         )],
     )
 
@@ -326,7 +327,8 @@ def test_unresolved_bare_law_reports_ambiguous_name_without_lookup(tmp_path: Pat
 
     check = frontend_doc.statute_results[0]
     assert check.outcome == "bug"
-    assert check.source_resolution == "bare_unresolved"
+    assert check.recognition_form == "bare"
+    assert check.law_identity_resolved is False
     assert check.source_attempts == []
     assert check.findings[0].code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS
     assert "无法确定" in check.findings[0].summary
@@ -343,12 +345,13 @@ def test_unresolved_bare_law_can_be_strictly_resolved_before_lookup(tmp_path: Pa
         claims=[Claim(
             claim_id="cl_resolved", claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
             text=text, anchor_ids=["line00001"],
-            entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
-                title="", raw_title_candidate="依照城市房地产管理法",
-                source_span=(9, 10), source_type=LegalSourceType.LAW,
-                resolution="bare_unresolved",
-                articles=[ArticleRef(article="第38条", source_span=(9, 10))],
-            )]),
+            entities=LegalSourceClaimEntities(unresolved_legal_mentions=[
+                UnresolvedLegalMention(
+                    raw_text="城市房地产管理法",
+                    articles=[ArticleRef(article="第38条")],
+                    resolution_anchor_span=(9, 10),
+                )
+            ]),
         )],
     )
 
@@ -377,7 +380,8 @@ def test_unresolved_bare_law_can_be_strictly_resolved_before_lookup(tmp_path: Pa
     frontend_doc = verify_claim_document(claim_doc, db_path, sources=[Source()])
 
     check = frontend_doc.statute_results[0]
-    assert check.source_resolution == "bare_pkulaw"
+    assert check.recognition_form == "bare"
+    assert check.law_identity_resolved is True
     assert check.law_title == "城市房地产管理法"
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
     assert not any(f.code == StatuteErrorCode.SOURCE_NAME_AMBIGUOUS for f in check.findings)
@@ -427,7 +431,7 @@ def test_semantic_assessment_is_added_when_checker_is_configured(tmp_path: Path)
                     legal_sources=[
                         LegalSource(
                             title="民法典",
-                            source_type=LegalSourceType.LAW,
+
                             articles=[ArticleRef(article="第五百七十七条")],
                         )
                     ]
@@ -485,7 +489,7 @@ def test_unnumbered_citation_retrieves_related_local_articles(tmp_path: Path):
                     legal_sources=[
                         LegalSource(
                             title="网络安全法",
-                            source_type=LegalSourceType.LAW,
+
                         )
                     ]
                 ),
@@ -547,7 +551,6 @@ def test_pkulaw_article_uses_semantic_fallback_after_exact_miss():
     result = PkulawFallbackSource(client).lookup(
         LookupRequest(
             law_title="关于办理危害计算机信息系统安全刑事案件应用法律若干问题的解释",
-            source_type="judicial_interpretation",
             article_no="第一条",
         )
     )
@@ -587,7 +590,6 @@ def test_pkulaw_not_found_recalls_similar_name_for_suggestion():
 
     request = LookupRequest(
         law_title="互联网论坛服务管理规定",
-        source_type="departmental_rule",
         article_no="第五条",
     )
     result = PkulawFallbackSource(FakePrefixRecallClient()).lookup(request)
@@ -613,7 +615,6 @@ def test_pkulaw_unnumbered_lookup_reports_tool_text_limit():
     result = PkulawFallbackSource(FakeLawListClient()).lookup(
         LookupRequest(
             law_title="中华人民共和国国家安全法",
-            source_type="law",
             context_text="维护国家安全和公共利益",
         )
     )
@@ -639,7 +640,6 @@ def test_pkulaw_unnumbered_lookup_uses_semantic_article_service_first():
     result = PkulawFallbackSource(FakeSemanticLawClient()).lookup(
         LookupRequest(
             law_title="中华人民共和国国家安全法",
-            source_type="law",
             context_text="国家安全工作应当坚持总体国家安全观。",
         )
     )
@@ -655,7 +655,6 @@ def test_pkulaw_unnumbered_lookup_without_credentials_is_nonfatal(monkeypatch):
     result = PkulawFallbackSource().lookup(
         LookupRequest(
             law_title="虚构测试法",
-            source_type="law",
             context_text="测试引用表述",
         )
     )
@@ -674,7 +673,7 @@ class FakeArticleSource:
             LookupStatus.ARTICLE_FOUND,
             ArticleEvidence(
                 law_title="中华人民共和国民法典",
-                source_type=request.source_type,
+                source_type="law",
                 article_no=request.article_no,
                 article_text="第五百七十七条　当事人一方不履行合同义务。",
                 data_source=trace,
@@ -705,7 +704,7 @@ def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
                     legal_sources=[
                         LegalSource(
                             title="民法典",
-                            source_type=LegalSourceType.LAW,
+
                             articles=[ArticleRef(article="第五百七十七条")],
                         )
                     ]
@@ -732,7 +731,6 @@ def test_local_catalog_without_article_continues_to_next_source(tmp_path: Path):
 def test_legacy_local_mcp_url_is_replaced_by_exact_article_url():
     request = LookupRequest(
         law_title="中华人民共和国商标法",
-        source_type="law",
         article_no="第十三条",
     )
 
@@ -751,7 +749,7 @@ def test_legacy_local_mcp_url_is_replaced_by_exact_article_url():
                 LookupStatus.ARTICLE_FOUND,
                 ArticleEvidence(
                     law_title=request.law_title,
-                    source_type=request.source_type,
+                    source_type="law",
                     article_no=request.article_no,
                     article_text=self.text,
                     data_source=trace,
@@ -810,7 +808,7 @@ def test_legacy_local_mcp_url_is_hidden_when_remote_repair_fails():
     )
     result, attempts = lookup_with_chain(
         [FixedSource(local), FixedSource(LookupResult(LookupStatus.SOURCE_ERROR, None, error_trace))],
-        LookupRequest(law_title="中华人民共和国商标法", source_type="law", article_no="第十三条"),
+        LookupRequest(law_title="中华人民共和国商标法", article_no="第十三条"),
     )
 
     assert len(attempts) == 2
@@ -839,7 +837,7 @@ def _case_claim(claim_id: str, case_number: str) -> Claim:
         entities=CaseCitationEntities(
             case_refs=[
                 CaseRef(
-                    reference_type=CaseReferenceType.WITH_CASE_NUMBER,
+
                     case_number=case_number,
                 )
             ]
@@ -922,7 +920,7 @@ def test_case_without_number_uses_keyword_then_semantic_search(tmp_path: Path):
                 entities=CaseCitationEntities(
                     case_refs=[
                         CaseRef(
-                            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+
                             case_name="指导案例262号",
                             court="最高人民法院",
                         )
@@ -958,7 +956,7 @@ def test_party_style_case_name_is_cleaned_and_sent_as_party_keywords(tmp_path: P
             text="在庄羽诉郭敬明案中，法院讨论了作品独创性。",
             anchor_ids=["line00001"],
             entities=CaseCitationEntities(case_refs=[CaseRef(
-                reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+
                 case_name="在庄羽诉郭敬明案",
             )]),
         )],
@@ -997,7 +995,7 @@ def test_case_name_containment_requires_manual_review(tmp_path: Path):
                 entities=CaseCitationEntities(
                     case_refs=[
                         CaseRef(
-                            reference_type=CaseReferenceType.WITHOUT_CASE_NUMBER,
+
                             case_name="甲公司诉乙公司合同纠纷案",
                         )
                     ]
@@ -1113,7 +1111,7 @@ def _simple_claim(claim_id: str, text: str, title: str, article: str) -> Claim:
             legal_sources=[
                 LegalSource(
                     title=title,
-                    source_type=LegalSourceType.LAW,
+
                     articles=[ArticleRef(article=article)],
                 )
             ]
@@ -1195,12 +1193,12 @@ def test_multiple_statute_references_share_one_group(tmp_path: Path):
         entities=LegalSourceClaimEntities(legal_sources=[
             LegalSource(
                 title="商标法",
-                source_type=LegalSourceType.LAW,
+
                 articles=[ArticleRef(article="第十三条", paragraphs=["第一款", "第三款"])],
             ),
             LegalSource(
                 title="解释",
-                source_type=LegalSourceType.JUDICIAL_INTERPRETATION,
+
                 articles=[ArticleRef(article="第九条"), ArticleRef(article="第十条")],
             ),
         ]),
@@ -1214,14 +1212,19 @@ def test_multiple_statute_references_share_one_group(tmp_path: Path):
         sources=[CountingSource()],
     )
     assert len({reference.card_id for reference in result.statute_results}) == 1
-    assert len(result.statute_results) == 3
-    assert [locator.paragraph_no for locator in result.statute_results[0].cited_locators] == ["第一款", "第三款"]
+    # 同一条的不同款在识别层按引用出现次数保留，检索层再复用同一条证据。
+    assert len(result.statute_results) == 4
+    assert [
+        result.statute_results[index].cited_locators[0].paragraph_no
+        for index in (0, 1)
+    ] == ["第一款", "第三款"]
     summary = summarize_verification(result)
     assert summary.card_total == 1
-    assert summary.reference_total == 3
-    assert summary.total == 3
+    assert summary.reference_total == 4
+    assert summary.total == 4
     result.case_results.append(CaseVerificationResult(
         check_id="cc_00001",
+        display_group_id=result.statute_results[0].display_group_id,
         claim_id="cl_00001",
         claim_text=claim.text,
         lookup_status=CaseLookupStatus.VERIFIED,
@@ -1229,7 +1232,7 @@ def test_multiple_statute_references_share_one_group(tmp_path: Path):
     ))
     mixed_summary = summarize_verification(result)
     assert mixed_summary.card_total == 1
-    assert mixed_summary.reference_total == 4
+    assert mixed_summary.reference_total == 5
 
 
 def test_duplicate_citations_share_one_lookup(tmp_path: Path):
@@ -1287,10 +1290,10 @@ def test_case_claims_use_exact_then_semantic_route(tmp_path: Path):
             text=f"参见{number}判决。",
             anchor_ids=["line00001"],
             entities=CaseCitationEntities(
-                reference_type=CaseReferenceType.WITH_CASE_NUMBER,
+
                 case_refs=[
                     CaseRef(
-                        reference_type=CaseReferenceType.WITH_CASE_NUMBER,
+
                         case_number=number,
                     )
                 ],
@@ -1399,7 +1402,7 @@ def test_locator_revision_replaces_only_wrong_paragraph_number():
     text = "依据《中华人民共和国民法典》第五百零九条第九款，当事人应当按照约定全面履行自己的义务。"
     item = _CheckItem(
         claim=SimpleNamespace(text=text, context_text=text),
-        law_title="中华人民共和国民法典", display_title="中华人民共和国民法典", source_type="law",
+        law_title="中华人民共和国民法典", display_title="中华人民共和国民法典",
         article=ArticleRef(article="第五百零九条", paragraphs=["第九款"]),
         article_no="第五百零九条", not_verifiable=None,
     )
@@ -1422,7 +1425,7 @@ def test_locator_revision_replaces_only_wrong_item_number():
     text = "依据《个人信息保护法》第十三条第一款第九项，处理个人信息应当取得个人同意。"
     item = _CheckItem(
         claim=SimpleNamespace(text=text, context_text=text),
-        law_title="个人信息保护法", display_title="个人信息保护法", source_type="law",
+        law_title="个人信息保护法", display_title="个人信息保护法",
         article=ArticleRef(article="第十三条", paragraphs=["第一款"], items=["第九项"]),
         article_no="第十三条", not_verifiable=None,
     )
@@ -1485,7 +1488,7 @@ def test_bare_multi_law_listing_passes_existence_check_without_article_text(tmp_
     init_db(db_path)
     text = "本文结合《网络数据安全管理条例》《互联网信息服务算法推荐管理规定》等现行有效法规进行分析。"
     sources = [
-        LegalSource(title=title, source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT)
+        LegalSource(title=title,)
         for title in ("网络数据安全管理条例", "互联网信息服务算法推荐管理规定")
     ]
     claim_doc = ClaimDocument(
@@ -1506,7 +1509,7 @@ def test_bare_multi_law_listing_passes_existence_check_without_article_text(tmp_
                 message="法规存在",
             )
             evidence = ArticleEvidence(
-                law_title=request.law_title, source_type=request.source_type,
+                law_title=request.law_title, source_type="law",
                 version_status="现行有效", data_source=trace,
             )
             return LookupResult(trace.status, evidence, trace)

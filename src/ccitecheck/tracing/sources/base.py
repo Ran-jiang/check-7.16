@@ -17,10 +17,8 @@ class LookupRequest:
     """判定流水线发起的标准化法规查询。"""
 
     law_title: str
-    source_type: str
     article_no: Optional[str] = None
     context_text: str = ""
-
 
 @dataclass
 class LookupResult:

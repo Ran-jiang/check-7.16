@@ -6,7 +6,6 @@ from ccitecheck.domain.citation import (
     ClaimType,
     LegalSource,
     LegalSourceClaimEntities,
-    LegalSourceType,
 )
 from ccitecheck.recognition.spans import locate_claim_article_spans
 
@@ -21,7 +20,7 @@ def _claim(text: str, articles: list[ArticleRef]) -> Claim:
             legal_sources=[
                 LegalSource(
                     title="中华人民共和国反不正当竞争法",
-                    source_type=LegalSourceType.LAW,
+
                     articles=articles,
                 )
             ]
@@ -41,9 +40,11 @@ def test_carryforward_paragraph_reference_is_located():
     ])
     locate_claim_article_spans(claim)
 
-    para3, para4, para5 = claim.entities.legal_sources[0].articles
-    assert para3.span_status == "located"
-    for ref, marker in [(para4, "第四款"), (para5, "第五款")]:
-        assert ref.span_status == "located", f"{marker} 未定位"
-        s, e = ref.citation_span
-        assert marker in text[s:e]
+    citations = claim.entities.citations
+    assert [item.span_status for item in citations] == ["located"] * 3
+    assert [item.role for item in citations] == [
+        "direct", "carry_forward", "carry_forward",
+    ]
+    assert [item.locator.paragraph for item in citations] == [
+        "第三款", "第四款", "第五款",
+    ]

@@ -32,6 +32,7 @@ from ..domain.document import (
     BlockType,
     DocMeta,
     HeadingSource,
+    NoteReference,
     ParsedDocument,
 )
 from .sentences import split_sentences
@@ -54,6 +55,8 @@ TAG_TAB = qn("w:tab")
 TAG_P = qn("w:p")
 # 表格 XML 标签
 TAG_TBL = qn("w:tbl")
+TAG_FOOTNOTE_REFERENCE = qn("w:footnoteReference")
+TAG_ENDNOTE_REFERENCE = qn("w:endnoteReference")
 
 
 # ---- 段落文本提取 ----
@@ -91,6 +94,29 @@ def extract_paragraph_text(para_element) -> str:
     return "".join(parts)
 
 
+def extract_paragraph_note_references(para_element) -> list[NoteReference]:
+    """提取正文段落中的脚注/尾注引用点，不把标记字符混入正文。"""
+    parts: list[str] = []
+    references: list[NoteReference] = []
+    for child in para_element.iter():
+        if child.tag in {TAG_BR, TAG_TAB}:
+            parts.append(" ")
+        elif child.tag == qn("w:t") and child.text:
+            parts.append(child.text)
+        elif child.tag in {TAG_FOOTNOTE_REFERENCE, TAG_ENDNOTE_REFERENCE}:
+            note_id = child.get(qn("w:id"), "")
+            if not note_id:
+                continue
+            references.append(NoteReference(
+                note_type=(
+                    "footnote" if child.tag == TAG_FOOTNOTE_REFERENCE else "endnote"
+                ),
+                note_id=note_id,
+                char_offset=len(normalize_whitespace("".join(parts))),
+            ))
+    return references
+
+
 def extract_cell_text(cell) -> str:
     """
     从表格单元格中提取文本。
@@ -112,6 +138,22 @@ def extract_cell_text(cell) -> str:
         if text:
             para_texts.append(text)
     return " ".join(para_texts)
+
+
+def extract_cell_note_references(cell) -> list[NoteReference]:
+    """将单元格段落中的注释引用点换算到合并后的单元格坐标。"""
+    references: list[NoteReference] = []
+    offset = 0
+    for para in cell.paragraphs:
+        text = normalize_whitespace(extract_paragraph_text(para._element))
+        if not text:
+            continue
+        for reference in extract_paragraph_note_references(para._element):
+            references.append(reference.model_copy(update={
+                "char_offset": offset + reference.char_offset,
+            }))
+        offset += len(text) + 1
+    return references
 
 
 # ---- 自动编号处理 ----
@@ -355,6 +397,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
             # ---- 处理段落 ----
             raw_text = extract_paragraph_text(child)
             text = normalize_whitespace(raw_text)
+            note_references = extract_paragraph_note_references(child)
 
             if is_empty_text(text):
                 para_counter += 1  # 空段落不重排 para_index，但计数仍增加
@@ -390,6 +433,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
                     body_order=body_order,
                     block_order=block_order,
                     para_index=para_counter - 1,
+                    note_references=note_references,
                     table_index=None,
                     row_index=None,
                     cell_index=None,
@@ -458,6 +502,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
                 body_order=body_order,
                 block_order=block_order,
                 para_index=para_counter - 1,
+                note_references=note_references,
                 table_index=None,
                 row_index=None,
                 cell_index=None,
@@ -520,6 +565,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
                         body_order=tbl_body_order,  # 共享表格的 body_order
                         block_order=block_order,
                         para_index=None,  # table_cell 无 para_index
+                        note_references=extract_cell_note_references(cell),
                         table_index=table_index,
                         row_index=row_idx,
                         cell_index=cell_idx,

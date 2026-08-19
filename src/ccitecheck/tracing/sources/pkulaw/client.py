@@ -81,7 +81,7 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["law_keyword"],
             tool_name="get_law_list",
-            arguments={"lawInput": {"Title": title, "Fulltext": fulltext}},
+            arguments={"title": title, "fulltext": fulltext},
         )
         data = _extract_payload_data(payload)
         return _parse_law_list_response(data)
@@ -112,10 +112,10 @@ class PkulawMcpClient:
         payload = self._call_tool(
             endpoint=MCP_ENDPOINTS["case_keyword"],
             tool_name="get_case_list",
-            # MCP schema uses ``Fulltext`` (lower-case t).  ``FullText`` is
-            # silently ignored by the gateway and makes case-number-only
-            # searches look as if no query was supplied.
-            arguments={"caseInput": {"Title": title, "Fulltext": fulltext}},
+            # 网关的 schema 是扁平且全小写的 title/fulltext。包成 ``caseInput``
+            # 或写成首字母大写都不会报参数错，而是被当作未传值，于是返回
+            # “标题关键词或正文关键词至少有一个不为空”，看起来像没给查询词。
+            arguments={"title": title, "fulltext": fulltext},
         )
         data = _extract_payload_data(payload)
         return _parse_case_list_response(data)

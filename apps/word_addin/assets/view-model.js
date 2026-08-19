@@ -25,7 +25,9 @@ export function stripRepeatedArticleHeading(text, articleNo) {
 }
 
 export function orderChecksByCitation(checks) {
-  const anchor = check => Number(String(check.source_locations?.[0]?.block_id || "").replace(/\D/g, "")) || Number.MAX_SAFE_INTEGER
+  const anchor = check => Number(String(
+    check.sort_source_locations?.[0]?.block_id || check.source_locations?.[0]?.block_id || ""
+  ).replace(/\D/g, "")) || Number.MAX_SAFE_INTEGER
   return [...checks].sort((left, right) => {
     const leftId = left.card_id || left.check_id
     const rightId = right.card_id || right.check_id

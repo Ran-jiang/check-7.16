@@ -12,7 +12,6 @@ from ccitecheck.domain.citation import (
     ClaimType,
     LegalSource,
     LegalSourceClaimEntities,
-    LegalSourceType,
 )
 from ccitecheck.domain.evidence import LookupStatus, SourceTier
 from ccitecheck.infrastructure.database import init_db
@@ -48,7 +47,7 @@ class FakeEurLexClient:
 
 def _request(title="通用数据保护条例", article_no=None):
     return LookupRequest(
-        law_title=title, source_type="law", article_no=article_no
+        law_title=title, article_no=article_no
     )
 
 
@@ -136,7 +135,7 @@ def test_eu_statute_routes_to_eurlex_and_skips_semantic(tmp_path: Path, monkeypa
                     legal_sources=[
                         LegalSource(
                             title="通用数据保护条例",
-                            source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT,
+
                             jurisdiction="EU",
                             articles=[],
                         )
@@ -230,7 +229,7 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
             anchor_ids=["line00001"],
             entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
                 title="通用数据保护条例",
-                source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT,
+
                 jurisdiction="EU",
                 articles=[ArticleRef(article="第十七条")],
             )]),
@@ -307,7 +306,7 @@ def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
             anchor_ids=["line00001"],
             entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
                 title="通用数据保护条例",
-                source_type=LegalSourceType.OTHER_NORMATIVE_DOCUMENT,
+
                 jurisdiction="EU",
                 articles=[ArticleRef(article="第十七条")],
             )]),

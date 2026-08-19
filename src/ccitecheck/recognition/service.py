@@ -21,6 +21,7 @@ from ..domain.document import Anchor, Chunk, ParsedDocument
 
 from .arbitration import arbitrate_claim_candidates, build_claim_document
 from .rules import extract_rule_candidates
+from .spans import locate_claim_article_spans
 from .validators import validate_claim_document
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,9 @@ def extract_claims(
     # ---- 3. Claim Arbiter ----
     logger.info("Claim Arbiter 开始裁决，总候选数: %d", len(rule_candidates))
     final_claims = arbitrate_claim_candidates(rule_candidates, parsed_doc)
+    for claim in final_claims:
+        if claim.claim_type.value == "legal_source_claim":
+            locate_claim_article_spans(claim)
     logger.info("Arbiter 完成，最终 claim 数: %d", len(final_claims))
 
     # ---- 4. 构建 ClaimDocument ----

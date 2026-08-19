@@ -29,6 +29,8 @@ from ..domain.citation import (
     ClaimCandidate,
     ClaimDocument,
     ClaimType,
+    InheritedSourceReference,
+    NoteContext,
     SourceLocation,
 )
 
@@ -160,13 +162,68 @@ def _attach_inherited_source_locations(
 ) -> None:
     """为承前法源补全可脱离 ParsedDocument 使用的定位。"""
     for source in getattr(entities, "legal_sources", []):
-        if source.resolution != "inherited" or not source.inherited_from_anchor:
-            source.inherited_from_location = None
+        inherited = source.recognition.inherited_from
+        if source.recognition.form != "inherited" or inherited is None or not inherited.anchor_id:
             continue
         locations = _derive_source_locations(
-            [source.inherited_from_anchor], parsed_doc, anchor_map
+            [inherited.anchor_id], parsed_doc, anchor_map
         )
-        source.inherited_from_location = locations[0] if locations else None
+        source.recognition.inherited_from = InheritedSourceReference(
+            anchor_id=inherited.anchor_id,
+            source_location=locations[0] if locations else None,
+        )
+
+
+def _derive_note_context(
+    anchor_ids: list[str], parsed_doc: ParsedDocument, anchor_map: dict[str, Anchor]
+) -> NoteContext | None:
+    """将脚注/尾注 Claim 回挂到正文中的实际引用点。"""
+    if not anchor_ids:
+        return None
+    block_map = {block.block_id: block for block in parsed_doc.blocks}
+    anchor = anchor_map.get(anchor_ids[0])
+    note_block = block_map.get(anchor.block_id) if anchor else None
+    if note_block is None or not note_block.note_type or not note_block.note_id:
+        return None
+    referenced_from: list[SourceLocation] = []
+    reference_anchor_id: str | None = None
+    for block in parsed_doc.blocks:
+        for reference in block.note_references:
+            if (
+                reference.note_type != note_block.note_type
+                or reference.note_id != note_block.note_id
+            ):
+                continue
+            referenced_from.append(SourceLocation(
+                platform=parsed_doc.doc_meta.source_platform,
+                document_id=parsed_doc.doc_meta.source_document_id,
+                revision=parsed_doc.doc_meta.source_revision,
+                block_id=block.external_block_id or block.block_id,
+                char_start=reference.char_offset,
+                char_end=reference.char_offset,
+                anchor_text=block.text,
+                occurrence=0,
+                table_index=block.table_index,
+                row_index=block.row_index,
+                cell_index=block.cell_index,
+                row_start=block.row_start,
+                row_end=block.row_end,
+                col_start=block.col_start,
+                col_end=block.col_end,
+            ))
+            reference_anchor = next((
+                candidate for candidate in parsed_doc.anchors
+                if candidate.block_id == block.block_id
+                and candidate.char_start <= reference.char_offset <= candidate.char_end
+            ), None)
+            if reference_anchor_id is None and reference_anchor is not None:
+                reference_anchor_id = reference_anchor.anchor
+    return NoteContext(
+        note_type=note_block.note_type,
+        note_id=note_block.note_id,
+        referenced_from=referenced_from,
+        reference_anchor_id=reference_anchor_id,
+    )
 
 
 # ============================================================
@@ -293,16 +350,17 @@ def arbitrate_claim_candidates(
         rebuilt_text = _rebuild_text(cand.anchor_ids, anchor_map)
 
 
-        # 校验 holding_text
-        if hasattr(cand.entities, "holding_text") and cand.entities.holding_text:
-            if cand.entities.holding_text not in rebuilt_text:
+        # 校验案例核验目标
+        verification = getattr(cand.entities, "verification", None)
+        if verification is not None and verification.text:
+            if verification.text not in rebuilt_text:
                 logger.warning(
-                    "holding_text 不是 claim.text 子串，置空。"
-                    "holding_text=%s, claim_text=%s",
-                    cand.entities.holding_text[:100],
+                    "verification.text 不是 claim.text 子串，置空。"
+                    "verification=%s, claim_text=%s",
+                    verification.text[:100],
                     rebuilt_text[:100],
                 )
-                cand.entities.holding_text = ""
+                cand.entities.verification = None
 
     # ---- 第4步：去重合并 ----
     # key = (claim_type, tuple(anchor_ids))
@@ -395,6 +453,7 @@ def arbitrate_claim_candidates(
             entities=cand.entities,
             context_text=_derive_context_text(cand.anchor_ids, parsed_doc, anchor_map),
             source_locations=_derive_source_locations(cand.anchor_ids, parsed_doc, anchor_map),
+            note_context=_derive_note_context(cand.anchor_ids, parsed_doc, anchor_map),
         )
         claims.append(claim)
 
@@ -421,11 +480,11 @@ def build_claim_document(
     from ..domain.citation import ClaimMeta
 
     meta = ClaimMeta(
-        schema_version="0.3",
+        schema_version="0.4",
         source_doc_id=parsed_doc.doc_meta.doc_id,
         source_doc_hash=parsed_doc.doc_meta.doc_hash,
         source_file=parsed_doc.doc_meta.source_file,
-        extractor_version="0.2",
+        extractor_version="0.3",
     )
 
     return ClaimDocument(

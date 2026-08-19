@@ -113,7 +113,7 @@ class EurLexSource:
         )
         evidence = ArticleEvidence(
             law_title=match.title,
-            source_type=request.source_type,
+            source_type="eu_legal_act",
             # 展示层用欧盟体例的条号（Article N），引用行仍保留中文条号
             article_no=(
                 f"Article {article_number}" if article_text else request.article_no

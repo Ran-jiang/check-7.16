@@ -136,14 +136,14 @@ class CapturingPkulawClient(FakePkulawClient):
             ("民法典", "违约责任"),
             MCP_ENDPOINTS["law_keyword"],
             "get_law_list",
-            {"lawInput": {"Title": "民法典", "Fulltext": "违约责任"}},
+            {"title": "民法典", "fulltext": "违约责任"},
         ),
         (
             "get_case_list",
             ("指导案例262号", "平台 责任"),
             MCP_ENDPOINTS["case_keyword"],
             "get_case_list",
-            {"caseInput": {"Title": "指导案例262号", "Fulltext": "平台 责任"}},
+            {"title": "指导案例262号", "fulltext": "平台 责任"},
         ),
     ],
 )
@@ -206,6 +206,35 @@ def test_semantic_tools_parse_law_and_case_records():
     )
 
 
+def test_search_article_parses_gateway_lowercase_article_field():
+    """search_article 实际返回的条文正文字段名是 ``article``（全小写）。
+
+    此前解析器只认 FullText/ArticleText，命中的记录会被逐条跳过，接口不报错
+    却恒返回空列表——语义查条因此长期静默失效。
+    """
+    client = CapturingPkulawClient(
+        _mcp_text_payload(
+            [
+                {
+                    "gid": "aa00daaeb5a4fe4ebdfb",
+                    "title": "中华人民共和国民法典",
+                    "article": "第五百零四条　法人的法定代表人超越权限订立的合同…",
+                    "doc_no": "中华人民共和国主席令第45号",
+                    "timeliness": "现行有效",
+                    "url": "https://pkulaw.com/chl/aa00daaeb5a4fe4ebdfb.html",
+                }
+            ]
+        )
+    )
+
+    articles = client.search_law_articles("法定代表人越权订立合同的效力")
+
+    assert len(articles) == 1
+    assert articles[0].title == "中华人民共和国民法典"
+    # 条号前缀按既定设计由 strip_article_heading 剥离，正文从条文本体开始。
+    assert articles[0].article_text.startswith("法人的法定代表人")
+
+
 def test_current_access_token_and_gateway_configuration(monkeypatch):
     monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "current-token")
     monkeypatch.setenv("PKULAW_MCP_GATEWAY", "https://apim-gateway.pkulaw.com")
@@ -266,7 +295,6 @@ def _article(
 def _request(article_no="第四十八条", context="保护当事人的合法民事权益。"):
     return LookupRequest(
         law_title="民法典",
-        source_type="law",
         article_no=article_no,
         context_text=context,
     )
@@ -359,7 +387,7 @@ def test_numbered_semantic_error_cannot_be_reported_as_missing():
 def test_unnumbered_bare_reference_skips_semantic_search():
     client = RoutingClient(laws=[LAW])
     request = LookupRequest(
-        law_title="民法典", source_type="law", context_text="根据《民法典》规定"
+        law_title="民法典", context_text="根据《民法典》规定"
     )
     result = PkulawFallbackSource(client).lookup(request)
     assert result.status == LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
@@ -378,7 +406,6 @@ def test_unnumbered_substantive_reference_returns_ranked_articles_and_filters_ti
     )
     request = LookupRequest(
         law_title="民法典",
-        source_type="law",
         context_text="应当保护当事人的合法民事权益和财产权利",
     )
     result = PkulawFallbackSource(client).lookup(request)
@@ -389,7 +416,7 @@ def test_unnumbered_substantive_reference_returns_ranked_articles_and_filters_ti
 def test_unnumbered_semantic_article_without_number_has_no_blank_prefix():
     text = "保护当事人的合法民事权益和财产权利。"
     client = RoutingClient(laws=[LAW], semantic=[_article("", text)])
-    request = LookupRequest(law_title="民法典", source_type="law", context_text=text)
+    request = LookupRequest(law_title="民法典", context_text=text)
     result = PkulawFallbackSource(client).lookup(request)
     assert result.status == LookupStatus.RELEVANT_ARTICLES_FOUND
     assert result.evidence.article_text == text
@@ -408,7 +435,6 @@ def test_unnumbered_semantic_article_without_number_has_no_blank_prefix():
 def test_unnumbered_keyword_miss_semantic_outcomes(semantic, expected):
     request = LookupRequest(
         law_title="民法典",
-        source_type="law",
         context_text="应当保护当事人的合法民事权益和财产权利",
     )
     result = PkulawFallbackSource(RoutingClient(semantic=semantic)).lookup(request)
@@ -418,7 +444,6 @@ def test_unnumbered_keyword_miss_semantic_outcomes(semantic, expected):
 def test_unnumbered_keyword_miss_semantic_error_is_source_error():
     request = LookupRequest(
         law_title="民法典",
-        source_type="law",
         context_text="应当保护当事人的合法民事权益和财产权利",
     )
     result = PkulawFallbackSource(

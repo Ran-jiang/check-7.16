@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .citation import SourceLocation
+from .citation import NoteContext, SourceLocation, VerificationTarget
 from .evidence import ArticleEvidence, LookupStatus, SourceTrace
 from .checks import CheckVerdict, ExecutionStatus
 from .revisions import RevisionProposal
@@ -104,12 +104,15 @@ class StatuteMeaningCheck(BaseModel):
 class StatuteVerificationResult(BaseModel):
     check_id: str
     card_id: str
+    display_group_id: str = ""
     claim_id: str
     claim_text: str
     law_title: str
-    source_resolution: str = "explicit"
+    recognition_form: Literal["explicit", "bare", "inherited"] = "explicit"
+    law_identity_resolved: bool = True
     jurisdiction: str = "CN"
     document_quote: str = ""
+    verification: VerificationTarget | None = None
     cited_locators: list[StatuteLocator] = Field(default_factory=list)
     lookup_status: LookupStatus
     evidence: ArticleEvidence | None = None
@@ -117,7 +120,7 @@ class StatuteVerificationResult(BaseModel):
     outcome: Literal["pass", "issue", "bug"]
     message: str = ""
     meaning_check: StatuteMeaningCheck | None = None
-    reference_role: Literal["direct", "nested", "inherited"] = "direct"
+    reference_role: Literal["direct", "nested", "carry_forward"] = "direct"
     parent_check_id: str | None = None
     relation_status: Literal[
         "confirmed", "parent_failed", "parent_unavailable",
@@ -125,6 +128,7 @@ class StatuteVerificationResult(BaseModel):
     ] | None = None
     relation_message: str = ""
     source_locations: list[SourceLocation] = Field(default_factory=list)
+    note_context: NoteContext | None = None
     source_attempts: list[SourceTrace] = Field(default_factory=list)
 
 

@@ -29,7 +29,9 @@ class NestedItem(Protocol):
     relation_status: str | None
     relation_message: str
     relation_candidate_article_no: str | None
-    nested_context: str
+    relation_parent_authoritative_text: str
+    citation_span: tuple[int, int] | None
+    reference_role: str
 
     @property
     def lookup_key(self) -> tuple: ...
@@ -140,17 +142,17 @@ def _relation_candidates(items: list[NestedItem]) -> dict[int, list[int]]:
     result: dict[int, list[int]] = {}
     by_claim: dict[str, list[int]] = {}
     for index, item in enumerate(items):
-        if item.article is not None and item.article.citation_span is not None:
+        if item.article is not None and item.citation_span is not None:
             by_claim.setdefault(item.claim.claim_id, []).append(index)
     for indices in by_claim.values():
-        indices.sort(key=lambda index: items[index].article.citation_span[0])
+        indices.sort(key=lambda index: items[index].citation_span[0])
         for position, child_index in enumerate(indices[1:], start=1):
             child = items[child_index]
-            child_start = child.article.citation_span[0]
+            child_start = child.citation_span[0]
             parents: list[int] = []
             for parent_index in reversed(indices[:position]):
                 parent = items[parent_index]
-                parent_end = parent.article.citation_span[1]
+                parent_end = parent.citation_span[1]
                 bridge = child.claim.text[parent_end:child_start]
                 if "\n" in bridge or len(bridge) > 1200:
                     break
@@ -168,8 +170,8 @@ def _bridge_stays_in_parent_scope(bridge: str) -> bool:
     governed = bridge[reporting.end():]
     last_open = max(governed.rfind(mark) for mark in "“‘")
     last_close = max(governed.rfind(mark) for mark in "”’")
-    if last_open >= 0:
-        return last_open > last_close
+    if last_open > last_close:
+        return True
     return re.search(r"[。！？]", governed) is None
 
 
@@ -202,11 +204,8 @@ def _confirm(
     child.relation_status = status
     child.relation_message = message
     child.relation_candidate_article_no = candidate_article_no
-    child.nested_context = parent_text
-    if child.article is not None:
-        child.article.reference_role = "nested"
-        child.article.parent_reference_id = (parent.law_title, parent.article_no or "")
-        child.article.quote_span = None
+    child.relation_parent_authoritative_text = parent_text
+    child.reference_role = "nested"
 
 
 def _reference_label(item: NestedItem) -> str:
