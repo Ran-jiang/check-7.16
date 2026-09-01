@@ -136,6 +136,8 @@ export class CheckUi {
       element("span", "title-main", "处已通过，"),
       element("em", "title-count", String(summary.issues)),
       element("span", "title-main", "处未通过，"),
+      element("em", "title-count", String(summary.reviews || 0)),
+      element("span", "title-main", "处待核查，"),
       element("em", "title-count", String(summary.bugs)),
       element("span", "title-main", "处待核实")
     )
@@ -155,6 +157,7 @@ export class CheckUi {
     const options = [
       ["all", "全部", summary.total],
       ["issue", "未通过", summary.issues],
+      ["review", "待核查", summary.reviews || 0],
       ["bug", "待核实", summary.bugs],
       ["pass", "已通过", summary.passed],
     ]
@@ -260,9 +263,11 @@ export class CheckUi {
     const primaryViews = views.filter(view => view.raw.reference_role !== "nested")
     const nestedCount = views.length - primaryViews.length
     const issueCount = primaryViews.filter(view => view.state === "issue").length
+    const reviewCount = primaryViews.filter(view => view.state === "review").length
     const bugCount = primaryViews.filter(view => view.state === "bug").length
     const passCount = primaryViews.filter(view => view.state === "pass").length
     if (issueCount) counts.append(element("span", "count-issue", `${issueCount} 未通过`))
+    if (reviewCount) counts.append(element("span", "count-review", `${reviewCount} 待核查`))
     if (bugCount) counts.append(element("span", "count-bug", `${bugCount} 待核实`))
     if (passCount) counts.append(element("span", "count-pass", `${passCount} 通过`))
     if (nestedCount) counts.append(element("span", "count-nested", `${nestedCount} 内部转引`))

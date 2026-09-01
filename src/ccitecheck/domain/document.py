@@ -181,7 +181,7 @@ class DocMeta(BaseModel):
     doc_id: str = Field(default_factory=lambda: str(uuid4()), description="文档唯一 ID（uuid4）")
     source_file: str = Field(default="", description="原始 DOCX 文件名")
     doc_hash: str = Field(default="", description="原始文件 SHA-256 摘要")
-    source_platform: Literal["docx", "feishu"] = Field(default="docx", description="文档来源平台")
+    source_platform: Literal["docx"] = Field(default="docx", description="Word DOCX 来源")
     source_document_id: Optional[str] = Field(default=None, description="来源平台文档 ID")
     source_revision: Optional[str] = Field(default=None, description="来源平台文档版本")
     parsed_at: str = Field(

@@ -9,9 +9,19 @@ export const LOOKUP_STATUS_LABELS = {
 }
 
 export const STATUTE_ERROR_LABELS = {
-  source_not_found: "北大法宝未检索到所引法源", citation_location_error: "条款编号或引用定位错误",
+  source_not_found: "北大法宝未检索到所引法源", law_name_error: "法律名称错误",
+  article_not_found: "条文不存在", article_number_error: "条号错误",
+  citation_hierarchy_error: "层级错误",
   source_name_ambiguous: "法规名称无法确定",
   source_repealed: "法源已废止或失效", source_amended: "法源已修改", meaning_distorted: "曲解权威文本原意",
+}
+
+export const APPLICATION_ERROR_LABELS = {
+  rule_fact_mismatch: "法条与事实关联性",
+  direct_quote_unfaithful: "直接引用改写权威来源",
+  application_logic_error: "法律适用逻辑",
+  legal_alias_inconsistent: "法律简称歧义或不一致",
+  format_error: "格式错误",
 }
 
 export function formatReference(check) {
@@ -24,20 +34,26 @@ export function formatReference(check) {
 export function statuteViewOf(check, options = {}) {
   const state = check.outcome || "bug"
   const findings = check.findings || []
+  const applicationReviews = check.application_check?.reviews || []
   return {
     kind: "statute", checkId: check.check_id, cardId: check.card_id || null, state,
     badge: { state, text: BADGE_TEXT[state] || "未核查" },
-    typeLabel: statuteTypeLabel(check, state, findings),
+    typeLabel: statuteTypeLabel(check, state, findings, applicationReviews),
     quote: options.compact ? null : check.claim_text || "",
     refLine: { label: "核查对象", text: formatReference(check), status: null },
-    verdict: statuteVerdict(check, state, findings), evidence: statuteEvidence(check),
-    typeTags: findings.map(finding => STATUTE_ERROR_LABELS[finding.code] || finding.code),
+    verdict: statuteVerdict(check, state, findings, applicationReviews), evidence: statuteEvidence(check),
+    typeTags: [
+      ...findings.map(finding => STATUTE_ERROR_LABELS[finding.code] || finding.code),
+      ...applicationReviews.map(review => APPLICATION_ERROR_LABELS[review.error_type] || review.error_type),
+    ],
     actions: { jump: !options.compact, decide: true }, raw: check,
   }
 }
 
-function statuteTypeLabel(check, state, findings) {
-  if (findings.length) return findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code).join("；")
+function statuteTypeLabel(check, state, findings, applicationReviews) {
+  const labels = findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code)
+  labels.push(...applicationReviews.map(review => `法律适用待核查：${APPLICATION_ERROR_LABELS[review.error_type] || review.error_type}`))
+  if (labels.length) return labels.join("；")
   if (check.lookup_status === "out_of_scope") return "超出核查边界"
   if (state === "pass") {
     if (check.lookup_status === "law_found_text_unavailable" && !(check.cited_locators || []).length) return "法源存在性核验通过"
@@ -55,10 +71,20 @@ function statuteTypeLabel(check, state, findings) {
   return LOOKUP_STATUS_LABELS[check.lookup_status] || "未完成核查，需人工处理"
 }
 
-function statuteVerdict(check, state, findings) {
+function statuteVerdict(check, state, findings, applicationReviews) {
   if (findings.length) {
     const first = findings[0]
-    return { riskText: first.risk_level === "HIGH" ? "高" : "中", suggestion: findingText(first) }
+    const applicationText = applicationReviews.map(review => review.suggestion || review.summary).filter(Boolean).join("；")
+    return {
+      riskText: first.risk_level === "HIGH" ? "高" : "中",
+      suggestion: [findingText(first), applicationText && `法律适用待核查：${applicationText}`].filter(Boolean).join("\n"),
+    }
+  }
+  if (applicationReviews.length) {
+    return {
+      riskText: "待核查",
+      suggestion: applicationReviews.map(review => review.suggestion || review.summary).filter(Boolean).join("；"),
+    }
   }
   if (check.lookup_status === "out_of_scope") {
     const message = (check.source_attempts || []).find(item => item.status === "out_of_scope")?.message
@@ -66,6 +92,9 @@ function statuteVerdict(check, state, findings) {
   }
   if (check.reference_role === "nested" && check.relation_message) {
     return { riskText: null, suggestion: check.relation_message }
+  }
+  if (state === "bug" && check.message) {
+    return { riskText: null, suggestion: check.message }
   }
   return state === "bug" && check.meaning_check?.notes ? { riskText: null, suggestion: check.meaning_check.notes } : null
 }

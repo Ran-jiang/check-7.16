@@ -264,7 +264,7 @@ label.scope-row { cursor: pointer; }
   background: var(--success-bg); color: var(--success-fg);
 }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger-fg); }
-.status-pill.is-bug { background: var(--warning-bg); color: var(--warning-fg); }
+.status-pill.is-review, .status-pill.is-bug { background: var(--warning-bg); color: var(--warning-fg); }
 .status-pill.is-not-run { background: var(--bg-subtle-hover); color: var(--fg-3); }
 /* 区块标签：每个分区上方的 caption 小字（文书原文/核查对象/权威原文） */
 .zone-label-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 18px; }
@@ -294,7 +294,7 @@ label.scope-row { cursor: pointer; }
 /* 多引卡：引文一次 + 紧凑子行（收起白底，展开恢复状态着色） */
 .multi-counts { display: flex; gap: 8px; font-size: 12px; line-height: 18px; }
 .multi-counts .count-issue { color: var(--danger-fg); }
-.multi-counts .count-bug { color: var(--warning-fg); }
+.multi-counts .count-review, .multi-counts .count-bug { color: var(--warning-fg); }
 .multi-counts .count-pass { color: var(--success-fg); }
 .multi-counts .count-nested { color: var(--fg-3); }
 .citation-references { display: grid; gap: 8px; margin-top: 12px; }

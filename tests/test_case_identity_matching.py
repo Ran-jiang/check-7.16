@@ -1,5 +1,5 @@
-from ccitecheck.judgment.cases import _match_case_record, _same_court
-from ccitecheck.tracing.sources.pkulaw.client import PkulawCaseRecord
+from ccitecheck.orchestration.cases import _match_case_record, _same_court
+from ccitecheck.retrieval.sources.pkulaw.client import PkulawCaseRecord
 
 
 def test_specific_court_alias_is_equivalent():
@@ -218,7 +218,7 @@ def test_recognition_captures_document_type_after_case_number():
 def test_numbered_case_queries_by_number_alone_first():
     """有案号时应先单用案号检索（案号唯一），不与可能脱敏/有误的案名做
     AND，否则法宝取交集会漏检。"""
-    from ccitecheck.judgment.cases import _exact_queries
+    from ccitecheck.orchestration.cases import _exact_queries
     from types import SimpleNamespace
 
     claim = SimpleNamespace(text="……", claim_type=None)

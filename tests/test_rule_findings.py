@@ -3,7 +3,7 @@
 from ccitecheck.recognition.cases import NAMED_CASE_PATTERN, extract_case_refs
 from ccitecheck.recognition.statutes import _extract_articles_from_text
 from ccitecheck.infrastructure.database import strip_version_annotation
-from ccitecheck.judgment.statutes import (
+from ccitecheck.verification.statutes import (
     assess_statute,
     classify_not_verifiable,
     suggest_similar_title,
@@ -15,7 +15,7 @@ from ccitecheck.domain.evidence import (
     SourceTrace,
 )
 from ccitecheck.domain.statute_results import StatuteErrorCode
-from ccitecheck.tracing.sources import LookupResult
+from ccitecheck.retrieval.sources import LookupResult
 
 
 # ---------- D1 案例正则 ----------
@@ -114,7 +114,7 @@ def test_article_not_exist_produces_high_finding():
         "中华人民共和国民法典", "第一千三百条", result, attempts, []
     )
     assert any(
-        f.code == StatuteErrorCode.CITATION_LOCATION_ERROR
+        f.code == StatuteErrorCode.ARTICLE_NOT_FOUND
         and f.risk_level == "HIGH"
         for f in findings
     )
@@ -145,7 +145,7 @@ def test_repealed_law_produces_outdated_finding():
     )
     # 已废止时不应叠加"未检索到条文"噪音
     assert not any(
-        f.code == StatuteErrorCode.CITATION_LOCATION_ERROR for f in findings
+        f.code == StatuteErrorCode.ARTICLE_NOT_FOUND for f in findings
     )
 
 

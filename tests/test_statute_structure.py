@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from ccitecheck.application.verify_claims import _matching_historical_location
+from ccitecheck.orchestration.scheduler import _matching_historical_location
 from ccitecheck.domain.citation import ArticleRef
 from ccitecheck.domain.statute_results import StatuteLocator, StatuteVersion
-from ccitecheck.judgment.statutes import (
+from ccitecheck.verification.statutes import (
     LocationStatus,
     assess_location,
     parse_article_structure,

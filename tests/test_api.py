@@ -11,6 +11,26 @@ from ccitecheck.infrastructure.database import connect, init_db, upsert_article,
 def _reject_named_temporary_file(*args, **kwargs):
     raise AssertionError("API must use a closed, reopenable temporary DOCX path")
 
+
+def test_health_publishes_json_contract_versions():
+    api_module = importlib.import_module("apps.api.app")
+    payload = TestClient(api_module.app).get("/api/health").json()
+    assert payload["claim_schema_version"] == "0.6"
+    assert payload["verification_schema_version"] == "0.9"
+
+
+def test_health_counts_configured_deepseek(monkeypatch):
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_PLUS_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_MAX_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    api_module = importlib.import_module("apps.api.app")
+    payload = TestClient(api_module.app).get("/api/health").json()
+
+    assert payload["llm_configured"] is True
+
 def test_document_check_streams_keepalive_for_slow_processing(tmp_path, monkeypatch):
     """核查耗时超过保活间隔时，响应正文以保活空白开头且仍能被 JSON 解析，
     避免 Word 插件所在 WKWebView 因长时间无数据而超时。"""
@@ -98,93 +118,22 @@ def test_word_addin_document_check_api(tmp_path, monkeypatch):
     assert payload["summary"]["total"] == 1
 
 
-def test_web_document_check_returns_preview_session_and_download(tmp_path, monkeypatch):
-    db_path = tmp_path / "laws.sqlite"
-    _seed_law_db(db_path)
-    document = Document()
-    document.add_paragraph("依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。")
-    buffer = BytesIO()
-    document.save(buffer)
-
-    api_module = importlib.import_module("apps.api.app")
-    monkeypatch.setattr(api_module, "LAW_DB", db_path)
-    monkeypatch.setattr(api_module, "create_run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("web uploads must not be debug-captured")))
-    client = TestClient(api_module.app)
-    response = client.post("/api/web/checks", json={
-        "file_name": "网页测试.docx",
-        "docx_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "semantic_check": False,
-    })
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["session_id"]
-    assert payload["preview_blocks"][0]["block_id"] == "word:p:0"
-    assert payload["preview_blocks"][0]["text"].startswith("依据《中华人民共和国民法典》")
-    download = client.get(f"/api/web/sessions/{payload['session_id']}/document")
-    assert download.status_code == 200
-    assert download.content.startswith(b"PK")
-
-
-def test_web_text_check_uses_same_pipeline(tmp_path, monkeypatch):
-    db_path = tmp_path / "laws.sqlite"
-    _seed_law_db(db_path)
-    api_module = importlib.import_module("apps.api.app")
-    monkeypatch.setattr(api_module, "LAW_DB", db_path)
-    client = TestClient(api_module.app)
-
-    response = client.post("/api/web/checks/text", json={
-        "text": "依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。",
-        "semantic_check": False,
-    })
-
-    assert response.status_code == 200
-    assert response.json()["summary"]["total"] == 1
-    assert response.json()["preview_blocks"][0]["block_id"] == "word:p:0"
-
-
-def test_web_page_has_public_security_and_cache_headers():
+def test_root_redirects_to_word_taskpane_with_security_headers():
     api_module = importlib.import_module("apps.api.app")
     client = TestClient(api_module.app)
 
-    response = client.get("/web/")
+    response = client.get("/", follow_redirects=False)
+    taskpane_response = client.get("/taskpane.html")
 
-    assert response.status_code == 200
+    assert response.status_code == 307
+    assert response.headers["location"] == "/taskpane.html"
     assert response.headers["cache-control"] == "no-cache"
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
-
-
-def test_debug_recognition_runs_only_parse_and_recognition(tmp_path, monkeypatch):
-    db_path = tmp_path / "laws.sqlite"
-    _seed_law_db(db_path)
-    document = Document()
-    document.add_heading("合同责任", level=1)
-    document.add_paragraph("依据《中华人民共和国民法典》第五百七十七条，被告应当承担违约责任。")
-    buffer = BytesIO()
-    document.save(buffer)
-
-    api_module = importlib.import_module("apps.api.app")
-    monkeypatch.setattr(api_module, "LAW_DB", db_path)
-    monkeypatch.setattr(api_module, "create_run", lambda *args, **kwargs: None)
-    client = TestClient(api_module.app)
-    response = client.post("/api/debug/recognition", json={
-        "file_name": "识别测试.docx",
-        "docx_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "include_statutes": True,
-        "include_cases": False,
-    })
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["file_name"] == "识别测试.docx"
-    assert payload["summary"]["blocks"] == 2
-    assert payload["summary"]["claims"] == 1
-    assert payload["summary"]["claim_types"] == {"legal_source_claim": 1}
-    assert payload["parsed_document"]["blocks"][0]["type"] == "heading"
-    claim = payload["claim_document"]["claims"][0]
-    assert claim["entities"]["legal_sources"][0]["title"] == "中华人民共和国民法典"
-    assert claim["source_locations"][0]["block_id"] == "word:p:1"
+    assert (
+        "script-src 'self' https://appsforoffice.microsoft.com"
+        in taskpane_response.headers["content-security-policy"]
+    )
 
 
 def _seed_law_db(db_path):
@@ -244,8 +193,8 @@ def test_selection_check_rejects_empty_text(tmp_path, monkeypatch):
 
 def test_case_only_selection_reports_unconfigured_case_source(tmp_path, monkeypatch):
     api_module = importlib.import_module("apps.api.app")
-    verification_module = importlib.import_module("ccitecheck.application.verify_claims")
-    from ccitecheck.tracing.sources.pkulaw.client import PkulawNotConfiguredError
+    verification_module = importlib.import_module("ccitecheck.orchestration.scheduler")
+    from ccitecheck.retrieval.sources.pkulaw.client import PkulawNotConfiguredError
 
     class UnconfiguredCaseSource:
         def search_keyword(self, title, fulltext):

@@ -1,3 +1,8 @@
+import {
+  assertCheckResponse,
+  VERIFICATION_SCHEMA_VERSION,
+} from "/shared-assets/verification-contract.js"
+
 const STORAGE_KEY = "ccitecheck.recentChecks"
 const HISTORY_LIMIT = 3
 
@@ -6,7 +11,9 @@ export function readHistory() {
   if (!value) return []
   try {
     const history = JSON.parse(value)
-    return Array.isArray(history) ? history.slice(0, HISTORY_LIMIT) : []
+    return Array.isArray(history)
+      ? history.filter(item => item.schemaVersion === VERIFICATION_SCHEMA_VERSION).slice(0, HISTORY_LIMIT)
+      : []
   } catch {
     localStorage.removeItem(STORAGE_KEY)
     return []
@@ -18,6 +25,7 @@ export function recordHistory(result) {
     fileName: result.file_name,
     documentKey: result.document_key,
     checkedAt: new Date().toISOString(),
+    schemaVersion: result.verification.schema_version,
     total: result.summary.total,
     issues: result.summary.issues,
   }
@@ -56,7 +64,13 @@ function saveSnapshot(history, result) {
 }
 
 export function readResultSnapshot(documentKey) {
-  return readSnapshotStore()[documentKey] || null
+  const snapshot = readSnapshotStore()[documentKey]
+  if (!snapshot) return null
+  try {
+    return assertCheckResponse(snapshot)
+  } catch {
+    return null
+  }
 }
 
 // ---- 每条核查项的人工处理标记（接受/忽略），按文档内容哈希持久化 ----

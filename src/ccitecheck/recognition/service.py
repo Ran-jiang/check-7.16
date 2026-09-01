@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from ..domain.citation import ClaimDocument
+from ..domain.claims import RawClaimDocument, from_legacy_document
 from ..domain.document import Anchor, Chunk, ParsedDocument
 
 from .arbitration import arbitrate_claim_candidates, build_claim_document
@@ -68,7 +69,6 @@ def extract_claims(
     parsed_doc: ParsedDocument,
     include_statutes: bool = True,
     include_cases: bool = True,
-    law_lexicon=None,
 ) -> ClaimDocument:
     """
     从 ParsedDocument 中识别可核查引用。
@@ -95,7 +95,7 @@ def extract_claims(
     # ---- 2. 规则抽取 ----
     logger.info("开始规则抽取……")
     rule_candidates = extract_rule_candidates(
-        parsed_doc, indexes, include_statutes, include_cases, law_lexicon
+        parsed_doc, indexes, include_statutes, include_cases
     )
     logger.info("规则抽取完成，候选数: %d", len(rule_candidates))
 
@@ -122,3 +122,20 @@ def extract_claims(
         )
 
     return claim_doc
+
+
+def recognize(
+    document: ParsedDocument,
+    *,
+    include_statutes: bool = True,
+    include_cases: bool = True,
+) -> RawClaimDocument:
+    """返回只含原文与文档结构事实的 Recognition 结果。"""
+    return from_legacy_document(extract_claims(
+        document,
+        include_statutes=include_statutes,
+        include_cases=include_cases,
+    ))
+
+
+__all__ = ["build_indexes", "extract_claims", "recognize"]

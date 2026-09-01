@@ -1,8 +1,8 @@
 import pytest
 
 from ccitecheck.application import DocumentPipelineError, verify_document_claims
-from ccitecheck.domain.citation import ClaimDocument
-from ccitecheck.judgment import SemanticCheckError
+from ccitecheck.domain.citation import ClaimDocument, ClaimMeta
+from ccitecheck.verification import SemanticCheckError
 
 
 def test_semantic_initialization_error_is_not_replaced_by_stale_fallback(
@@ -18,7 +18,7 @@ def test_semantic_initialization_error_is_not_replaced_by_stale_fallback(
 
     with pytest.raises(DocumentPipelineError) as caught:
         verify_document_claims(
-            ClaimDocument(),
+            ClaimDocument(claim_meta=ClaimMeta()),
             tmp_path / "laws.sqlite",
             semantic_check=True,
         )

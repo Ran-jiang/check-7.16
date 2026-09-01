@@ -103,7 +103,7 @@ def test_ambiguous_structure_citation_goes_to_manual(tmp_path: Path):
     assert check.evidence.structure_path.startswith("候选：")
 
 
-def test_missing_structure_citation_reports_location_error(tmp_path: Path):
+def test_missing_structure_citation_reports_hierarchy_error(tmp_path: Path):
     doc = verify_claim_document(
         _claim_doc("《中华人民共和国民法典》第九编另有规定。"),
         _structure_db(tmp_path),
@@ -111,4 +111,4 @@ def test_missing_structure_citation_reports_location_error(tmp_path: Path):
     )
     check = doc.statute_results[0]
     assert check.lookup_status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
-    assert check.findings[0].code == StatuteErrorCode.CITATION_LOCATION_ERROR
+    assert check.findings[0].code == StatuteErrorCode.CITATION_HIERARCHY_ERROR

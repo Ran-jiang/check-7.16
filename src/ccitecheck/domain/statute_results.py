@@ -5,9 +5,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from .citation import NoteContext, SourceLocation, VerificationTarget
+from .citation import NoteContext, SourceLocation
 from .evidence import ArticleEvidence, LookupStatus, SourceTrace
 from .checks import CheckVerdict, ExecutionStatus
 from .revisions import RevisionProposal
@@ -16,7 +16,10 @@ from .revisions import RevisionProposal
 class StatuteErrorCode(str, Enum):
     SOURCE_NOT_FOUND = "source_not_found"
     SOURCE_NAME_AMBIGUOUS = "source_name_ambiguous"
-    CITATION_LOCATION_ERROR = "citation_location_error"
+    LAW_NAME_ERROR = "law_name_error"
+    ARTICLE_NOT_FOUND = "article_not_found"
+    ARTICLE_NUMBER_ERROR = "article_number_error"
+    CITATION_HIERARCHY_ERROR = "citation_hierarchy_error"
     SOURCE_REPEALED = "source_repealed"
     SOURCE_AMENDED = "source_amended"
     MEANING_DISTORTED = "meaning_distorted"
@@ -101,25 +104,52 @@ class StatuteMeaningCheck(BaseModel):
     job_id: str | None = None
 
 
+class LegalApplicationReview(BaseModel):
+    """法律适用核查只提出人工复核事项，不直接判定未通过。"""
+
+    error_type: Literal[
+        "rule_fact_mismatch",
+        "direct_quote_unfaithful",
+        "application_logic_error",
+        "legal_alias_inconsistent",
+        "format_error",
+    ]
+    review_level: Literal["待核查"] = "待核查"
+    summary: str = Field(max_length=300)
+    suggestion: str
+    related_sources: list[str] = Field(default_factory=list)
+
+
+class LegalApplicationCheck(BaseModel):
+    execution_status: ExecutionStatus = ExecutionStatus.COMPLETED
+    verdict: Literal["pass", "review"] | None = None
+    reviews: list[LegalApplicationReview] = Field(default_factory=list)
+    comparison: str = Field(default="", max_length=300)
+    notes: str = ""
+    error_code: str | None = None
+    retryable: bool = False
+    job_id: str | None = None
+
+
 class StatuteVerificationResult(BaseModel):
     check_id: str
     card_id: str
-    display_group_id: str = ""
+    display_group_id: str = Field(min_length=1)
     claim_id: str
     claim_text: str
     law_title: str
     recognition_form: Literal["explicit", "bare", "inherited"] = "explicit"
     law_identity_resolved: bool = True
+    law_identity_resolver: Literal["direct", "lexicon", "context", "pkulaw"] | None = None
     jurisdiction: str = "CN"
-    document_quote: str = ""
-    verification: VerificationTarget | None = None
     cited_locators: list[StatuteLocator] = Field(default_factory=list)
     lookup_status: LookupStatus
     evidence: ArticleEvidence | None = None
     findings: list[StatuteFinding] = Field(default_factory=list)
-    outcome: Literal["pass", "issue", "bug"]
+    outcome: Literal["pass", "issue", "review", "bug"]
     message: str = ""
     meaning_check: StatuteMeaningCheck | None = None
+    application_check: LegalApplicationCheck | None = None
     reference_role: Literal["direct", "nested", "carry_forward"] = "direct"
     parent_check_id: str | None = None
     relation_status: Literal[
@@ -130,6 +160,7 @@ class StatuteVerificationResult(BaseModel):
     source_locations: list[SourceLocation] = Field(default_factory=list)
     note_context: NoteContext | None = None
     source_attempts: list[SourceTrace] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 
 __all__ = [
@@ -139,6 +170,8 @@ __all__ = [
     "StatuteLocationCandidate",
     "StatuteLocationResolution",
     "NestedReferenceMatch",
+    "LegalApplicationCheck",
+    "LegalApplicationReview",
     "StatuteMeaningCheck",
     "StatuteVersion",
     "StructuredArticle",

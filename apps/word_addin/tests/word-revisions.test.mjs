@@ -14,7 +14,7 @@ test("revisionFor selects a machine-applicable issue", () => {
 })
 
 test("revisionFor rejects missing replacement", () => {
-  assert.equal(revisionFor({ document_quote: "原文", findings: [] }), null)
+  assert.equal(revisionFor({ claim_text: "原文", findings: [] }), null)
 })
 
 test("applyTrackedRevision replaces one exact occurrence with change tracking", async () => {

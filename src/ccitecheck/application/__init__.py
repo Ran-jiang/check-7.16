@@ -7,7 +7,7 @@ from .check_document import (
     validate_shared_document,
     verify_document_claims,
 )
-from .verify_claims import verify_claim_document
+from ..orchestration.scheduler import verify_claim_document
 
 __all__ = [
     "DocumentPipelineError",

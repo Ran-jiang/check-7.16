@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
+from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SourceTier(str, Enum):
@@ -25,6 +26,23 @@ class LookupStatus(str, Enum):
     SOURCE_ERROR = "source_error"
     NOT_VERIFIABLE = "not_verifiable"
     OUT_OF_SCOPE = "out_of_scope"
+
+
+class RetrievalStatus(str, Enum):
+    FOUND = "found"
+    LAW_NOT_FOUND = "law_not_found"
+    ARTICLE_MISSING = "article_missing"
+    TEXT_UNAVAILABLE = "text_unavailable"
+    SOURCE_NOT_CONFIGURED = "source_not_configured"
+    SOURCE_ERROR = "source_error"
+
+
+class TechnicalStatus(str, Enum):
+    COMPLETED = "completed"
+    TIMEOUT = "timeout"
+    MODEL_ERROR = "model_error"
+    SOURCE_ERROR = "source_error"
+    SKIPPED = "skipped"
 
 
 class CaseLookupStatus(str, Enum):
@@ -91,13 +109,52 @@ class CaseSourceTrace(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RetrievalAttempt(BaseModel):
+    mode: str
+    status: str
+    request: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class EvidenceCandidate(BaseModel):
+    candidate_id: str = Field(default_factory=lambda: str(uuid4()))
+    kind: Literal["statute", "case", "metadata"]
+    title: str | None = None
+    locator: str | None = None
+    text: str | None = None
+    source_url: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RetrievalEvidence(BaseModel):
+    evidence_id: str = Field(default_factory=lambda: str(uuid4()))
+    claim_id: str
+    hypothesis_id: str
+    source_id: str
+    submitted_request: dict[str, Any] = Field(default_factory=dict)
+    route_attempts: list[RetrievalAttempt] = Field(default_factory=list)
+    retrieval_status: RetrievalStatus
+    technical_status: TechnicalStatus
+    candidates: list[EvidenceCandidate] = Field(default_factory=list)
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_normalized_query: str | None = None
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 __all__ = [
     "ArticleEvidence",
     "ArticleExcerpt",
     "CaseEvidence",
     "CaseLookupStatus",
     "CaseSourceTrace",
+    "EvidenceCandidate",
     "LookupStatus",
+    "RetrievalAttempt",
+    "RetrievalEvidence",
+    "RetrievalStatus",
     "SourceTier",
     "SourceTrace",
+    "TechnicalStatus",
 ]

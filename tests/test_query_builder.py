@@ -1,4 +1,4 @@
-from ccitecheck.tracing.queries import (
+from ccitecheck.query_construction.strategies.common import (
     build_case_keyword_query,
     build_case_semantic_query,
     build_law_fulltext_query,

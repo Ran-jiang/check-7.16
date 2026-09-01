@@ -29,6 +29,8 @@ from ..domain.citation import (
     ClaimCandidate,
     ClaimDocument,
     ClaimType,
+    CLAIM_EXTRACTOR_VERSION,
+    CLAIM_SCHEMA_VERSION,
     InheritedSourceReference,
     NoteContext,
     SourceLocation,
@@ -345,24 +347,7 @@ def arbitrate_claim_candidates(
     if not filtered:
         return []
 
-    # ---- 第3步：实体子串校验 ----
-    for cand in filtered:
-        rebuilt_text = _rebuild_text(cand.anchor_ids, anchor_map)
-
-
-        # 校验案例核验目标
-        verification = getattr(cand.entities, "verification", None)
-        if verification is not None and verification.text:
-            if verification.text not in rebuilt_text:
-                logger.warning(
-                    "verification.text 不是 claim.text 子串，置空。"
-                    "verification=%s, claim_text=%s",
-                    verification.text[:100],
-                    rebuilt_text[:100],
-                )
-                cand.entities.verification = None
-
-    # ---- 第4步：去重合并 ----
+    # ---- 第3步：去重合并 ----
     # key = (claim_type, tuple(anchor_ids))
     merged: dict[tuple, ClaimCandidate] = {}
 
@@ -383,7 +368,7 @@ def arbitrate_claim_candidates(
     for cand in merged.values():
         deduped.append(cand)
 
-    # ---- 第5步：完整性裁决 ----
+    # ---- 第4步：完整性裁决 ----
     # 若候选 A 的 anchor_ids 是候选 B 的 anchor_ids 的真子集，
     # 且二者 claim_type 相同、anchor 区间重叠，保留更长的 B
 
@@ -421,12 +406,12 @@ def arbitrate_claim_candidates(
 
         completeness_ruled.append(cand_a)
 
-    # ---- 第6步：不同位置不合并 ----
+    # ---- 第5步：不同位置不合并 ----
     # 已在去重步骤中通过 anchor_ids 精确匹配处理
     # 不同 anchor_ids 但相同 text 的 claim 各自保留
     # （不额外处理）
 
-    # ---- 第7步：排序与编号 ----
+    # ---- 第6步：排序与编号 ----
     # 按（首 anchor 编号，claim_type）排序
     completeness_ruled.sort(
         key=lambda c: (
@@ -480,14 +465,19 @@ def build_claim_document(
     from ..domain.citation import ClaimMeta
 
     meta = ClaimMeta(
-        schema_version="0.4",
+        schema_version=CLAIM_SCHEMA_VERSION,
         source_doc_id=parsed_doc.doc_meta.doc_id,
         source_doc_hash=parsed_doc.doc_meta.doc_hash,
         source_file=parsed_doc.doc_meta.source_file,
-        extractor_version="0.3",
+        extractor_version=CLAIM_EXTRACTOR_VERSION,
     )
 
     return ClaimDocument(
         claim_meta=meta,
+        document_text="\n".join(
+            block.text
+            for block in sorted(parsed_doc.blocks, key=lambda item: item.block_order)
+            if block.text.strip()
+        ),
         claims=claims,
     )

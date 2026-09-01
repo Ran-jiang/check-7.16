@@ -1,11 +1,12 @@
-import { STATUTE_ERROR_LABELS } from "./statute-view-model.js"
+import { APPLICATION_ERROR_LABELS, STATUTE_ERROR_LABELS } from "./statute-view-model.js"
 import { CASE_ERROR_LABELS, CASE_STATUS_LABELS } from "./case-view-model.js"
 
 export function buildResultCards(verification) {
   const cards = new Map()
   for (const result of verification.statute_results || []) {
+    if (!result.display_group_id) throw new Error("法规核验结果缺少 display_group_id")
     const normalized = normalizeStatuteResult(result)
-    const groupId = result.display_group_id || result.card_id
+    const groupId = result.display_group_id
     const card = cards.get(groupId) || {
       card_id: result.card_id,
       display_group_id: groupId,
@@ -27,8 +28,9 @@ export function buildResultCards(verification) {
     cards.set(groupId, card)
   }
   for (const result of verification.case_results || []) {
+    if (!result.display_group_id) throw new Error("案例核验结果缺少 display_group_id")
     const normalized = normalizeCaseResult(result)
-    const groupId = result.display_group_id || result.check_id
+    const groupId = result.display_group_id
     const card = cards.get(groupId) || {
       card_id: result.check_id,
       display_group_id: groupId,
@@ -58,6 +60,10 @@ export function buildResultCards(verification) {
 
 export function normalizeStatuteResult(result) {
   const locator = result.cited_locators?.[0] || {}
+  const citationTypes = result.findings?.map(item => STATUTE_ERROR_LABELS[item.code] || item.code) || []
+  const applicationTypes = result.application_check?.reviews?.map(
+    item => `法律适用待核查：${APPLICATION_ERROR_LABELS[item.error_type] || item.error_type}`
+  ) || []
   return {
     ...result,
     check_kind: "statute",
@@ -65,7 +71,7 @@ export function normalizeStatuteResult(result) {
     article_no: locator.article_no,
     paragraphs: result.cited_locators?.map(item => item.paragraph_no).filter(Boolean) || [],
     items: result.cited_locators?.map(item => item.item_no).filter(Boolean) || [],
-    type: result.findings?.map(item => STATUTE_ERROR_LABELS[item.code] || item.code).join("；") || "法律引用无问题",
+    type: [...citationTypes, ...applicationTypes].join("；") || "法律引用无问题",
   }
 }
 

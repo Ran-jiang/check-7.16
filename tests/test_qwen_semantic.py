@@ -16,12 +16,14 @@ from ccitecheck.domain.evidence import (
     SourceTrace,
 )
 from ccitecheck.domain.checks import CheckVerdict
-from ccitecheck.judgment.semantic import (
+from ccitecheck.verification.semantic import (
+    APPLICATION_PROMPT_PATH,
     DEFAULT_BASE_URL,
     PROMPT_PATH,
     QwenSemanticChecker,
     SemanticResponseError,
 )
+from ccitecheck.verification.legal_application import ApplicationAuthority
 
 
 def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
@@ -69,7 +71,6 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
         ),
     )
     result = checker.compare(
-        "被告应当承担违约责任。",
         "依据《民法典》第五百七十七条，被告应当承担违约责任。",
         "《民法典》第五百七十七条",
         evidence,
@@ -79,6 +80,58 @@ def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
     assert captured["url"] == f"{DEFAULT_BASE_URL}/responses"
     assert captured["payload"]["model"] == "qwen3.7-plus"
     assert captured["payload"]["enable_thinking"] is False
+    user_content = json.loads(captured["payload"]["input"][1]["content"])
+    assert user_content["claim_text"] == "依据《民法典》第五百七十七条，被告应当承担违约责任。"
+    assert "doc_quote" not in user_content
+    assert "quote_context" not in user_content
+
+
+def test_application_prompt_contains_guo_examples_and_only_allows_review():
+    prompt = APPLICATION_PROMPT_PATH.read_text(encoding="utf-8")
+    assert "1999年司法解释" in prompt
+    assert "2004年文件" in prompt
+    assert "另向支付不低于工资的百分之三百" in prompt
+    assert "教育法" in prompt
+    assert "请查找本篇文章是否存在多字、少字、重复字、错别字的情况" in prompt
+    assert '"verdict":"pass|review"' in prompt
+    assert "等级固定为“待核查”" in prompt
+
+
+def test_application_check_receives_all_statutes_once_and_normalizes_to_review(monkeypatch):
+    captured = {}
+    response = json.dumps({
+        "comparison": "法条不能直接推出合同无效",
+        "verdict": "issue",
+        "reviews": [{
+            "error_type": "application_logic_error",
+            "review_level": "HIGH",
+            "summary": "原文由违约责任条款推出合同当然无效。",
+            "suggestion": "核查合同无效的独立法律依据。",
+            "related_sources": ["《甲法》第一条"],
+        }],
+        "notes": "",
+    }, ensure_ascii=False)
+
+    def handler(request):
+        payload = json.loads(request.content)
+        captured["input"] = json.loads(payload["input"][1]["content"])
+        return httpx.Response(200, json=_qwen_response(response))
+
+    _install_mock_client(monkeypatch, handler)
+    checker = QwenSemanticChecker(api_key="test-key")
+    authorities = [
+        ApplicationAuthority("《甲法》第一条", "甲法", "第一条", "承担违约责任。", {}),
+        ApplicationAuthority("《乙法》第二条", "乙法", "第二条", "合同依法成立。", {}),
+    ]
+
+    result = checker.compare_application("据此，合同当然无效。", authorities)
+
+    assert captured["input"]["original_text"] == "据此，合同当然无效。"
+    assert [item["cited_source"] for item in captured["input"]["statutes"]] == [
+        "《甲法》第一条", "《乙法》第二条",
+    ]
+    assert result.verdict == "review"
+    assert result.reviews[0].review_level == "待核查"
 
 
 def test_qwen_diff_summary_is_preserved_for_display_layer(monkeypatch):
@@ -110,7 +163,7 @@ def test_qwen_diff_summary_is_preserved_for_display_layer(monkeypatch):
             status=LookupStatus.ARTICLE_FOUND,
         ),
     )
-    result = checker.compare("文书表述", "上下文", "《网络数据安全管理条例》第十八条", evidence)
+    result = checker.compare("文书表述", "《网络数据安全管理条例》第十八条", evidence)
     assert len(result.findings[0].summary) == 120
 
 
@@ -143,7 +196,7 @@ def test_qwen_revision_requires_backend_approval_protocol(monkeypatch):
         ),
     )
 
-    result = checker.compare("应当履行义务。", "上下文", "《示例法》第一条", evidence)
+    result = checker.compare("应当履行义务。", "《示例法》第一条", evidence)
 
     revision = result.findings[0].revision
     assert revision is not None
@@ -172,7 +225,7 @@ def test_qwen_revision_cannot_change_deterministically_verified_citation(monkeyp
         data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
     )
     result = checker.compare(
-        "依据《示例法》第一条，应当履行义务。", "上下文", "《示例法》第一条", evidence
+        "依据《示例法》第一条，应当履行义务。", "《示例法》第一条", evidence
     )
     assert result.findings[0].revision is None
 
@@ -197,7 +250,7 @@ def test_qwen_location_recheck_is_explicitly_structured(monkeypatch):
         article_text="出版者未尽合理注意义务的，应当承担赔偿责任。",
         data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
     )
-    result = checker.compare("不同作者独立创作的作品各自享有著作权。", "", "《示例解释》第二十条", evidence)
+    result = checker.compare("不同作者独立创作的作品各自享有著作权。", "《示例解释》第二十条", evidence)
     assert result.findings[0].location_recheck_required is True
 
 
@@ -236,7 +289,7 @@ def test_qwen_malformed_json_is_repaired_once(monkeypatch):
         ),
     )
 
-    result = checker.compare("任何个人不得非法侵入网络。", "上下文", "《网络安全法》第二十七条", evidence)
+    result = checker.compare("任何个人不得非法侵入网络。", "《网络安全法》第二十七条", evidence)
 
     assert result.verdict == CheckVerdict.ISSUE
     assert len(calls) == 2
@@ -275,7 +328,7 @@ def test_statute_llm_rejects_deterministic_error_types(monkeypatch, error_type):
     )
 
     with pytest.raises(SemanticResponseError, match="reserved for deterministic checks"):
-        checker.compare("文书表述", "上下文", "《某法》第一条", evidence)
+        checker.compare("文书表述", "《某法》第一条", evidence)
 
 
 _REASONING_TEXT = "公司章程可以限制股权转让。该约定系公司自治的体现。该约定不违反公司法的禁止性规定。"
@@ -524,7 +577,7 @@ def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
             status=LookupStatus.ARTICLE_FOUND,
         ),
     )
-    checker.compare("文书表述", "上下文", "《专利法》第九条", evidence)
+    checker.compare("文书表述", "《专利法》第九条", evidence)
 
     user_content = json.loads(captured["payload"]["input"][1]["content"])
     assert "target_paragraph" not in user_content
@@ -532,7 +585,7 @@ def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
 
 def test_model_selection_switches_provider_and_protocol(monkeypatch):
     """三个可选模型：千问走 DashScope /responses，DeepSeek 走 /chat/completions。"""
-    from ccitecheck.judgment.semantic import QwenSemanticChecker, resolve_model_option
+    from ccitecheck.verification.semantic import QwenSemanticChecker, resolve_model_option
 
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-qwen")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")

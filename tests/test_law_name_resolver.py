@@ -1,5 +1,5 @@
-from ccitecheck.tracing.sources.pkulaw.law_name_resolver import resolve_law_name
-from ccitecheck.tracing.sources.pkulaw.client import PkulawArticle, PkulawLawRecord
+from ccitecheck.query_construction.providers.pkulaw import resolve_law_name
+from ccitecheck.retrieval.sources.pkulaw.client import PkulawArticle, PkulawLawRecord
 
 
 class _Client:

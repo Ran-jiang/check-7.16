@@ -5,9 +5,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from .citation import NoteContext, SourceLocation, VerificationTarget
+from .citation import NoteContext, SourceLocation
 from .evidence import CaseEvidence, CaseLookupStatus, CaseSourceTrace
 from .revisions import RevisionProposal
 from .checks import CheckVerdict, ExecutionStatus
@@ -52,10 +52,9 @@ class CaseCandidate(BaseModel):
 
 class CaseVerificationResult(BaseModel):
     check_id: str
-    display_group_id: str = ""
+    display_group_id: str = Field(min_length=1)
     claim_id: str
     claim_text: str
-    verification: VerificationTarget | None = None
     jurisdiction: str = "CN"
     cited_case_number: str | None = None
     cited_case_name: str | None = None
@@ -70,6 +69,7 @@ class CaseVerificationResult(BaseModel):
     note_context: NoteContext | None = None
     source_attempts: list[CaseSourceTrace] = Field(default_factory=list)
     candidate_cases: list[CaseCandidate] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 
 __all__ = [

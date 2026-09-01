@@ -53,15 +53,22 @@ def test_nearest_court_alias_is_normalized_for_each_case():
 
 
 def test_short_name_declaration_allows_document_number_metadata():
-    sources = extract_legal_sources(
+    from ccitecheck.recognition.statutes import extract_alias_declarations
+
+    text = (
         "《山西省农村信用社会计业务印章管理办法》"
         "（晋农信发〔2014〕28号，下称《印章管理办法》）"
         "第9条、第11条明确规定。"
     )
+    sources = extract_legal_sources(
+        text
+    )
 
-    assert len(sources) == 1
-    assert sources[0].canonical_title == "山西省农村信用社会计业务印章管理办法"
-    assert [item.article for item in sources[0].articles] == ["第9条", "第11条"]
+    assert [source.title for source in sources] == [
+        "山西省农村信用社会计业务印章管理办法", "印章管理办法"
+    ]
+    assert [item.article for item in sources[1].articles] == ["第9条", "第11条"]
+    assert extract_alias_declarations(text)[0].alias_raw == "印章管理办法"
 
 
 def test_case_direct_quote_trigger_extracts_quote_text():
@@ -124,10 +131,11 @@ def test_docx_body_reference_is_linked_to_footnote_block(tmp_path):
     note_claim = next(claim for claim in claim_document.claims if claim.note_context)
     assert note_claim.note_context.note_id == "2"
     assert note_claim.note_context.referenced_from[0].block_id == "word:p:0"
-    assert note_claim.entities.citations[0].verification.text == "当事人应当全面履行义务"
+    assert note_claim.text == "依据《民法典》第五百零九条规定，当事人应当全面履行义务。"
+    assert not hasattr(note_claim.entities.citations[0], "verification")
 
 
-def test_statute_verification_excludes_reporting_connector():
+def test_statute_citation_keeps_claim_text_as_single_comparison_source():
     from ccitecheck.domain.citation import (
         Claim,
         ClaimType,
@@ -145,14 +153,11 @@ def test_statute_verification_excludes_reporting_connector():
     )
 
     locate_claim_article_spans(claim)
-    verification = claim.entities.citations[0].verification
-
-    assert verification is not None
-    assert verification.text == "当事人应当按照约定全面履行自己的义务"
-    assert text[slice(*verification.span)] == verification.text
+    assert claim.text == text
+    assert not hasattr(claim.entities.citations[0], "verification")
 
 
-def test_statute_verification_supports_quote_before_citation():
+def test_quote_before_statute_citation_keeps_complete_claim_text():
     from ccitecheck.domain.citation import Claim, ClaimType, LegalSourceClaimEntities
     from ccitecheck.recognition.spans import locate_claim_article_spans
 
@@ -166,24 +171,18 @@ def test_statute_verification_supports_quote_before_citation():
     )
 
     locate_claim_article_spans(claim)
-    verification = claim.entities.citations[0].verification
-
-    assert verification is not None
-    assert verification.mode == "direct_quote"
-    assert verification.text == "当事人应当按照约定全面履行自己的义务。"
+    assert claim.text == text
+    assert not hasattr(claim.entities.citations[0], "verification")
 
 
-def test_nested_authoritative_text_does_not_replace_document_verification():
-    from ccitecheck.application.verify_claims import _CheckItem
+def test_nested_authoritative_text_does_not_replace_claim_text():
+    from ccitecheck.orchestration.scheduler import _CheckItem
     from ccitecheck.domain.citation import (
         ArticleRef,
         Claim,
         ClaimType,
         LegalSourceClaimEntities,
-        VerificationTarget,
     )
-
-    verification = VerificationTarget(text="国家有关规定包括第二十五条")
     article = ArticleRef(article="第二十五条")
     claim = Claim(
         claim_id="cl_00001",
@@ -199,14 +198,13 @@ def test_nested_authoritative_text_does_not_replace_document_verification():
         article=article,
         article_no="第二十五条",
         not_verifiable=None,
-        verification=verification,
         relation_parent_authoritative_text="北大法宝返回的父法条权威原文",
     )
 
-    assert item.document_quote == verification.text
+    assert item.claim.text == "国家有关规定包括《借贷规定》第二十五条。"
 
 
-def test_unresolved_law_identity_is_kept_outside_legal_sources():
+def test_bare_law_identity_is_kept_as_raw_candidate():
     from ccitecheck.domain.document import Anchor, Block, BlockType, ParsedDocument
     from ccitecheck.recognition.arbitration import arbitrate_claim_candidates
     from ccitecheck.recognition.rules import extract_rule_candidates
@@ -238,10 +236,11 @@ def test_unresolved_law_identity_is_kept_outside_legal_sources():
     claims = arbitrate_claim_candidates(candidates, document)
 
     assert len(claims) == 1
-    assert claims[0].entities.legal_sources == []
-    mention = claims[0].entities.unresolved_legal_mentions[0]
-    assert mention.raw_text == "星河数据治理法"
-    assert mention.articles[0].article == "第十条"
+    source = claims[0].entities.legal_sources[0]
+    assert source.title == "星河数据治理法"
+    assert source.raw_title_candidate == "星河数据治理法"
+    assert source.canonical_title is None
+    assert source.articles[0].article == "第十条"
 
 
 def test_quote_and_following_statute_citation_across_paragraphs_share_claim(tmp_path):
@@ -263,15 +262,12 @@ def test_quote_and_following_statute_citation_across_paragraphs_share_claim(tmp_
     claims = extract_document_claims(parsed)
     claim = next(item for item in claims.claims if item.claim_type.value == "legal_source_claim")
     locate_claim_article_spans(claim)
-    verification = claim.entities.citations[0].verification
 
     assert len(claim.anchor_ids) == 2
-    assert verification is not None
-    assert verification.mode == "direct_quote"
-    assert verification.text == "当事人应当按照约定全面履行自己的义务。"
+    assert claim.text == "“当事人应当按照约定全面履行自己的义务。”——《中华人民共和国民法典》第五百零九条。"
 
 
-def test_each_carry_forward_paragraph_keeps_its_own_verification_target():
+def test_each_carry_forward_paragraph_keeps_its_own_citation_occurrence():
     from ccitecheck.domain.citation import Claim, ClaimType, LegalSourceClaimEntities
     from ccitecheck.recognition.spans import locate_claim_article_spans
 
@@ -291,9 +287,6 @@ def test_each_carry_forward_paragraph_keeps_its_own_verification_target():
     ]
     assert [item.role for item in claim.entities.citations] == [
         "direct", "carry_forward", "carry_forward"
-    ]
-    assert [item.verification.text for item in claim.entities.citations] == [
-        "A", "B", "C"
     ]
 
 
@@ -322,8 +315,10 @@ def test_recognition_pipeline_keeps_successive_carry_forward_sentences(tmp_path)
     assert [claim.entities.citations[0].locator.paragraph for claim in statute_claims] == [
         "第三款", "第四款", "第五款",
     ]
-    assert [claim.entities.citations[0].verification.text for claim in statute_claims] == [
-        "A", "B", "C",
+    assert [claim.text for claim in statute_claims] == [
+        "《中华人民共和国反不正当竞争法》第十三条第三款规定A。",
+        "同条第四款规定B。",
+        "第五款进一步规定C。",
     ]
 
 
@@ -344,18 +339,22 @@ def test_unresolved_bare_law_does_not_also_inherit_previous_law(tmp_path):
     document.save(path)
 
     claim_document = extract_document_claims(parse_and_validate_document(path))
-    unresolved = next(
+    raw_candidate = next(
         claim for claim in claim_document.claims
-        if claim.entities.unresolved_legal_mentions
+        if any(
+            source.raw_title_candidate == "星河数据治理法"
+            for source in claim.entities.legal_sources
+        )
     )
 
-    assert unresolved.entities.legal_sources == []
-    assert unresolved.entities.unresolved_legal_mentions[0].raw_text == "星河数据治理法"
+    assert [source.title for source in raw_candidate.entities.legal_sources] == [
+        "星河数据治理法"
+    ]
 
 
 def test_closed_quoted_term_does_not_break_nested_relation_candidate():
-    from ccitecheck.application.nested_references import _relation_candidates
-    from ccitecheck.application.verify_claims import _collect_check_items
+    from ccitecheck.recognition.relations import relation_candidates
+    from ccitecheck.orchestration.scheduler import _collect_check_items
     from ccitecheck.domain.citation import Claim, ClaimType, LegalSourceClaimEntities
     from ccitecheck.recognition.spans import locate_claim_article_spans
 
@@ -374,7 +373,5 @@ def test_closed_quoted_term_does_not_break_nested_relation_candidate():
     locate_claim_article_spans(claim)
     items = _collect_check_items(type("ClaimDoc", (), {"claims": [claim]})())
 
-    assert _relation_candidates(items) == {1: [0]}
-    assert [item.verification.text for item in claim.entities.citations] == [
-        "禁止高利放贷", "国家有关规定",
-    ]
+    assert relation_candidates(items) == {1: [0]}
+    assert all(not hasattr(item, "verification") for item in claim.entities.citations)

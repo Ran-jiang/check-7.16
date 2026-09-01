@@ -1,6 +1,6 @@
 """裁判说理清洗、切句、截断检测与引文构建。"""
 
-from ccitecheck.judgment.reasoning import (
+from ccitecheck.verification.reasoning import (
     build_excerpt,
     clean_reasoning_text,
     reasoning_is_truncated,

@@ -16,9 +16,9 @@ from ccitecheck.domain.citation import (
 )
 from ccitecheck.domain.evidence import CaseLookupStatus, LookupStatus
 from ccitecheck.infrastructure.database import init_db
-from ccitecheck.judgment.cases import verify_case_claims
+from ccitecheck.orchestration.cases import verify_case_claims
 from ccitecheck.recognition.cases import extract_case_refs
-from ccitecheck.recognition.jurisdiction import detect_jurisdiction
+from ccitecheck.query_construction.jurisdiction import detect_jurisdiction
 from ccitecheck.recognition.statutes import extract_legal_sources
 
 
@@ -43,22 +43,16 @@ def test_detect_jurisdiction_by_alias_table():
     assert detect_jurisdiction("GDPR", "") == "EU"
 
 
-def test_extract_legal_sources_carries_jurisdiction():
+def test_recognition_does_not_carry_jurisdiction():
     sources = extract_legal_sources(
         "德国《著作权法》第2条与法国《知识产权法典》均有规定；"
         "我国《著作权法》第三条另有定义。"
     )
-    by_title = {}
-    for source in sources:
-        by_title.setdefault(source.title, source)
-    assert by_title["著作权法"].jurisdiction == "FOREIGN"
-    assert by_title["知识产权法典"].jurisdiction == "FOREIGN"
+    assert all(source.jurisdiction is None for source in sources)
 
-    cn = extract_legal_sources("依据《著作权法》第三条的定义。")
-    assert cn[0].jurisdiction == "CN"
-
-    eu = extract_legal_sources("欧盟《通用数据保护条例》正式生效。")
-    assert eu[0].jurisdiction == "EU"
+    assert detect_jurisdiction("著作权法", "德国") == "FOREIGN"
+    assert detect_jurisdiction("著作权法", "依据我国") == "CN"
+    assert detect_jurisdiction("通用数据保护条例", "欧盟") == "EU"
 
 
 # ---------- 外国判例识别 ----------

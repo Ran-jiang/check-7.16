@@ -1,6 +1,6 @@
 from ccitecheck.domain.revisions import RevisionProposal
 from ccitecheck.domain.statute_results import StatuteErrorCode, StatuteFinding
-from ccitecheck.judgment.markers import strip_internal_markers
+from ccitecheck.verification.markers import strip_internal_markers
 
 
 def test_strips_internal_markers_without_damaging_legal_text():
@@ -17,7 +17,7 @@ def test_strips_internal_markers_without_damaging_legal_text():
 
 def test_revised_text_alone_is_not_auto_fixable():
     issue = StatuteFinding(
-        code=StatuteErrorCode.CITATION_LOCATION_ERROR,
+        code=StatuteErrorCode.ARTICLE_NUMBER_ERROR,
         risk_level="MEDIUM",
         summary="条号错误",
         suggestion="修改条号",

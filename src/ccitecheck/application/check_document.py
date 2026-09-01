@@ -1,20 +1,17 @@
-"""文档解析、引用识别和核查判定的应用层用例。
-
-CLI、HTTP API、Word 插件和飞书应用都通过本模块调用同一条核心流水线，
-输入适配器只需先转换为平台无关的 ParsedDocument。
-"""
+"""Word 文档解析、引用识别和核查判定的应用层用例。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from ..domain.citation import ClaimDocument
+from ..domain.citation_integrity import CitationIntegrityError
 from ..domain.document import ParsedDocument
 from ..parsing import build_chunks, parse_docx, validate_parsed_document
 from ..domain.result import FrontendVerificationDocument
-from ..judgment import QwenSemanticChecker, SemanticCheckError
+from ..verification import QwenSemanticChecker, SemanticCheckError
 from ..recognition import extract_claims
-from .verify_claims import verify_claim_document
+from ..orchestration.scheduler import SchedulerContext, VerificationScheduler
 
 
 class DocumentPipelineError(RuntimeError):
@@ -46,14 +43,10 @@ def extract_document_claims(
     parsed_document: ParsedDocument,
     include_statutes: bool = True,
     include_cases: bool = True,
-    law_db: str | Path | None = None,
 ) -> ClaimDocument:
     """从解析后的文档中识别指定类型的法律引用。"""
     try:
-        from ..recognition.law_lexicon import LawLexicon
-
-        lexicon = LawLexicon.load(law_db) if include_statutes else None
-        return extract_claims(parsed_document, include_statutes, include_cases, lexicon)
+        return extract_claims(parsed_document, include_statutes, include_cases)
     except ValueError as exc:
         raise DocumentPipelineError(str(exc)) from exc
 
@@ -74,10 +67,14 @@ def verify_document_claims(
         except SemanticCheckError as exc:
             raise DocumentPipelineError(str(exc)) from exc
 
-    return verify_claim_document(
-        claim_document,
-        law_db,
-        semantic_checker=semantic_checker,
-        include_statutes=include_statutes,
-        include_cases=include_cases,
-    )
+    try:
+        return VerificationScheduler(SchedulerContext(
+            law_db=law_db,
+            semantic_checker=semantic_checker,
+        )).verify_document(
+            claim_document,
+            include_statutes=include_statutes,
+            include_cases=include_cases,
+        )
+    except CitationIntegrityError as exc:
+        raise DocumentPipelineError(str(exc)) from exc

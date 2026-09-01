@@ -10,7 +10,6 @@ validate_claim_document 对 ClaimDocument 执行全量不变量校验。
   - anchor_ids 非空、全部存在、编号连续
   - claim_type 合法
   - entities 与 claim_type 的对应关系由 Claim 模型校验
-  - verification.text 为 claim.text 子串
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from __future__ import annotations
 from ..domain.document import Anchor, Block, BlockRelationType, ParsedDocument
 
 from ..domain.citation import ClaimDocument, ClaimType
+from ..domain.citation_integrity import validate_claim_citation_integrity
 from .anchor_text import parse_anchor_number, rebuild_anchor_text
 
 
@@ -124,14 +124,23 @@ def validate_claim_document(
                 f"{claim.claim_type}"
             )
 
-        # verification.text 为 claim.text 子串
-        verification = getattr(claim.entities, "verification", None)
-        if verification is not None and verification.text:
-            if verification.text not in claim.text:
+        for source in getattr(claim.entities, "legal_sources", []):
+            inherited = source.recognition.inherited_from
+            if source.recognition.form == "inherited" and inherited is None:
                 violations.append(
                     f"[entities] claim {claim.claim_id}: "
-                    f"verification.text 不是 claim.text 子串"
+                    f"承前法源 {source.title} 缺少 inherited_from"
                 )
+            if inherited and inherited.anchor_id and inherited.anchor_id not in anchor_map:
+                violations.append(
+                    f"[entities] claim {claim.claim_id}: "
+                    f"inherited_from.anchor_id {inherited.anchor_id} 不存在"
+                )
+
+        for violation in validate_claim_citation_integrity(claim):
+            violations.append(
+                f"[citation] claim {claim.claim_id}: {violation}"
+            )
 
     return violations
 

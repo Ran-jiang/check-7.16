@@ -1,6 +1,6 @@
 // 结果页共享视觉工具；不解释法规或案例业务状态。
 
-export const BADGE_TEXT = { pass: "通过", issue: "未通过", bug: "待核实" }
+export const BADGE_TEXT = { pass: "通过", issue: "未通过", review: "待核查", bug: "待核实" }
 
 export function sourceUrlOf(check) {
   const raw = check.evidence?.data_source?.source_url || check.evidence?.url || ""

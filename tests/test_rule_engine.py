@@ -286,8 +286,7 @@ def test_case_holding_paraphrase():
     ]
     assert len(holding_candidates) == 1
     c = holding_candidates[0]
-    assert c.entities.verification is not None
-    assert "优先保护" in c.entities.verification.text
+    assert not hasattr(c.entities, "verification")
 
 
 def test_guiding_case_biaoming_is_holding_paraphrase():

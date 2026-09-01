@@ -21,6 +21,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+CLAIM_SCHEMA_VERSION = "0.6"
+CLAIM_EXTRACTOR_VERSION = "0.5"
+
 
 # ============================================================
 # 枚举定义
@@ -54,14 +57,6 @@ class ClaimType(str, Enum):
 # 实体子模型（按 claim_type 分别定义）
 # ============================================================
 
-class VerificationTarget(BaseModel):
-    """文书中真正需要与权威证据比较的文本。"""
-
-    text: str
-    span: tuple[int, int] | None = None
-    mode: Literal["direct_quote", "paraphrase", "application"] = "paraphrase"
-    strategy: Literal["direct", "claim_fallback"] = "direct"
-
 class ArticleRef(BaseModel):
     """
     条款引用。
@@ -86,28 +81,48 @@ class StructureUnit(BaseModel):
     unit: str = Field(description="编/分编/章/节")
     number: Optional[int] = Field(default=None, description="序号；无号节点为 None")
     number_text: str = Field(description="原文标签，如'第三编'")
+    model_config = ConfigDict(extra="forbid")
 
 
 class StructureRef(BaseModel):
     """章节引用，如《民法典》第三编第四章（无条号）。"""
     label: str = Field(description="原文章节标签连写，如'第三编第四章'")
     units: list[StructureUnit] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 
 class InheritedSourceReference(BaseModel):
     anchor_id: str | None = None
     source_location: Optional["SourceLocation"] = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class LegalSourceRecognition(BaseModel):
     form: Literal["explicit", "bare", "inherited"] = "explicit"
     mention_span: tuple[int, int] | None = None
     inherited_from: InheritedSourceReference | None = None
-    resolver: Literal["direct", "lexicon", "context"] = Field(
+    resolver: Literal["direct", "structure", "lexicon", "context"] = Field(
         default="direct",
-        exclude=True,
-        description="内部调试轨迹；不进入正式业务 JSON",
+        description="法名由原文、词典或承前上下文确认",
     )
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_method(self):
+        expected = {
+            "explicit": "direct",
+            "bare": "structure",
+            "inherited": "context",
+        }[self.form]
+        if self.resolver != expected and not (
+            self.form == "bare" and self.resolver == "lexicon"
+        ):
+            raise ValueError(
+                f"recognition.form={self.form} 必须使用 resolver={expected}"
+            )
+        if self.form != "inherited" and self.inherited_from is not None:
+            raise ValueError("只有 inherited 法名可以设置 inherited_from")
+        return self
 
 
 class LegalSource(BaseModel):
@@ -120,11 +135,15 @@ class LegalSource(BaseModel):
     title: str = Field(description="法规名称，不含书名号")
     canonical_title: Optional[str] = Field(
         default=None,
-        description="词典或权威数据源确认的规范法名",
+        description="旧版输入兼容字段；Recognition 不写入",
     )
-    jurisdiction: str = Field(
-        default="CN",
-        description="法域：CN（中国）、EU（欧盟）或 FOREIGN（其他外国法域）"
+    raw_title_candidate: Optional[str] = Field(
+        default=None,
+        description="裸引用中仅凭文本边界得到的法名候选",
+    )
+    jurisdiction: Optional[str] = Field(
+        default=None,
+        description="旧版输入兼容字段；法域由 Query Construction 生成",
     )
     articles: list[ArticleRef] = Field(
         default_factory=list,
@@ -137,6 +156,12 @@ class LegalSource(BaseModel):
     recognition: LegalSourceRecognition = Field(default_factory=LegalSourceRecognition)
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="after")
+    def validate_reference_shape(self):
+        if self.articles and self.structures:
+            raise ValueError("articles 与 structures 不能同时存在")
+        return self
+
 
 class UnresolvedLegalMention(BaseModel):
     """已识别为法规引用结构、但尚未确认具体法规身份的原文候选。"""
@@ -145,23 +170,27 @@ class UnresolvedLegalMention(BaseModel):
     articles: list[ArticleRef] = Field(default_factory=list)
     reason: Literal["law_identity_unresolved"] = "law_identity_unresolved"
     resolution_anchor_span: tuple[int, int] | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class CitationLocator(BaseModel):
     article: str
     paragraph: str | None = None
     item: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class CitationOccurrence(BaseModel):
-    """原文中一次独立出现的法规引用及其核验目标。"""
+    """原文中一次独立出现的法规引用。"""
 
     law_title: str
+    mention_id: str | None = None
+    raw_law_title: str | None = None
     locator: CitationLocator
     role: Literal["direct", "nested", "carry_forward"] = "direct"
     citation_span: tuple[int, int] | None = None
-    verification: VerificationTarget | None = None
     span_status: Literal["located", "fallback", "error"] = "fallback"
+    model_config = ConfigDict(extra="forbid")
 
 
 class CaseRef(BaseModel):
@@ -212,6 +241,23 @@ class LegalSourceClaimEntities(BaseModel):
         default_factory=list,
         description="按原文出现次数保存的法规引用；检索层再按 locator 去重",
     )
+    alias_declarations: list["AliasDeclaration"] = Field(default_factory=list)
+    structural_relations: list["NestedRelationCandidate"] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+
+class AliasDeclaration(BaseModel):
+    full_name_raw: str
+    alias_raw: str
+    declaration_span: tuple[int, int] | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class NestedRelationCandidate(BaseModel):
+    parent_mention_id: str
+    child_mention_id: str
+    basis: Literal["text_scope"] = "text_scope"
+    model_config = ConfigDict(extra="forbid")
 
 
 class CaseCitationEntities(BaseModel):
@@ -220,20 +266,20 @@ class CaseCitationEntities(BaseModel):
         default_factory=list,
         description="案例引用列表"
     )
+    model_config = ConfigDict(extra="forbid")
 
 
 class CaseHoldingParaphraseEntities(BaseModel):
     """
     case_holding_paraphrase 的实体。
 
-    verification.text 必须是 claim.text 的子串（由 arbiter 校验）。
     没有明确 case_ref 时绝不抽取此类型——即使出现"法院认为""本院认为"。
     """
     case_refs: list[CaseRef] = Field(
         default_factory=list,
         description="案例引用列表（观点转述通常长度为1）"
     )
-    verification: VerificationTarget | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 ClaimEntities = Union[
@@ -276,9 +322,9 @@ def _coerce_entities(data):
 # ============================================================
 
 class SourceLocation(BaseModel):
-    """平台无关的原文定位坐标，供 Word 或飞书输出适配器解释。"""
+    """Word 原文定位坐标。"""
 
-    platform: Literal["docx", "feishu"] = "docx"
+    platform: Literal["docx"] = "docx"
     document_id: Optional[str] = None
     revision: Optional[str] = None
     block_id: str
@@ -297,6 +343,7 @@ class SourceLocation(BaseModel):
     row_end: Optional[int] = None
     col_start: Optional[int] = None
     col_end: Optional[int] = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class NoteContext(BaseModel):
@@ -306,6 +353,7 @@ class NoteContext(BaseModel):
     note_id: str
     referenced_from: list[SourceLocation] = Field(default_factory=list)
     reference_anchor_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class ClaimCandidate(BaseModel):
@@ -365,6 +413,7 @@ class Claim(BaseModel):
         description="Word 或飞书中的原文定位坐标",
     )
     note_context: NoteContext | None = None
+    model_config = ConfigDict(extra="forbid")
     @model_validator(mode="before")
     @classmethod
     def restore_entity_type(cls, data):
@@ -382,7 +431,10 @@ class Claim(BaseModel):
 
 class ClaimMeta(BaseModel):
     """引用文档元信息。"""
-    schema_version: str = Field(default="0.4", description="schema 版本号")
+    schema_version: Literal["0.6"] = Field(
+        default=CLAIM_SCHEMA_VERSION,
+        description="schema 版本号",
+    )
     claim_doc_id: str = Field(
         default_factory=lambda: str(uuid4()),
         description="claim 文档唯一 ID（uuid4）"
@@ -394,7 +446,11 @@ class ClaimMeta(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="抽取时间（ISO-8601）"
     )
-    extractor_version: str = Field(default="0.3", description="抽取器版本")
+    extractor_version: Literal["0.5"] = Field(
+        default=CLAIM_EXTRACTOR_VERSION,
+        description="抽取器版本",
+    )
+    model_config = ConfigDict(extra="forbid")
 
 
 class ClaimDocument(BaseModel):
@@ -406,4 +462,28 @@ class ClaimDocument(BaseModel):
     normalized_text、confidence、primary_method、needs_review 等字段。
     """
     claim_meta: ClaimMeta = Field(default_factory=ClaimMeta)
+    document_text: str = Field(
+        default="",
+        description="按文档阅读顺序拼接的全文，供全篇一致性和格式核查使用",
+    )
     claims: list[Claim] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_serialized_version(cls, data):
+        """外部 JSON 必须显式声明版本；内部构造使用 ClaimMeta 对象。"""
+        if not isinstance(data, dict):
+            return data
+        meta = data.get("claim_meta")
+        if isinstance(meta, ClaimMeta):
+            return data
+        if not isinstance(meta, dict):
+            raise ValueError("claim_meta 缺失，无法确认 Claim schema 版本")
+        missing = [
+            field for field in ("schema_version", "extractor_version")
+            if field not in meta
+        ]
+        if missing:
+            raise ValueError("claim_meta 缺少版本字段: " + ", ".join(missing))
+        return data

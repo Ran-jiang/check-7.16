@@ -8,9 +8,9 @@ from ..domain.citation import (
     CitationLocator,
     CitationOccurrence,
     Claim,
-    VerificationTarget,
 )
 from ..domain.legal_numbers import chinese_number_to_int
+from .statutes import COMPACT_ARTICLE_RANGE_PATTERN
 
 _ARTICLE_MENTION = re.compile(
     r"第[0-9○零一二三四五六七八九十百千两]+条(?:之[0-9○零一二三四五六七八九十]+)?"
@@ -19,15 +19,6 @@ _NUM = r"[0-9○零一二三四五六七八九十百千两]+"
 _ARTICLE_ENUM = re.compile(rf"第(?P<values>{_NUM}(?:[、,，]{_NUM})+)条")
 _ARTICLE_RANGE = re.compile(rf"第(?P<start>{_NUM})条(?:至|到)第?(?P<end>{_NUM})条")
 _RELATIVE_ARTICLE = re.compile(r"前条|该条")
-_SENTENCE_END = re.compile(r"[。！？\n]")
-_BARE_CITATION_TAIL = re.compile(r"^(?:之)?规定[，,]?(?:判决|裁定|决定)如下$")
-_REPORTING_CONNECTOR = re.compile(
-    r"^(?:(?:进一步|同时|并)\s*)?(?:规定|指出|明确|载明|认为|要求)[，,:：\s]*"
-)
-_PRECEDING_QUOTE = re.compile(r"[“‘\"](?P<text>[^”’\"]+)[”’\"]\s*(?:[-—–]+\s*)?$")
-_APPLICATION_QUOTE = re.compile(
-    r"[“‘\"](?P<text>[^”’\"]+)[”’\"]\s*(?:包括|是指|依据|依照|根据|适用)\s*$"
-)
 _PARAGRAPH_OCCURRENCE = re.compile(rf"(?:同条)?第(?P<number>{_NUM})款")
 _ITEM_OCCURRENCE = re.compile(rf"第[（(]?(?P<number>{_NUM})[）)]?项")
 
@@ -53,6 +44,12 @@ def _raw_mentions(text: str) -> list[tuple[int, int, str]]:
         if start_no is not None and end_no is not None and 0 < end_no - start_no <= 50:
             result.extend((match.start(), match.end(), f"{value}:") for value in range(start_no, end_no + 1))
             occupied.append(match.span())
+    for match in COMPACT_ARTICLE_RANGE_PATTERN.finditer(text):
+        start_no = int(match.group(1))
+        end_no = int(match.group(2))
+        if 0 < start_no <= end_no and end_no - start_no <= 50:
+            result.extend((match.start(), match.end(), f"{value}:") for value in range(start_no, end_no + 1))
+            occupied.append(match.span())
     for match in _ARTICLE_ENUM.finditer(text):
         if any(left <= match.start() < right for left, right in occupied):
             continue
@@ -74,6 +71,50 @@ def _raw_mentions(text: str) -> list[tuple[int, int, str]]:
             if resolved > 0:
                 result.append((match.start(), match.end(), f"{resolved}:"))
     return sorted(result)
+
+
+def _suffix_mentions(
+    text: str,
+    start: int,
+    end: int,
+    paragraphs: list[str],
+    items: list[str],
+) -> list[tuple[int, int, str | None, str | None]]:
+    """定位识别阶段已归入当前条号的款、项，并保留二者的从属关系。"""
+    paragraph_set = set(paragraphs)
+    item_set = set(items)
+    tokens = sorted([
+        *(
+            (match.start(), match.end(), "paragraph", f"第{match.group('number')}款")
+            for match in _PARAGRAPH_OCCURRENCE.finditer(text, start, end)
+            if f"第{match.group('number')}款" in paragraph_set
+        ),
+        *(
+            (match.start(), match.end(), "item", f"第{match.group('number')}项")
+            for match in _ITEM_OCCURRENCE.finditer(text, start, end)
+            if f"第{match.group('number')}项" in item_set
+        ),
+    ])
+    explicit_paragraph = any(kind == "paragraph" for _, _, kind, _ in tokens)
+    current_paragraph = (
+        paragraphs[0]
+        if not explicit_paragraph and len(paragraphs) == 1
+        else None
+    )
+    pending_paragraph: tuple[int, int] | None = None
+    result: list[tuple[int, int, str | None, str | None]] = []
+    for token_start, token_end, kind, value in tokens:
+        if kind == "paragraph":
+            if pending_paragraph is not None:
+                result.append((*pending_paragraph, current_paragraph, None))
+            current_paragraph = value
+            pending_paragraph = (token_start, token_end)
+            continue
+        result.append((token_start, token_end, current_paragraph, value))
+        pending_paragraph = None
+    if pending_paragraph is not None:
+        result.append((*pending_paragraph, current_paragraph, None))
+    return result
 
 
 def locate_claim_article_spans(claim: Claim) -> None:
@@ -150,51 +191,48 @@ def locate_claim_article_spans(claim: Claim) -> None:
         (id(item[3]), _normalize_article_no(item[2].article)) for item in located
     }
     for index, (article_start, article_end, article, source, citation_span) in enumerate(located):
-            next_article_start = located[index + 1][0] if index + 1 < len(located) else len(text)
-            paragraph_matches = list(
-                _PARAGRAPH_OCCURRENCE.finditer(text, article_end, next_article_start)
-            )
-            if not paragraph_matches:
-                boundary = _sentence_boundary(text, article_end, next_article_start)
-                occurrences.append(CitationOccurrence(
-                    law_title=source.canonical_title or source.title,
-                    locator=CitationLocator(article=article.article),
-                    role="direct",
-                    citation_span=citation_span,
-                    verification=_verification_target(
-                        text, article_end, boundary, citation_span[0]
-                    ),
-                    span_status="located",
-                ))
-                continue
-            for paragraph_index, match in enumerate(paragraph_matches):
-                next_start = (
-                    paragraph_matches[paragraph_index + 1].start()
-                    if paragraph_index + 1 < len(paragraph_matches)
-                    else next_article_start
-                )
-                boundary = _sentence_boundary(text, match.end(), next_start)
-                verification = _verification_target(text, match.end(), boundary, match.start())
-                item_match = _ITEM_OCCURRENCE.match(text, match.end(), boundary)
-                item = f"第{item_match.group('number')}项" if item_match else None
-                cite_end = item_match.end() if item_match else match.end()
-                occurrences.append(CitationOccurrence(
-                    law_title=source.canonical_title or source.title,
-                    locator=CitationLocator(
-                        article=article.article,
-                        paragraph=f"第{match.group('number')}款",
-                        item=item,
-                    ),
-                    role=("direct" if paragraph_index == 0 else "carry_forward"),
-                    citation_span=(
-                        citation_span[0]
-                        if paragraph_index == 0
-                        else match.start(),
-                        cite_end,
-                    ),
-                    verification=verification,
-                    span_status="located",
-                ))
+        next_article_start = located[index + 1][0] if index + 1 < len(located) else len(text)
+        same_article_refs = [
+            item for item in source.articles
+            if _normalize_article_no(item.article) == _normalize_article_no(article.article)
+        ]
+        paragraphs = list(dict.fromkeys(
+            value for item in same_article_refs for value in item.paragraphs
+        ))
+        items = list(dict.fromkeys(
+            value for item in same_article_refs for value in item.items
+        ))
+        suffixes = _suffix_mentions(
+            text, article_end, next_article_start, paragraphs, items
+        )
+        if not suffixes:
+            occurrences.append(CitationOccurrence(
+                law_title=source.title,
+                raw_law_title=source.title,
+                locator=CitationLocator(article=article.article),
+                role="direct",
+                citation_span=citation_span,
+                span_status="located",
+            ))
+            continue
+        for suffix_index, (suffix_start, suffix_end, paragraph, item) in enumerate(suffixes):
+            occurrences.append(CitationOccurrence(
+                law_title=source.title,
+                raw_law_title=source.title,
+                locator=CitationLocator(
+                    article=article.article,
+                    paragraph=paragraph,
+                    item=item,
+                ),
+                role=("direct" if suffix_index == 0 else "carry_forward"),
+                citation_span=(
+                    citation_span[0]
+                    if suffix_index == 0
+                    else suffix_start,
+                    suffix_end,
+                ),
+                span_status="located",
+            ))
 
     # 仅出现“同条第四款”“第五款”等承前定位时，没有字面条号；直接以款/项
     # 作为一次 citation，条号使用识别阶段从上下文补齐的 ArticleRef.article。
@@ -205,74 +243,27 @@ def locate_claim_article_spans(claim: Claim) -> None:
             suffixes = [*article.paragraphs, *article.items]
             if not suffixes:
                 continue
-            cursor = 0
-            for paragraph in article.paragraphs or [None]:
-                token = paragraph or article.items[0]
-                pos = text.find(token, cursor)
-                if pos < 0:
-                    continue
-                cite_start = pos - 2 if text[max(0, pos - 2):pos] == "同条" else pos
-                cite_end = pos + len(token)
-                item = next((value for value in article.items if text.startswith(value, cite_end)), None)
-                if item:
-                    cite_end += len(item)
-                boundary = _sentence_boundary(text, cite_end, len(text))
+            for suffix_start, suffix_end, paragraph, item in _suffix_mentions(
+                text, 0, len(text), article.paragraphs, article.items
+            ):
                 occurrences.append(CitationOccurrence(
-                    law_title=source.canonical_title or source.title,
+                    law_title=source.title,
+                    raw_law_title=source.title,
                     locator=CitationLocator(
                         article=article.article,
                         paragraph=paragraph,
                         item=item,
                     ),
                     role="carry_forward",
-                    citation_span=(cite_start, cite_end),
-                    verification=_verification_target(text, cite_end, boundary, cite_start),
+                    citation_span=(suffix_start, suffix_end),
                     span_status="located",
                 ))
-                cursor = cite_end
 
     claim.entities.citations = sorted(
         occurrences,
         key=lambda item: item.citation_span[0] if item.citation_span else len(text),
     )
+    for index, occurrence in enumerate(claim.entities.citations, 1):
+        occurrence.mention_id = f"{claim.claim_id}:law:{index}"
 
-
-def _sentence_boundary(text: str, start: int, limit: int) -> int:
-    sentence = _SENTENCE_END.search(text, start, limit)
-    return sentence.start() if sentence else limit
-
-
-def _verification_target(
-    text: str, citation_end: int, boundary: int, citation_start: int
-) -> VerificationTarget | None:
-    raw = text[citation_end:boundary]
-    left_trimmed = raw.lstrip("，,: ：、；;")
-    connector = _REPORTING_CONNECTOR.match(left_trimmed)
-    connector_length = connector.end() if connector else 0
-    value = left_trimmed[connector_length:].strip()
-    if "《" in value:
-        value = value.split("《", 1)[0].rstrip("，,：:；; ")
-    value = re.split(r"[；;]\s*其中", value, maxsplit=1)[0].strip()
-    if value and not _BARE_CITATION_TAIL.fullmatch(value):
-        start = citation_end + len(raw) - len(left_trimmed) + connector_length
-        return VerificationTarget(
-            text=value,
-            span=(start, start + len(value)),
-            mode="paraphrase",
-            strategy="direct",
-        )
-    preceding = _PRECEDING_QUOTE.search(text[:citation_start])
-    mode = "direct_quote"
-    if preceding is None:
-        preceding = _APPLICATION_QUOTE.search(text[:citation_start])
-        mode = "application"
-    if preceding is None:
-        return None
-    quote_start, quote_end = preceding.span("text")
-    return VerificationTarget(
-        text=preceding.group("text"),
-        span=(quote_start, quote_end),
-        mode=mode,
-        strategy="direct",
-    )
 __all__ = ["locate_claim_article_spans"]

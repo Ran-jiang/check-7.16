@@ -29,7 +29,7 @@ from ccitecheck.infrastructure.database import (
 )
 from ccitecheck.parsing.docx import parse_docx
 from ccitecheck.domain.document import Anchor, Block, BlockType, Chunk, DocMeta, ParsedDocument
-from ccitecheck.judgment.cases import verify_case_claims
+from ccitecheck.orchestration.cases import verify_case_claims
 from ccitecheck.domain.evidence import CaseLookupStatus
 
 

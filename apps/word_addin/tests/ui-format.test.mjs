@@ -90,10 +90,17 @@ test("unresolved bare law keeps raw text without invented book-title marks", () 
   }), "依照城市房地产管理法第38条")
 })
 
-import { statuteViewOf } from "../assets/statute-view-model.js"
+import { STATUTE_ERROR_LABELS, statuteViewOf } from "../assets/statute-view-model.js"
 import { caseViewOf } from "../assets/case-view-model.js"
 
-test("badge text follows the renamed three-state scheme", () => {
+test("citation error labels distinguish name, article and hierarchy", () => {
+  assert.equal(STATUTE_ERROR_LABELS.law_name_error, "法律名称错误")
+  assert.equal(STATUTE_ERROR_LABELS.article_not_found, "条文不存在")
+  assert.equal(STATUTE_ERROR_LABELS.article_number_error, "条号错误")
+  assert.equal(STATUTE_ERROR_LABELS.citation_hierarchy_error, "层级错误")
+})
+
+test("badge text follows the result-state scheme", () => {
   const issue = statuteViewOf({ outcome: "issue", findings: [{ code: "meaning_distorted", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
   assert.equal(issue.state, "issue")
   assert.equal(issue.badge.text, "未通过")
@@ -116,6 +123,48 @@ test("badge text follows the renamed three-state scheme", () => {
   assert.match(listing.evidence.summaryLabel, /^权威来源/)
 })
 
+test("legal application review is shown as pending review, never failed", () => {
+  const view = statuteViewOf({
+    outcome: "review",
+    law_title: "民法典",
+    lookup_status: "article_found",
+    findings: [],
+    application_check: {
+      verdict: "review",
+      reviews: [{
+        error_type: "application_logic_error",
+        review_level: "待核查",
+        summary: "所引条文不能直接推出该结论。",
+        suggestion: "请核查结论的独立法律依据。",
+      }],
+    },
+  })
+  assert.equal(view.badge.text, "待核查")
+  assert.match(view.typeLabel, /法律适用待核查/)
+  assert.equal(view.verdict.riskText, "待核查")
+  assert.doesNotMatch(view.badge.text, /未通过/)
+})
+
+test("document typo is shown as a format error pending review", () => {
+  const view = statuteViewOf({
+    outcome: "review",
+    law_title: "民法典",
+    lookup_status: "article_found",
+    findings: [],
+    application_check: {
+      verdict: "review",
+      reviews: [{
+        error_type: "format_error",
+        review_level: "待核查",
+        summary: "“应当当”存在重复字。",
+        suggestion: "删除重复的“当”。",
+      }],
+    },
+  })
+  assert.match(view.typeLabel, /格式错误/)
+  assert.equal(view.verdict.riskText, "待核查")
+})
+
 test("out-of-scope statutes surface the boundary message", () => {
   const view = statuteViewOf({
     law_title: "知识产权法典",
@@ -127,6 +176,17 @@ test("out-of-scope statutes surface the boundary message", () => {
   assert.equal(view.badge.text, "待核实")
   assert.equal(view.typeLabel, "超出核查边界")
   assert.match(view.verdict.suggestion, /超出本产品核查边界/)
+})
+
+test("statute source failures surface the actionable provider message", () => {
+  const view = statuteViewOf({
+    law_title: "消防法",
+    outcome: "bug",
+    lookup_status: "source_error",
+    message: "北大法宝鉴权失败（HTTP 401），请检查访问令牌、账户状态或剩余点数",
+  })
+  assert.equal(view.typeLabel, "数据源调用失败")
+  assert.match(view.verdict.suggestion, /剩余点数/)
 })
 
 test("EU statutes verified by EUR-Lex read as existence-only pass", () => {

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import ccitecheck.application.verify_claims as verify_claims_module
+import ccitecheck.orchestration.scheduler as verify_claims_module
 from ccitecheck.application.verify_claims import verify_claim_document
 from ccitecheck.domain.citation import (
     ArticleRef,
@@ -15,13 +15,13 @@ from ccitecheck.domain.citation import (
 )
 from ccitecheck.domain.evidence import LookupStatus, SourceTier
 from ccitecheck.infrastructure.database import init_db
-from ccitecheck.tracing.sources.base import LookupRequest
-from ccitecheck.tracing.sources.eurlex.client import (
+from ccitecheck.retrieval.sources.base import LookupRequest
+from ccitecheck.retrieval.sources.eurlex.client import (
     EurLexMcpError,
     EurLexRecord,
     _parse_search_response,
 )
-from ccitecheck.tracing.sources.eurlex.statutes import EurLexSource
+from ccitecheck.retrieval.sources.eurlex.statutes import EurLexSource
 
 
 GDPR_RECORD = EurLexRecord(
@@ -205,8 +205,8 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
         def __init__(self):
             self.calls = []
 
-        def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
-            self.calls.append({"statute_text": evidence.article_text, "paragraphs": paragraphs})
+        def compare(self, claim_text, cited_source, evidence):
+            self.calls.append({"claim_text": claim_text, "statute_text": evidence.article_text})
             return StatuteMeaningCheck(verdict=CheckVerdict.PASS)
 
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "https://eurlex.test")
@@ -244,12 +244,11 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
     assert check.meaning_check.verdict.value == "pass"
     assert checker.calls and "Right to erasure" in checker.calls[0]["statute_text"]
-    # 外文条文不做中文款级切片
-    assert checker.calls[0]["paragraphs"] is None
+    assert checker.calls[0]["claim_text"] == claim_doc.claims[0].text
 
 
 def test_prompt_authorizes_cross_language_comparison():
-    from ccitecheck.judgment.semantic import PROMPT_PATH
+    from ccitecheck.verification.semantic import PROMPT_PATH
 
     prompt = PROMPT_PATH.read_text(encoding="utf-8")
     assert "跨语言比对" in prompt
@@ -265,7 +264,7 @@ def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
     )
 
     class IssueChecker:
-        def compare(self, doc_quote, quote_context, cited_source, evidence, paragraphs=None):
+        def compare(self, claim_text, cited_source, evidence):
             return StatuteMeaningCheck(
                 verdict=CheckVerdict.ISSUE,
                 findings=[StatuteFinding(

@@ -1,10 +1,11 @@
 from pathlib import Path
 
 from ccitecheck.infrastructure.database import init_db, upsert_law, connect
-from ccitecheck.recognition.law_lexicon import LawLexicon, LawLexiconEntry
+from ccitecheck.query_construction.name_resolution import LawLexicon, LawLexiconEntry
+from ccitecheck.query_construction.service import QueryResources, resolve_identity_candidates
 from ccitecheck.recognition.statutes import (
+    extract_alias_declarations,
     extract_legal_sources,
-    extract_unresolved_legal_mentions,
 )
 
 
@@ -65,155 +66,72 @@ def test_missing_sqlite_falls_back_to_json_with_explicit_aliases(tmp_path: Path)
     assert matched.canonical_title == "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释"
 
 
-def test_right_anchored_bare_law_uses_lexicon_without_noise_cleaning():
-    sources = extract_legal_sources(
-        "人民法院应予支持并依照民法典第157条规定处理。",
-        _small_lexicon(),
+def test_recognition_keeps_bare_title_raw_and_query_layer_resolves_it():
+    source = extract_legal_sources(
+        "人民法院应予支持并依照民法典第157条规定处理。"
+    )[0]
+    assert source.title == "民法典"
+    assert source.canonical_title is None
+    assert source.jurisdiction is None
+    assert source.recognition.form == "bare"
+
+    candidates = resolve_identity_candidates(
+        source.title,
+        QueryResources(lexicon=_small_lexicon()),
+        raw_title_candidate=source.raw_title_candidate,
     )
-
-    assert len(sources) == 1
-    assert sources[0].title == "民法典"
-    assert sources[0].canonical_title == "中华人民共和国民法典"
-    assert sources[0].recognition.form == "bare"
-    assert sources[0].recognition.mention_span == (11, 14)
-
-
-def test_explicit_and_bare_same_law_merge_articles_instead_of_dropping_bare_one():
-    sources = extract_legal_sources(
-        "依据《中华人民共和国民法典》第10条，并依照民法典第157条。",
-        _small_lexicon(),
-    )
-
-    assert len(sources) == 1
-    assert sources[0].canonical_title == "中华人民共和国民法典"
-    assert [article.article for article in sources[0].articles] == ["第10条", "第157条"]
-
-
-def test_declared_short_name_merges_with_full_title_and_keeps_nested_law():
-    canonical = "最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释"
-    lexicon = LawLexicon([
-        LawLexiconEntry(canonical, canonical),
-        LawLexiconEntry("合同编通则解释", canonical),
-        LawLexiconEntry("民法典", "中华人民共和国民法典"),
-    ])
-    text = (
-        "《最高人民法院关于适用＜中华人民共和国民法典＞合同编通则若干问题的解释》"
-        "（以下简称《合同编通则解释》）第12条第4款规定，人民法院应当依据"
-        "民法典第157条处理。"
-    )
-
-    sources = extract_legal_sources(text, lexicon)
-
-    assert [(source.title, source.canonical_title) for source in sources] == [
-        ("合同编通则解释", canonical),
-        ("民法典", "中华人民共和国民法典"),
+    assert [item.title for item in candidates] == [
+        "民法典", "中华人民共和国民法典"
     ]
-    assert [article.article for article in sources[0].articles] == ["第12条"]
-    assert sources[0].articles[0].paragraphs == ["第4款"]
-    assert [article.article for article in sources[1].articles] == ["第157条"]
 
 
-def test_repeated_explicit_same_law_merges_sources_but_keeps_all_articles():
+def test_recognition_does_not_merge_distinct_raw_titles():
     sources = extract_legal_sources(
-        "依据《民法典》第10条，并依据《中华人民共和国民法典》第157条。",
-        _small_lexicon(),
+        "依据《中华人民共和国民法典》第10条，并依照民法典第157条。"
     )
+    assert [(item.title, [a.article for a in item.articles]) for item in sources] == [
+        ("中华人民共和国民法典", ["第10条"]),
+        ("民法典", ["第157条"]),
+    ]
 
-    assert len(sources) == 1
-    assert [article.article for article in sources[0].articles] == ["第10条", "第157条"]
+
+def test_short_name_declaration_is_recorded_without_resolution():
+    text = "《中华人民共和国民法典》（以下简称《民法典》）第10条。"
+    declarations = extract_alias_declarations(text)
+    assert [(item.full_name_raw, item.alias_raw) for item in declarations] == [
+        ("中华人民共和国民法典", "民法典")
+    ]
 
 
 def test_distinct_explicit_laws_in_same_sentence_are_not_merged():
-    lexicon = LawLexicon([
-        LawLexiconEntry("民法典", "中华人民共和国民法典"),
-        LawLexiconEntry("刑法", "中华人民共和国刑法"),
-    ])
-
-    sources = extract_legal_sources("依据《民法典》第10条和《刑法》第20条。", lexicon)
-
+    sources = extract_legal_sources("依据《民法典》第10条和《刑法》第20条。")
     assert [(source.title, [a.article for a in source.articles]) for source in sources] == [
         ("民法典", ["第10条"]),
         ("刑法", ["第20条"]),
     ]
 
 
-def test_parenthetical_related_law_does_not_create_short_name_relation():
-    sources = extract_legal_sources(
-        "《民法典》（相关内容见《民事诉讼法》）第10条。",
-        _small_lexicon(),
-    )
-
-    assert [source.canonical_title for source in sources] == [
-        "中华人民共和国民法典",
-        "中华人民共和国民事诉讼法",
-    ]
-
-
-def test_declared_short_name_conflicting_with_lexicon_is_not_merged():
-    lexicon = LawLexicon([
-        LawLexiconEntry("甲法", "中华人民共和国甲法"),
-        LawLexiconEntry("简称法", "中华人民共和国乙法"),
-    ])
-
-    sources = extract_legal_sources("《甲法》（以下简称《简称法》）第1条。", lexicon)
-
-    assert [source.canonical_title for source in sources] == [
-        "中华人民共和国甲法",
-        "中华人民共和国乙法",
-    ]
-
-
-def test_declared_short_name_applies_to_later_references_in_same_text():
-    surface = "最高人民法院关于适用＜中华人民共和国民法典＞某编若干问题的解释"
-    canonical = "最高人民法院关于适用《中华人民共和国民法典》某编若干问题的解释"
-    lexicon = LawLexicon([LawLexiconEntry(surface, canonical)])
-
-    sources = extract_legal_sources(
-        f"《{surface}》（以下简称《自定义解释》）第1条规定；"
-        "《自定义解释》第2条规定。",
-        lexicon,
-    )
-
-    assert len(sources) == 1
-    assert sources[0].canonical_title == canonical
-    assert [article.article for article in sources[0].articles] == ["第1条", "第2条"]
-
-
 def test_bare_law_collects_following_sibling_articles():
-    sources = extract_legal_sources(
-        "除可依照民事诉讼法第114条、第117条采取措施外。",
-        _small_lexicon(),
-    )
-
-    assert len(sources) == 1
-    assert sources[0].title == "民事诉讼法"
-    assert [article.article for article in sources[0].articles] == ["第114条", "第117条"]
+    sources = extract_legal_sources("除可依照民事诉讼法第114条、第117条采取措施外。")
+    assert [(item.title, [a.article for a in item.articles]) for item in sources] == [
+        ("民事诉讼法", ["第114条", "第117条"])
+    ]
 
 
 def test_bare_article_chain_stops_before_another_law():
-    lexicon = LawLexicon([
-        LawLexiconEntry("民事诉讼法", "中华人民共和国民事诉讼法"),
-        LawLexiconEntry("刑法", "中华人民共和国刑法"),
-    ])
-
-    sources = extract_legal_sources("依照民事诉讼法第114条及刑法第20条处理。", lexicon)
-
+    sources = extract_legal_sources("依照民事诉讼法第114条及刑法第20条处理。")
     assert [(source.title, [a.article for a in source.articles]) for source in sources] == [
         ("民事诉讼法", ["第114条"]),
         ("刑法", ["第20条"]),
     ]
 
 
-def test_unknown_bare_law_is_unresolved_and_keeps_deterministic_span():
-    text = "依照城市房地产管理法第38条"
-    sources = extract_legal_sources(text, _small_lexicon())
-    mentions = extract_unresolved_legal_mentions(text, _small_lexicon())
-
-    assert sources == []
-    assert len(mentions) == 1
-    assert mentions[0].raw_text == "城市房地产管理法"
-    assert mentions[0].resolution_anchor_span == (9, 10)
+def test_unknown_bare_law_remains_raw_candidate():
+    source = extract_legal_sources("依照城市房地产管理法第38条")[0]
+    assert source.title == "城市房地产管理法"
+    assert source.raw_title_candidate == "城市房地产管理法"
+    assert source.canonical_title is None
 
 
 def test_pseudo_law_suffix_is_not_recognized():
-    assert extract_legal_sources("采用这种方法第10条。", _small_lexicon()) == []
+    assert extract_legal_sources("采用这种方法第10条。") == []

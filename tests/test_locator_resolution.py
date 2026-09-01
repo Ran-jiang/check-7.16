@@ -1,5 +1,5 @@
 from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
-from ccitecheck.judgment.statutes import resolve_location_candidates
+from ccitecheck.verification.statutes import resolve_location_candidates
 
 
 def _evidence(article_no: str, text: str) -> ArticleEvidence:

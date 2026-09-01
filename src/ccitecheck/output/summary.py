@@ -12,6 +12,7 @@ class VerificationSummary(BaseModel):
     reference_total: int
     passed: int
     issues: int
+    reviews: int
     bugs: int
     cases_verified: int
     cases_not_found: int
@@ -29,6 +30,7 @@ def summarize_verification(verification: FrontendVerificationDocument) -> Verifi
         reference_total=len(results),
         passed=sum(result.outcome == "pass" for result in results),
         issues=sum(result.outcome == "issue" for result in results),
+        reviews=sum(result.outcome == "review" for result in results),
         bugs=sum(result.outcome == "bug" for result in results),
         cases_verified=sum(
             result.lookup_status == CaseLookupStatus.VERIFIED

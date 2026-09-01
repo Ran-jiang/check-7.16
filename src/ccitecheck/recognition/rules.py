@@ -5,25 +5,25 @@ from __future__ import annotations
 import re
 
 from ..domain.citation import (
+    AliasDeclaration,
     CaseCitationEntities,
     CaseHoldingParaphraseEntities,
     ClaimCandidate,
     ClaimType,
     LegalSourceClaimEntities,
     LegalSourceRecognition,
-    VerificationTarget,
 )
 from ..domain.document import BlockRelationType, BlockType, ParsedDocument
 from ..parsing.relations import build_block_relations
-from .cases import extract_case_refs, find_holding_trigger_position, has_holding_trigger
+from .cases import extract_case_refs, has_holding_trigger
 from .statutes import (
+    extract_alias_declarations,
     extract_articles_only,
     extract_legal_sources,
     extract_unresolved_legal_mentions,
     extract_partial_refs,
     has_article_reference,
 )
-from .law_lexicon import LawLexicon
 
 
 _RELATION_PRIORITY = {
@@ -33,27 +33,8 @@ _RELATION_PRIORITY = {
     BlockRelationType.TABLE_ABOVE: 3,
 }
 
-_QUOTE_PAIRS = {"“": "”", "‘": "’", '"': '"'}
 _QUOTED_ANCHOR = re.compile(r"^[“‘\"].+[”’\"]\s*$")
 _CITATION_AFTER_QUOTE = re.compile(r"^\s*(?:[-—–]+\s*)?《")
-
-
-def _case_verification(text: str, start: int) -> VerificationTarget:
-    raw = text[start:]
-    leading = len(raw) - len(raw.lstrip())
-    value = raw.strip()
-    span_start = start + leading
-    mode = "paraphrase"
-    if len(value) >= 2 and value[0] in _QUOTE_PAIRS and value[-1] == _QUOTE_PAIRS[value[0]]:
-        mode = "direct_quote"
-        span_start += 1
-        value = value[1:-1]
-    return VerificationTarget(
-        text=value,
-        span=(span_start, span_start + len(value)),
-        mode=mode,
-        strategy="direct",
-    )
 
 
 def extract_rule_candidates(
@@ -61,18 +42,17 @@ def extract_rule_candidates(
     indexes: dict,
     include_statutes: bool = True,
     include_cases: bool = True,
-    law_lexicon: LawLexicon | None = None,
 ) -> list[ClaimCandidate]:
     """逐句生成候选；裸条款只沿显式 Block 关系承前。"""
     build_block_relations(parsed_doc)
     candidates: list[ClaimCandidate] = []
     block_map = indexes.get("block_map", {})
     anchor_sources = {
-        anchor.anchor: extract_legal_sources(anchor.text, law_lexicon) if include_statutes else []
+        anchor.anchor: extract_legal_sources(anchor.text) if include_statutes else []
         for anchor in parsed_doc.anchors
     }
     anchor_unresolved = {
-        anchor.anchor: extract_unresolved_legal_mentions(anchor.text, law_lexicon)
+        anchor.anchor: extract_unresolved_legal_mentions(anchor.text)
         if include_statutes else []
         for anchor in parsed_doc.anchors
     }
@@ -94,7 +74,10 @@ def extract_rule_candidates(
 
         if legal_sources or unresolved_mentions:
             candidate = _make_legal_candidate(
-                anchor.anchor, legal_sources, unresolved_mentions
+                anchor.anchor,
+                legal_sources,
+                unresolved_mentions,
+                extract_alias_declarations(text),
             )
             if candidate:
                 if (
@@ -155,13 +138,11 @@ def extract_rule_candidates(
         case_refs = extract_case_refs(text) if include_cases else []
         if case_refs:
             if has_holding_trigger(text, case_refs):
-                holding_pos = find_holding_trigger_position(text, case_refs)
                 candidates.append(ClaimCandidate(
                     claim_type=ClaimType.CASE_HOLDING_PARAPHRASE,
                     anchor_ids=[anchor.anchor],
                     entities=CaseHoldingParaphraseEntities(
                         case_refs=case_refs,
-                        verification=_case_verification(text, holding_pos),
                     ),
                 ))
             else:
@@ -293,7 +274,7 @@ def _build_inherited_sources(
         ]
         inherited.append(LegalSource(
             title=source.title,
-            canonical_title=source.canonical_title,
+            raw_title_candidate=source.raw_title_candidate,
             articles=copied_articles,
             recognition=LegalSourceRecognition(
                 form="inherited",
@@ -308,6 +289,7 @@ def _make_legal_candidate(
     anchor_id: str,
     legal_sources: list,
     unresolved_mentions: list | None = None,
+    alias_declarations: list[AliasDeclaration] | None = None,
 ) -> ClaimCandidate | None:
     if not legal_sources and not unresolved_mentions:
         return None
@@ -317,5 +299,6 @@ def _make_legal_candidate(
         entities=LegalSourceClaimEntities(
             legal_sources=legal_sources,
             unresolved_legal_mentions=unresolved_mentions or [],
+            alias_declarations=alias_declarations or [],
         ),
     )

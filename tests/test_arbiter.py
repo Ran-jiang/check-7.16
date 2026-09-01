@@ -273,6 +273,7 @@ def test_build_claim_document():
 
     claim_doc = build_claim_document(doc, [claim])
 
-    assert claim_doc.claim_meta.schema_version == "0.4"
+    assert claim_doc.claim_meta.schema_version == "0.6"
+    assert claim_doc.document_text == "依据《民法典》第五百七十七条，被告应当承担违约责任。"
     assert len(claim_doc.claims) == 1
     assert claim_doc.claims[0].claim_id == "cl_00001"

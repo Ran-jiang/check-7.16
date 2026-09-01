@@ -1,7 +1,7 @@
 from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
 from ccitecheck.domain.statute_results import StatuteErrorCode, StatuteVersion
-from ccitecheck.judgment.statutes import assess_statute
-from ccitecheck.tracing.sources import LookupResult
+from ccitecheck.verification.statutes import assess_statute
+from ccitecheck.retrieval.sources import LookupResult
 
 
 def test_source_not_found_requires_completed_pkulaw_search():
@@ -27,6 +27,27 @@ def test_source_not_found_uses_only_completed_pkulaw_search():
     findings = assess_statute("某法", "第一条", result, [trace], [])
 
     assert findings[0].code == StatuteErrorCode.SOURCE_NOT_FOUND
+
+
+def test_confirmed_correct_title_is_law_name_error():
+    trace = SourceTrace(
+        tier=SourceTier.PKULAW_FALLBACK,
+        source_name="北大法宝",
+        status=LookupStatus.LAW_NOT_FOUND,
+        metadata={"search_completed": True, "suggested_title": "正确法名"},
+    )
+    evidence = ArticleEvidence(
+        law_title="正确法名",
+        source_type="law",
+        article_no="第一条",
+        article_text="权威条文。",
+        data_source=trace,
+    )
+    result = LookupResult(LookupStatus.LAW_NOT_FOUND, evidence, trace)
+
+    findings = assess_statute("错别法名", "第一条", result, [trace], [])
+
+    assert findings[0].code == StatuteErrorCode.LAW_NAME_ERROR
 
 
 def test_repealed_source_suppresses_location_error():

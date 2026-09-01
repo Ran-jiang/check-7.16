@@ -6,21 +6,21 @@ from __future__ import annotations
 import pytest
 
 from ccitecheck.domain.evidence import LookupStatus
-from ccitecheck.tracing.sources.base import LookupRequest
-from ccitecheck.tracing.sources.pkulaw.cache import (
+from ccitecheck.retrieval.sources.base import LookupRequest
+from ccitecheck.retrieval.sources.pkulaw.cache import (
     CachedPkulawClient,
     TTL_SECONDS,
     cache_clear,
     cache_status,
     connect_cache,
 )
-from ccitecheck.tracing.sources.pkulaw.client import (
+from ccitecheck.retrieval.sources.pkulaw.client import (
     PkulawArticle,
     PkulawLawRecord,
     PkulawNotFoundError,
     PkulawMcpError,
 )
-from ccitecheck.tracing.sources.pkulaw.statutes import PkulawFallbackSource
+from ccitecheck.retrieval.sources.pkulaw.statutes import PkulawFallbackSource
 
 
 class FakeClient:
