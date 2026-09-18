@@ -16,9 +16,8 @@ from ccitecheck.domain.citation import (
 from ccitecheck.infrastructure.database import connect, init_db, upsert_article, upsert_law
 from ccitecheck.orchestration.scheduler import (
     _collect_check_items,
-    _load_historical_versions,
-    _run_location_repairs,
     _run_lookups,
+    resolve_location_for_item,
     verify_claim_document,
 )
 from ccitecheck.recognition.spans import locate_claim_article_spans
@@ -153,8 +152,19 @@ def test_snapshot_location_stage_raw(tmp_path):
     source = LocalSQLiteSource(db)
     items = _collect_check_items(document, db)
     lookups = _run_lookups([source], items, db)
-    historical = _load_historical_versions(db, items, lookups)
-    resolutions = _run_location_repairs([source], items, lookups, historical)
+    locator_source = next(
+        (candidate for candidate in [source] if callable(getattr(candidate, "locate_candidates", None))),
+        None,
+    )
+    resolutions = {}
+    for index, item in enumerate(items):
+        result, attempts = lookups[item.lookup_key]
+        resolution = resolve_location_for_item(
+            item, result, attempts,
+            locator_source=locator_source, local=source, retry_only=False,
+        )
+        if resolution is not None:
+            resolutions[index] = resolution
     data = {
         "resolutions": {str(key): _dump(value) for key, value in resolutions.items()},
         "items": [

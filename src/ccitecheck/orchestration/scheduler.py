@@ -409,18 +409,123 @@ class VerificationScheduler:
         self,
         claim_document: ClaimDocument,
         *,
+        sources: Iterable[StatuteSource] | None = None,
         include_statutes: bool = True,
         include_cases: bool = True,
     ) -> FrontendVerificationDocument:
-        """第一阶段 Word 兼容入口；复用现有 DTO 聚合。"""
-        return verify_claim_document(
-            claim_document,
-            self.context.law_db,
-            semantic_checker=self.context.semantic_checker,
-            case_searcher=self.context.case_searcher,
-            include_statutes=include_statutes,
-            include_cases=include_cases,
-        )
+        """编排一份引用文档的溯源、判定和结果输出。"""
+        database_path = self.context.law_db
+        semantic_checker = self.context.semantic_checker
+        with timing_session() as timer:
+            shared_pkulaw = (
+                PkulawMcpClient()
+                if sources is None or self.context.case_searcher is None
+                else None
+            )
+            source_chain = (
+                list(sources)
+                if sources is not None
+                else build_default_sources(database_path, shared_pkulaw)
+            )
+            searcher = self.context.case_searcher or PkulawCaseSource()
+            if self.context.case_searcher is None and shared_pkulaw is not None:
+                searcher.client = shared_pkulaw
+            with (
+                timer.measure("recognition.total"),
+                timer.measure("recognition.check_item_preparation"),
+                timer.measure("query.primary"),
+            ):
+                items = (
+                    _collect_check_items(
+                        claim_document, database_path, semantic_checker
+                    )
+                    if include_statutes else []
+                )
+            with timer.measure("retrieval.total"):
+                lookup_results = _run_lookups(
+                    source_chain, items, database_path, semantic_checker
+                )
+            known_titles = _load_known_titles(database_path)
+            with timer.measure("comparison.total"):
+                resolve_nested_relations(items, lookup_results)
+            locator_source = next((source for source in source_chain
+                                   if callable(getattr(source, "locate_candidates", None))), None)
+            local = next((source for source in source_chain
+                          if isinstance(source, LocalSQLiteSource)), None)
+
+            def resolve_locations(*, retry_only: bool) -> dict[int, StatuteLocationResolution]:
+                repairs: dict[int, StatuteLocationResolution] = {}
+                for index, item in enumerate(items):
+                    if item.lookup_key not in lookup_results:
+                        continue
+                    result, attempts = lookup_results[item.lookup_key]
+                    resolution = resolve_location_for_item(
+                        item, result, attempts,
+                        locator_source=locator_source, local=local, retry_only=retry_only,
+                    )
+                    if resolution is not None:
+                        repairs[index] = resolution
+                return repairs
+
+            with timer.measure("retrieval.total"):
+                historical_versions = _load_historical_versions(
+                    database_path, items, lookup_results
+                )
+                location_repairs = resolve_locations(retry_only=False)
+            _run_repair_plans(
+                source_chain,
+                items,
+                lookup_results,
+                semantic_checker,
+                known_titles,
+            )
+            if any(item.correction_evidence is not None and not item.repair_verified for item in items):
+                location_repairs.update(resolve_locations(retry_only=True))
+            with timer.measure("comparison.total"):
+                judgments: dict[int, list[StatuteFinding]] = {}
+                for index, item in enumerate(items):
+                    lookup = lookup_results.get(item.lookup_key)
+                    if lookup is None and not (
+                        item.skip_lookup
+                        or item.relation_status in {"parent_unavailable", "insufficient", "locator_mismatch"}
+                    ):
+                        raise KeyError(item.lookup_key)
+                    judgments[index] = judge_item(
+                        item,
+                        lookup,
+                        known_titles,
+                        historical_versions.get(item.lookup_key),
+                        location_repairs.get(index),
+                    )
+            with timer.measure("retrieval.total"):
+                _resolve_repealed_successors(source_chain, items, judgments)
+            with timer.measure("comparison.total"):
+                finalize_nested_dependencies(items, judgments)
+                application_checks = _run_application_checks(
+                    semantic_checker,
+                    items,
+                    lookup_results,
+                    judgments,
+                )
+            with timer.measure("output"):
+                statute_results = _aggregate_duplicate_statute_results(
+                    _build_statute_results(
+                        items, lookup_results, judgments, application_checks
+                    )
+                )
+            with timer.measure("case_verification.total"):
+                case_results = (
+                    verify_case_claims(claim_document, searcher, semantic_checker)
+                    if include_cases
+                    else []
+                )
+            with timer.measure("output"):
+                return FrontendVerificationDocument(
+                    schema_version=VERIFICATION_SCHEMA_VERSION,
+                    source_claim_doc_id=claim_document.claim_meta.claim_doc_id,
+                    statute_results=statute_results,
+                    case_results=case_results,
+                )
 
 
 def verify_claim(claim: RawClaim, context: SchedulerContext) -> VerificationRun:
@@ -447,95 +552,17 @@ def verify_claim_document(
     include_statutes: bool = True,
     include_cases: bool = True,
 ) -> FrontendVerificationDocument:
-    """编排一份引用文档的溯源、判定和结果输出。"""
-    with timing_session() as timer:
-        shared_pkulaw = (
-            PkulawMcpClient()
-            if sources is None or case_searcher is None
-            else None
-        )
-        source_chain = (
-            list(sources)
-            if sources is not None
-            else build_default_sources(database_path, shared_pkulaw)
-        )
-        searcher = case_searcher or PkulawCaseSource()
-        if case_searcher is None and shared_pkulaw is not None:
-            searcher.client = shared_pkulaw
-        with (
-            timer.measure("recognition.total"),
-            timer.measure("recognition.check_item_preparation"),
-            timer.measure("query.primary"),
-        ):
-            items = (
-                _collect_check_items(
-                    claim_document, database_path, semantic_checker
-                )
-                if include_statutes else []
-            )
-        with timer.measure("retrieval.total"):
-            lookup_results = _run_lookups(
-                source_chain, items, database_path, semantic_checker
-            )
-        known_titles = _load_known_titles(database_path)
-        with timer.measure("comparison.total"):
-            resolve_nested_relations(items, lookup_results)
-        with timer.measure("retrieval.total"):
-            historical_versions = _load_historical_versions(
-                database_path, items, lookup_results
-            )
-            location_repairs = _run_location_repairs(
-                source_chain, items, lookup_results, historical_versions, semantic_checker
-            )
-        _run_repair_plans(
-            source_chain,
-            items,
-            lookup_results,
-            semantic_checker,
-            known_titles,
-        )
-        if any(item.correction_evidence is not None and not item.repair_verified for item in items):
-            location_repairs.update(_run_location_repairs(
-                source_chain, items, lookup_results, historical_versions, semantic_checker,
-                retry_only=True,
-            ))
-        with timer.measure("comparison.total"):
-            judgments = _run_judgments(
-                items,
-                lookup_results,
-                known_titles,
-                historical_versions,
-                location_repairs,
-            )
-        with timer.measure("retrieval.total"):
-            _resolve_repealed_successors(source_chain, items, judgments)
-        with timer.measure("comparison.total"):
-            finalize_nested_dependencies(items, judgments)
-            application_checks = _run_application_checks(
-                semantic_checker,
-                items,
-                lookup_results,
-                judgments,
-            )
-        with timer.measure("output"):
-            statute_results = _aggregate_duplicate_statute_results(
-                _build_statute_results(
-                    items, lookup_results, judgments, application_checks
-                )
-            )
-        with timer.measure("case_verification.total"):
-            case_results = (
-                verify_case_claims(claim_document, searcher, semantic_checker)
-                if include_cases
-                else []
-            )
-        with timer.measure("output"):
-            return FrontendVerificationDocument(
-                schema_version=VERIFICATION_SCHEMA_VERSION,
-                source_claim_doc_id=claim_document.claim_meta.claim_doc_id,
-                statute_results=statute_results,
-                case_results=case_results,
-            )
+    """模块级兼容入口；编排主体在 VerificationScheduler.verify_document。"""
+    return VerificationScheduler(SchedulerContext(
+        law_db=database_path,
+        semantic_checker=semantic_checker,
+        case_searcher=case_searcher,
+    )).verify_document(
+        claim_document,
+        sources=sources,
+        include_statutes=include_statutes,
+        include_cases=include_cases,
+    )
 
 
 @dataclass
@@ -1131,31 +1158,6 @@ def _lookup_structure(
         return LookupResult(trace.status, evidence, trace), [trace]
 
 
-def _run_location_repairs(
-    source_chain: list[StatuteSource],
-    items: list[_CheckItem],
-    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
-    historical_versions: dict[tuple, list[StatuteVersion]],
-    semantic_checker=None,
-    *, retry_only: bool = False,
-) -> dict[int, StatuteLocationResolution]:
-    locator_source = next((source for source in source_chain
-                           if callable(getattr(source, "locate_candidates", None))), None)
-    local = next((source for source in source_chain if isinstance(source, LocalSQLiteSource)), None)
-    repairs = {}
-    for index, item in enumerate(items):
-        if item.lookup_key not in lookup_results:
-            continue
-        result, attempts = lookup_results[item.lookup_key]
-        resolution = resolve_location_for_item(
-            item, result, attempts,
-            locator_source=locator_source, local=local, retry_only=retry_only,
-        )
-        if resolution is not None:
-            repairs[index] = resolution
-    return repairs
-
-
 def resolve_location_for_item(
     item: _CheckItem,
     result: LookupResult,
@@ -1454,31 +1456,6 @@ def _absence_override_findings(
         ),
         cited_locator=_item_locators(item)[0],
     )]
-
-
-def _run_judgments(
-    items: list[_CheckItem],
-    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
-    known_titles: list[str],
-    historical_versions: dict[tuple, list[StatuteVersion]],
-    location_repairs: dict[int, StatuteLocationResolution],
-) -> dict[int, list[StatuteFinding]]:
-    results: dict[int, list[StatuteFinding]] = {}
-    for index, item in enumerate(items):
-        lookup = lookup_results.get(item.lookup_key)
-        if lookup is None and not (
-            item.skip_lookup
-            or item.relation_status in {"parent_unavailable", "insufficient", "locator_mismatch"}
-        ):
-            raise KeyError(item.lookup_key)
-        results[index] = judge_item(
-            item,
-            lookup,
-            known_titles,
-            historical_versions.get(item.lookup_key),
-            location_repairs.get(index),
-        )
-    return results
 
 
 def judge_item(
