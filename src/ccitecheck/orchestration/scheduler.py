@@ -1144,169 +1144,189 @@ def _run_location_repairs(
     local = next((source for source in source_chain if isinstance(source, LocalSQLiteSource)), None)
     repairs = {}
     for index, item in enumerate(items):
-        if retry_only and (item.correction_evidence is None or item.repair_verified):
-            continue
-        if item.skip_lookup or not item.article_no or item.structure or item.lookup_key not in lookup_results:
-            continue
-        if (
-            item.reference_role == "nested"
-            or not item.claim.text.strip()
-            or len(getattr(item.claim.entities, "citations", [])) != 1
-        ):
+        if item.lookup_key not in lookup_results:
             continue
         result, attempts = lookup_results[item.lookup_key]
-        if _pkulaw_absence_conflicts(attempts):
-            continue
-        pkulaw_absence = _pkulaw_confirms_absence(attempts)
-        if result.status not in {LookupStatus.ARTICLE_FOUND, LookupStatus.LAW_FOUND_ARTICLE_MISSING,
-                                 LookupStatus.RELEVANT_ARTICLES_FOUND, LookupStatus.LAW_NOT_FOUND}:
-            continue
-        current = result.evidence
-        target_title = item.repaired_title if result.status == LookupStatus.LAW_NOT_FOUND and item.repaired_title else item.law_title
-        quote = _location_query_text(item)
-        current_text = ""
-        if result.status == LookupStatus.ARTICLE_FOUND and current:
-            location = _assess_item_location(item, result)
-            current_text = location.authoritative_text or ""
-            # 先检查当前引用位置；其他地方相似不能推翻已有支持。
-            if location.status == LocationStatus.VALID:
-                structure = parse_article_structure(item.article_no, current_text)
-                scopes = [p.text for p in structure.paragraphs] if structure else []
-                supported = any(supports_assertion(quote, scope) for scope in scopes)
-                if supported:
-                    continue
-        pool = []
-        if current and result.status == LookupStatus.ARTICLE_FOUND:
-            pool.append(current)
-        if item.correction_evidence:
-            pool.append(item.correction_evidence)
-        if current:
-            pool.extend(current.model_copy(update={"article_no": part.article_no,
-                        "law_title": part.law_title or current.law_title,
-                        "source_metadata": {"version_key": part.version_key},
-                        "data_source": current.data_source.model_copy(update={"metadata": {"version_key": part.version_key}, "source_url": part.source_url or current.data_source.source_url}),
-                        "article_text": part.article_text, "related_articles": []})
-                        for part in current.related_articles)
-        basis = current or item.correction_evidence
-        version = (basis.source_metadata.get("version_key") if basis else None) or result.trace.metadata.get("version_key")
-        version_confirmed = (result.trace.metadata.get("version_confirmed") is True
-                             or bool(basis and (basis.source_metadata.get("version_confirmed") is True or basis.data_source.metadata.get("version_confirmed") is True)))
-        if local and local.db_path.exists():
-            rows = local.current_articles(target_title)
-            metadata = local.corpus_metadata(rows[0]["title"] if rows else target_title, rows)
-            version = version or metadata.get("version_key")
-            version_confirmed = version_confirmed or metadata.get("version_confirmed") is True
-            selected = [r for r in rows if r["version_key"] == version]
-            ranked = retrieve_relevant_articles(quote, selected, limit=3)
-            keys = {normalize_article_key(r.article_no) for r in ranked}
-            rank_confirmed = bool(
-                len(ranked) > 1
-                and ranked[0].relevance_score >= ranked[1].relevance_score * 1.5
-            )
-            rank_scores = {
-                normalize_article_key(r.article_no): r.relevance_score for r in ranked
-            }
-            # 连续片段补召回，全文在同次核查中只读取一次。
-            for row in selected:
-                if normalize_article_key(row["article_no"]) not in keys and not supports_assertion(quote, row["text"]):
-                    continue
-                trace = SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name=row["source_name"] or "本地法规库",
-                                    status=LookupStatus.ARTICLE_FOUND,
-                                    source_url=row["source_url"] or result.trace.source_url, metadata=metadata)
-                pool.append(ArticleEvidence(law_title=row["title"], article_no=row["article_no"],
-                            article_text=row["text"], version_label=row["version_label"],
-                            source_metadata={
-                                "version_key": row["version_key"],
-                                "relevance_score": rank_scores.get(normalize_article_key(row["article_no"])),
-                                "article_rank_confirmed": rank_confirmed and normalize_article_key(
-                                    row["article_no"]
-                                ) == normalize_article_key(ranked[0].article_no),
-                            }, data_source=trace))
-        if item.raw_time and item.raw_time != "现行":
-            year = re.search(r"\d{4}", item.raw_time)
-            version_label = (basis.version_label if basis else "") or ""
-            local_metadata = metadata if local and local.db_path.exists() else {}
-            identified = version_confirmed or local_metadata.get("version_identified") is True
-            version_confirmed = bool(identified and year and year.group() in (
-                str(version) + version_label + str(local_metadata.get("version_label", ""))))
-        current_authority = _authority_marks_current(basis) and not (
-            item.raw_time and item.raw_time != "现行"
+        resolution = resolve_location_for_item(
+            item, result, attempts,
+            locator_source=locator_source, local=local, retry_only=retry_only,
         )
-        version_confirmed = version_confirmed or current_authority
-
-        def resolve(candidates):
-            eligible = []
-            for evidence in candidates:
-                if not equivalent_law_titles(evidence.law_title, target_title):
-                    continue
-                candidate_version = (
-                    evidence.source_metadata.get("version_key")
-                    or evidence.data_source.metadata.get("version_key")
-                )
-                if pkulaw_absence or (
-                    candidate_version is not None and candidate_version == version
-                ) or (current_authority and _authority_marks_current(evidence)) or (
-                    not version_confirmed
-                    and not (item.raw_time and item.raw_time != "现行")
-                    and evidence.source_metadata.get("version_confirmed") is True
-                    and _authority_marks_current(evidence)
-                ):
-                    eligible.append(evidence)
-            resolution = resolve_location_candidates(
-                quote, eligible, current_text=current_text,
-                cited_article_no=item.article_no,
-            )
-            resolved_authority = bool(
-                resolution.status == "resolved"
-                and any(
-                    normalize_article_key(evidence.article_no or "")
-                    == normalize_article_key(resolution.candidates[0].locator.article_no or "")
-                    and (
-                        evidence.source_metadata.get("version_confirmed") is True
-                        or evidence.data_source.metadata.get("version_confirmed") is True
-                        or _authority_marks_current(evidence)
-                    )
-                    for evidence in eligible
-                )
-            )
-            if not version_confirmed and not resolved_authority and not pkulaw_absence and resolution.status == "resolved":
-                resolution.status = "candidates_pending"
-            return resolution, eligible
-        resolution, eligible = resolve(pool)
-        if (resolution.status != "resolved" and locator_source is not None
-                and item.jurisdiction == "CN" and version != "current" and not retry_only):
-            remote = locator_source.locate_candidates(LookupRequest(
-                law_title=target_title, article_no=item.article_no, context_text=quote))
-            attempts.append(remote.trace)
-            pool.extend(remote.candidates)
-            resolution, eligible = resolve(pool)
-            resolution.source_trace = remote.trace
-        if resolution.status == "resolved":
-            target = resolution.candidates[0].locator
-            cited = _item_locators(item)[0]
-            same_article = normalize_article_key(target.article_no or "") == normalize_article_key(item.article_no)
-            # 没有限定款项的条级引用已覆盖该位置；无须补写层级。
-            title_changed = not equivalent_law_titles(target_title, item.law_title)
-            if same_article and not title_changed and not cited.paragraph_no and not cited.item_no:
-                continue
-            paragraph_matches = (
-                _locator_key(cited.paragraph_no) == _locator_key(target.paragraph_no)
-                if cited.paragraph_no or cited.item_no and target.paragraph_no
-                else True
-            )
-            item_matches = (
-                not cited.item_no
-                or _locator_key(cited.item_no) == _locator_key(target.item_no)
-            )
-            if same_article and not title_changed and paragraph_matches and item_matches:
-                continue
-            if same_article and not title_changed and repair_level_missing(cited, target):
-                resolution.status = "candidates_pending"
-            item.correction_evidence = next((e for e in eligible if normalize_article_key(e.article_no or "") == normalize_article_key(target.article_no or "")), None)
-            item.repair_verified = item.correction_evidence is not None and resolution.status == "resolved"
-        item.location_resolution = resolution
-        repairs[index] = resolution
+        if resolution is not None:
+            repairs[index] = resolution
     return repairs
+
+
+def resolve_location_for_item(
+    item: _CheckItem,
+    result: LookupResult,
+    attempts: list[SourceTrace],
+    *,
+    locator_source: StatuteSource | None,
+    local: LocalSQLiteSource | None,
+    retry_only: bool,
+) -> StatuteLocationResolution | None:
+    """单条引用的定位解析；与批量定位循环同一实现，便于按引用驱动。"""
+    if retry_only and (item.correction_evidence is None or item.repair_verified):
+        return None
+    if item.skip_lookup or not item.article_no or item.structure:
+        return None
+    if (
+        item.reference_role == "nested"
+        or not item.claim.text.strip()
+        or len(getattr(item.claim.entities, "citations", [])) != 1
+    ):
+        return None
+    if _pkulaw_absence_conflicts(attempts):
+        return None
+    pkulaw_absence = _pkulaw_confirms_absence(attempts)
+    if result.status not in {LookupStatus.ARTICLE_FOUND, LookupStatus.LAW_FOUND_ARTICLE_MISSING,
+                             LookupStatus.RELEVANT_ARTICLES_FOUND, LookupStatus.LAW_NOT_FOUND}:
+        return None
+    current = result.evidence
+    target_title = item.repaired_title if result.status == LookupStatus.LAW_NOT_FOUND and item.repaired_title else item.law_title
+    quote = _location_query_text(item)
+    current_text = ""
+    if result.status == LookupStatus.ARTICLE_FOUND and current:
+        location = _assess_item_location(item, result)
+        current_text = location.authoritative_text or ""
+        # 先检查当前引用位置；其他地方相似不能推翻已有支持。
+        if location.status == LocationStatus.VALID:
+            structure = parse_article_structure(item.article_no, current_text)
+            scopes = [p.text for p in structure.paragraphs] if structure else []
+            supported = any(supports_assertion(quote, scope) for scope in scopes)
+            if supported:
+                return None
+    pool = []
+    if current and result.status == LookupStatus.ARTICLE_FOUND:
+        pool.append(current)
+    if item.correction_evidence:
+        pool.append(item.correction_evidence)
+    if current:
+        pool.extend(current.model_copy(update={"article_no": part.article_no,
+                    "law_title": part.law_title or current.law_title,
+                    "source_metadata": {"version_key": part.version_key},
+                    "data_source": current.data_source.model_copy(update={"metadata": {"version_key": part.version_key}, "source_url": part.source_url or current.data_source.source_url}),
+                    "article_text": part.article_text, "related_articles": []})
+                    for part in current.related_articles)
+    basis = current or item.correction_evidence
+    version = (basis.source_metadata.get("version_key") if basis else None) or result.trace.metadata.get("version_key")
+    version_confirmed = (result.trace.metadata.get("version_confirmed") is True
+                         or bool(basis and (basis.source_metadata.get("version_confirmed") is True or basis.data_source.metadata.get("version_confirmed") is True)))
+    if local and local.db_path.exists():
+        rows = local.current_articles(target_title)
+        metadata = local.corpus_metadata(rows[0]["title"] if rows else target_title, rows)
+        version = version or metadata.get("version_key")
+        version_confirmed = version_confirmed or metadata.get("version_confirmed") is True
+        selected = [r for r in rows if r["version_key"] == version]
+        ranked = retrieve_relevant_articles(quote, selected, limit=3)
+        keys = {normalize_article_key(r.article_no) for r in ranked}
+        rank_confirmed = bool(
+            len(ranked) > 1
+            and ranked[0].relevance_score >= ranked[1].relevance_score * 1.5
+        )
+        rank_scores = {
+            normalize_article_key(r.article_no): r.relevance_score for r in ranked
+        }
+        # 连续片段补召回，全文在同次核查中只读取一次。
+        for row in selected:
+            if normalize_article_key(row["article_no"]) not in keys and not supports_assertion(quote, row["text"]):
+                continue
+            trace = SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name=row["source_name"] or "本地法规库",
+                                status=LookupStatus.ARTICLE_FOUND,
+                                source_url=row["source_url"] or result.trace.source_url, metadata=metadata)
+            pool.append(ArticleEvidence(law_title=row["title"], article_no=row["article_no"],
+                        article_text=row["text"], version_label=row["version_label"],
+                        source_metadata={
+                            "version_key": row["version_key"],
+                            "relevance_score": rank_scores.get(normalize_article_key(row["article_no"])),
+                            "article_rank_confirmed": rank_confirmed and normalize_article_key(
+                                row["article_no"]
+                            ) == normalize_article_key(ranked[0].article_no),
+                        }, data_source=trace))
+    if item.raw_time and item.raw_time != "现行":
+        year = re.search(r"\d{4}", item.raw_time)
+        version_label = (basis.version_label if basis else "") or ""
+        local_metadata = metadata if local and local.db_path.exists() else {}
+        identified = version_confirmed or local_metadata.get("version_identified") is True
+        version_confirmed = bool(identified and year and year.group() in (
+            str(version) + version_label + str(local_metadata.get("version_label", ""))))
+    current_authority = _authority_marks_current(basis) and not (
+        item.raw_time and item.raw_time != "现行"
+    )
+    version_confirmed = version_confirmed or current_authority
+
+    def resolve(candidates):
+        eligible = []
+        for evidence in candidates:
+            if not equivalent_law_titles(evidence.law_title, target_title):
+                continue
+            candidate_version = (
+                evidence.source_metadata.get("version_key")
+                or evidence.data_source.metadata.get("version_key")
+            )
+            if pkulaw_absence or (
+                candidate_version is not None and candidate_version == version
+            ) or (current_authority and _authority_marks_current(evidence)) or (
+                not version_confirmed
+                and not (item.raw_time and item.raw_time != "现行")
+                and evidence.source_metadata.get("version_confirmed") is True
+                and _authority_marks_current(evidence)
+            ):
+                eligible.append(evidence)
+        resolution = resolve_location_candidates(
+            quote, eligible, current_text=current_text,
+            cited_article_no=item.article_no,
+        )
+        resolved_authority = bool(
+            resolution.status == "resolved"
+            and any(
+                normalize_article_key(evidence.article_no or "")
+                == normalize_article_key(resolution.candidates[0].locator.article_no or "")
+                and (
+                    evidence.source_metadata.get("version_confirmed") is True
+                    or evidence.data_source.metadata.get("version_confirmed") is True
+                    or _authority_marks_current(evidence)
+                )
+                for evidence in eligible
+            )
+        )
+        if not version_confirmed and not resolved_authority and not pkulaw_absence and resolution.status == "resolved":
+            resolution.status = "candidates_pending"
+        return resolution, eligible
+    resolution, eligible = resolve(pool)
+    if (resolution.status != "resolved" and locator_source is not None
+            and item.jurisdiction == "CN" and version != "current" and not retry_only):
+        remote = locator_source.locate_candidates(LookupRequest(
+            law_title=target_title, article_no=item.article_no, context_text=quote))
+        attempts.append(remote.trace)
+        pool.extend(remote.candidates)
+        resolution, eligible = resolve(pool)
+        resolution.source_trace = remote.trace
+    if resolution.status == "resolved":
+        target = resolution.candidates[0].locator
+        cited = _item_locators(item)[0]
+        same_article = normalize_article_key(target.article_no or "") == normalize_article_key(item.article_no)
+        # 没有限定款项的条级引用已覆盖该位置；无须补写层级。
+        title_changed = not equivalent_law_titles(target_title, item.law_title)
+        if same_article and not title_changed and not cited.paragraph_no and not cited.item_no:
+            return None
+        paragraph_matches = (
+            _locator_key(cited.paragraph_no) == _locator_key(target.paragraph_no)
+            if cited.paragraph_no or cited.item_no and target.paragraph_no
+            else True
+        )
+        item_matches = (
+            not cited.item_no
+            or _locator_key(cited.item_no) == _locator_key(target.item_no)
+        )
+        if same_article and not title_changed and paragraph_matches and item_matches:
+            return None
+        if same_article and not title_changed and repair_level_missing(cited, target):
+            resolution.status = "candidates_pending"
+        item.correction_evidence = next((e for e in eligible if normalize_article_key(e.article_no or "") == normalize_article_key(target.article_no or "")), None)
+        item.repair_verified = item.correction_evidence is not None and resolution.status == "resolved"
+    item.location_resolution = resolution
+    return resolution
 
 
 def _location_query_text(item: _CheckItem) -> str:
