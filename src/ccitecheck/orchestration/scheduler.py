@@ -1340,6 +1340,57 @@ def _article_is_missing(item: _CheckItem, result: LookupResult) -> bool:
     )
 
 
+def _format_findings(item: _CheckItem) -> list[StatuteFinding]:
+    """编号书写规范检查（条、款、项编号格式与条号缺失）。"""
+    raw_locator = item.claim.text[slice(*item.citation_span)] if item.citation_span else item.article_no or ""
+    findings: list[StatuteFinding] = []
+    invalid = invalid_number_tokens(raw_locator)
+    if invalid:
+        findings.append(StatuteFinding(code=StatuteErrorCode.FORMAT_ERROR, risk_level="HIGH",
+            summary="引用编号写法不规范：" + "、".join(invalid), suggestion="请按规范数字形式书写条、款、项编号。"))
+    if item.article and item.article.raw_locator:
+        findings.append(StatuteFinding(
+            code=StatuteErrorCode.FORMAT_ERROR,
+            risk_level="HIGH",
+            summary=f"{item.article.raw_locator}缺少所属条号",
+            suggestion="款号不能脱离条号单独引用；请改为正确的第X条，并按需补充第Y款。",
+        ))
+    return findings
+
+
+def _absence_override_findings(
+    item: _CheckItem,
+    lookup_result: LookupResult,
+    attempts: list[SourceTrace],
+    findings: list[StatuteFinding],
+) -> list[StatuteFinding] | None:
+    """北大法宝权威确认条号缺席时，用确定性结论覆盖待定结论。"""
+    absence = _pkulaw_confirms_absence(attempts)
+    if not (
+        absence
+        and lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+        and not any(f.code in {
+            StatuteErrorCode.SOURCE_REPEALED,
+            StatuteErrorCode.SOURCE_AMENDED,
+        } for f in findings)
+    ):
+        return None
+    authoritative_title = absence.get("title") or item.display_title
+    return [StatuteFinding(
+        code=StatuteErrorCode.ARTICLE_NUMBER_ERROR,
+        risk_level="HIGH",
+        summary=(
+            f"《{item.display_title}》（{authoritative_title}）"
+            f"不存在所引条号{item.article_no}"
+        ),
+        suggestion=(
+            f"条号引用错误，《{item.display_title}》不存在"
+            f"{item.article_no}，请核对条文序号。"
+        ),
+        cited_locator=_item_locators(item)[0],
+    )]
+
+
 def _run_judgments(
     items: list[_CheckItem],
     lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
@@ -1397,18 +1448,7 @@ def _run_judgments(
             historical_versions.get(item.lookup_key),
             claim_text=item.claim.text,
         )
-        raw_locator = item.claim.text[slice(*item.citation_span)] if item.citation_span else item.article_no or ""
-        invalid = invalid_number_tokens(raw_locator)
-        if invalid:
-            findings.append(StatuteFinding(code=StatuteErrorCode.FORMAT_ERROR, risk_level="HIGH",
-                summary="引用编号写法不规范：" + "、".join(invalid), suggestion="请按规范数字形式书写条、款、项编号。"))
-        if item.article and item.article.raw_locator:
-            findings.append(StatuteFinding(
-                code=StatuteErrorCode.FORMAT_ERROR,
-                risk_level="HIGH",
-                summary=f"{item.article.raw_locator}缺少所属条号",
-                suggestion="款号不能脱离条号单独引用；请改为正确的第X条，并按需补充第Y款。",
-            ))
+        findings.extend(_format_findings(item))
         article_missing = _article_is_missing(item, lookup_result)
         repair = location_repairs.get(index)
         repair_finding = _verified_repair_finding(item)
@@ -1420,30 +1460,9 @@ def _run_judgments(
             findings.append(repair_finding)
             results[index] = findings
             continue
-        absence = _pkulaw_confirms_absence(attempts)
-        if (
-            absence
-            and lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
-            and not any(f.code in {
-                StatuteErrorCode.SOURCE_REPEALED,
-                StatuteErrorCode.SOURCE_AMENDED,
-            } for f in findings)
-        ):
-            authoritative_title = absence.get("title") or item.display_title
-            findings = [StatuteFinding(
-                code=StatuteErrorCode.ARTICLE_NUMBER_ERROR,
-                risk_level="HIGH",
-                summary=(
-                    f"《{item.display_title}》（{authoritative_title}）"
-                    f"不存在所引条号{item.article_no}"
-                ),
-                suggestion=(
-                    f"条号引用错误，《{item.display_title}》不存在"
-                    f"{item.article_no}，请核对条文序号。"
-                ),
-                cited_locator=_item_locators(item)[0],
-            )]
-            results[index] = findings
+        absence_override = _absence_override_findings(item, lookup_result, attempts, findings)
+        if absence_override is not None:
+            results[index] = absence_override
             continue
 
         location = (
