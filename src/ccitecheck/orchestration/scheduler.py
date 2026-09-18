@@ -461,7 +461,6 @@ def verify_claim_document(
             lookup_results,
             semantic_checker,
             known_titles,
-            database_path,
         )
         if any(item.correction_evidence is not None and not item.repair_verified for item in items):
             location_repairs.update(_run_location_repairs(
@@ -924,7 +923,6 @@ def _run_repair_plans(
     lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]],
     semantic_checker: SemanticChecker | None,
     known_titles: list[str],
-    database_path: str | Path,
 ) -> None:
     """精确检索失败后最多规划并验证一次受限重试。"""
     if not callable(getattr(semantic_checker, "plan_repair", None)) or not source_chain:
@@ -961,16 +959,7 @@ def _run_repair_plans(
             return None, error or "", None
         item.repair_reason = plan.diagnosis.reason
         item.repair_message = plan.diagnosis.message
-        if item.raw_claim is not None and item.hypothesis is not None:
-            item.hypothesis = _rebuild_from_repair(
-                item.raw_claim,
-                item.hypothesis,
-                plan,
-                QueryResources(law_db=database_path),
-            )
-            retry = item.hypothesis.query_plan
-        else:
-            retry = plan.retry_request
+        retry = plan.retry_request
         if retry is None:
             return None, plan.diagnosis.message, None
         try:
@@ -981,7 +970,11 @@ def _run_repair_plans(
                         law_title=retry.target_name,
                         article_no=retry.article_no,
                         context_text=item.claim.context_text or item.claim.text,
-                        version_hint=retry.version_hint,
+                        version_hint=(
+                            retry.version_hint
+                            or item.version_hint
+                            or _explicit_version_hint(item.raw_time)
+                        ),
                         jurisdiction=item.jurisdiction,
                 ))
         except Exception as exc:

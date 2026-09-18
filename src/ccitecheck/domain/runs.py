@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 from enum import Enum
+import os
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+# 单条 RunState 机器与文档 _CheckItem 流水线共用的重试预算。
+DEFAULT_TECHNICAL_RETRY_LIMIT = _env_int("CCITE_TECHNICAL_RETRIES", 2)
+DEFAULT_HYPOTHESIS_RETRY_LIMIT = _env_int("CCITE_HYPOTHESIS_RETRIES", 3)
 
 
 class RunState(str, Enum):
@@ -69,8 +82,8 @@ class VerificationRun(BaseModel):
     source_attempts: list[SourceAttempt] = Field(default_factory=list)
     technical_retry_count: int = 0
     hypothesis_retry_count: int = 0
-    max_technical_retries: int = 2
-    max_hypothesis_retries: int = 3
+    max_technical_retries: int = DEFAULT_TECHNICAL_RETRY_LIMIT
+    max_hypothesis_retries: int = DEFAULT_HYPOTHESIS_RETRY_LIMIT
     terminal_reason: str | None = None
     model_config = ConfigDict(extra="forbid")
 
@@ -83,6 +96,8 @@ class VerificationRun(BaseModel):
 
 
 __all__ = [
+    "DEFAULT_HYPOTHESIS_RETRY_LIMIT",
+    "DEFAULT_TECHNICAL_RETRY_LIMIT",
     "RunState",
     "SchedulerDecision",
     "SourceAttempt",

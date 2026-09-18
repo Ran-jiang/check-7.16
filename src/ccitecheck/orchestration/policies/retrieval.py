@@ -8,6 +8,7 @@ from typing import Callable, Mapping, TypeVar
 
 from ...domain.evidence import ArticleEvidence, ArticleExcerpt, LookupStatus, SourceTrace, SourceTier
 from ...domain.queries import RerankBatch, RerankCandidate
+from ...domain.runs import DEFAULT_TECHNICAL_RETRY_LIMIT
 from ...infrastructure.database import normalize_article_key
 from ...query_construction.matching import equivalent_law_titles
 from ...retrieval.service import DEFAULT_LOOKUP_WORKERS, execute_source
@@ -24,7 +25,7 @@ def run_with_technical_retries(
     operation: Callable[[], _T],
     is_retryable: Callable[[_T], bool],
     *,
-    max_retries: int = 2,
+    max_retries: int = DEFAULT_TECHNICAL_RETRY_LIMIT,
 ) -> tuple[_T, list[_T]]:
     """Run one source operation with the shared technical-retry budget."""
     attempts: list[_T] = []
