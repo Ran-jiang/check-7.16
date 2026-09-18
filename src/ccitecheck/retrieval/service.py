@@ -124,6 +124,37 @@ _STATUS_MAP = {
 }
 
 
+def build_statute_lookup_request(
+    hypothesis: SearchHypothesis,
+    *,
+    context_text: str = "",
+    identity_title: str | None = None,
+    jurisdiction: str | None = None,
+) -> LookupRequest:
+    """由查询假设构造标准化法规请求；execute 与文档流水线共用同一映射规则。"""
+    query_plan = hypothesis.query_plan
+    identity = identity_title or (query_plan.target_name if query_plan else None) or next(
+        (item.title for item in hypothesis.identity_candidates), ""
+    )
+    locator = hypothesis.normalized_locator
+    article_no = (
+        query_plan.article_no if query_plan else None
+    ) or (locator.article_raw if locator else None)
+    return LookupRequest(
+        law_title=identity,
+        article_no=article_no,
+        context_text=context_text,
+        query_text=query_plan.query_text if query_plan else None,
+        version_hint=query_plan.version_hint if query_plan else None,
+        existence_only=bool(
+            query_plan
+            and query_plan.route == "statute_related"
+            and query_plan.query_text is None
+        ),
+        jurisdiction=jurisdiction,
+    )
+
+
 def execute(
     source_id: str,
     hypothesis: SearchHypothesis,
@@ -133,35 +164,27 @@ def execute(
 ) -> RetrievalEvidence:
     """按指定 hypothesis 和 source 执行一次可追溯检索。"""
     source = task.source or (registry.get(source_id) if registry else None)
-    query_plan = hypothesis.query_plan
-    identity = task.identity_title or (query_plan.target_name if query_plan else None) or next(
-        (item.title for item in hypothesis.identity_candidates), ""
-    )
-    locator = hypothesis.normalized_locator
-    article_no = (
-        query_plan.article_no if query_plan else None
-    ) or (locator.article_raw if locator else None)
-    submitted = (
-        {
+    if task.kind == "case":
+        submitted = {
             "case_number": task.case_number,
             "case_name": task.case_name,
             "court": task.court,
             "context_text": task.context_text,
         }
-        if task.kind == "case"
-        else {
-            "law_title": identity,
-            "article_no": article_no,
-            "context_text": task.context_text,
-            "query_text": query_plan.query_text if query_plan else None,
-            "version_hint": query_plan.version_hint if query_plan else None,
-            "existence_only": bool(
-                query_plan
-                and query_plan.route == "statute_related"
-                and query_plan.query_text is None
-            ),
+    else:
+        request = build_statute_lookup_request(
+            hypothesis,
+            context_text=task.context_text,
+            identity_title=task.identity_title,
+        )
+        submitted = {
+            "law_title": request.law_title,
+            "article_no": request.article_no,
+            "context_text": request.context_text,
+            "query_text": request.query_text,
+            "version_hint": request.version_hint,
+            "existence_only": request.existence_only,
         }
-    )
     if source is None:
         return RetrievalEvidence(
             claim_id=hypothesis.claim_id,
@@ -311,6 +334,7 @@ __all__ = [
     "build_ansvar_sources",
     "build_default_sources",
     "build_eu_sources",
+    "build_statute_lookup_request",
     "execute",
     "execute_source",
     "sources_for_jurisdiction",

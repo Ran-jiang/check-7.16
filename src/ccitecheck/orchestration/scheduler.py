@@ -101,7 +101,7 @@ from ..recognition.spans import locate_claim_article_spans
 from ..verification.statutes.locator import supports_assertion
 from ..retrieval.sources.local_laws import LocalSQLiteSource
 from ..retrieval.ranking import retrieve_relevant_articles
-from ..retrieval.service import build_default_sources, sources_for_jurisdiction
+from ..retrieval.service import build_default_sources, build_statute_lookup_request, sources_for_jurisdiction
 from ..retrieval.sources import (
     CaseSearcher,
     LookupRequest,
@@ -905,6 +905,34 @@ def _out_of_scope_message(jurisdiction: str) -> str | None:
     return None
 
 
+def _lookup_request_for_item(item: _CheckItem) -> LookupRequest:
+    """文档检索请求统一由查询假设构造；无假设的过渡项保留旧字段映射。"""
+    context_text = item.claim.context_text or item.claim.text
+    if item.hypothesis is not None:
+        request = build_statute_lookup_request(
+            item.hypothesis,
+            context_text=context_text,
+            identity_title=item.law_title,
+            jurisdiction=item.jurisdiction,
+        )
+        if request.version_hint is None:
+            request.version_hint = item.version_hint or _explicit_version_hint(item.raw_time)
+        return request
+    return LookupRequest(
+        law_title=item.law_title,
+        article_no=item.article_no,
+        context_text=context_text,
+        query_text=item.related_query,
+        version_hint=item.version_hint or _explicit_version_hint(item.raw_time),
+        existence_only=(
+            not item.article_no
+            and item.structure is None
+            and item.related_query is None
+        ),
+        jurisdiction=item.jurisdiction,
+    )
+
+
 def _run_lookups(
     source_chain: list[StatuteSource],
     items: list[_CheckItem],
@@ -921,22 +949,7 @@ def _run_lookups(
         if item.skip_lookup or item.structure is not None:
             continue
         bucket = groups.setdefault(item.jurisdiction, {})
-        bucket.setdefault(
-            item.lookup_key,
-            LookupRequest(
-                law_title=item.law_title,
-                article_no=item.article_no,
-                context_text=item.claim.context_text or item.claim.text,
-                query_text=item.related_query,
-                version_hint=item.version_hint or _explicit_version_hint(item.raw_time),
-                existence_only=(
-                    not item.article_no
-                    and item.structure is None
-                    and item.related_query is None
-                ),
-                jurisdiction=item.jurisdiction,
-            ),
-        )
+        bucket.setdefault(item.lookup_key, _lookup_request_for_item(item))
     results: dict[tuple, tuple[LookupResult, list[SourceTrace]]] = {}
     for jurisdiction, requests in groups.items():
         if not requests:
