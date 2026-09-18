@@ -933,31 +933,18 @@ def _out_of_scope_message(jurisdiction: str) -> str | None:
 
 
 def _lookup_request_for_item(item: _CheckItem) -> LookupRequest:
-    """文档检索请求统一由查询假设构造；无假设的过渡项保留旧字段映射。"""
-    context_text = item.claim.context_text or item.claim.text
-    if item.hypothesis is not None:
-        request = build_statute_lookup_request(
-            item.hypothesis,
-            context_text=context_text,
-            identity_title=item.law_title,
-            jurisdiction=item.jurisdiction,
-        )
-        if request.version_hint is None:
-            request.version_hint = item.version_hint or _explicit_version_hint(item.raw_time)
-        return request
-    return LookupRequest(
-        law_title=item.law_title,
-        article_no=item.article_no,
-        context_text=context_text,
-        query_text=item.related_query,
-        version_hint=item.version_hint or _explicit_version_hint(item.raw_time),
-        existence_only=(
-            not item.article_no
-            and item.structure is None
-            and item.related_query is None
-        ),
+    """文档检索请求统一由查询假设构造。"""
+    if item.hypothesis is None:
+        raise ValueError("check item 缺少查询假设，无法构造检索请求")
+    request = build_statute_lookup_request(
+        item.hypothesis,
+        context_text=item.claim.context_text or item.claim.text,
+        identity_title=item.law_title,
         jurisdiction=item.jurisdiction,
     )
+    if request.version_hint is None:
+        request.version_hint = item.version_hint or _explicit_version_hint(item.raw_time)
+    return request
 
 
 def _run_lookups(
