@@ -1464,117 +1464,129 @@ def _run_judgments(
     location_repairs: dict[int, StatuteLocationResolution],
 ) -> dict[int, list[StatuteFinding]]:
     results: dict[int, list[StatuteFinding]] = {}
-
     for index, item in enumerate(items):
-        if item.skip_lookup:
-            results[index] = []
-            continue
-        if item.relation_status in {"parent_unavailable", "insufficient"}:
-            results[index] = []
-            continue
-        if item.relation_status == "locator_mismatch":
-            corrected = f"《{item.display_title}》{item.relation_candidate_article_no or ''}"
-            resolved = StatuteLocator(article_no=item.relation_candidate_article_no)
-            results[index] = [StatuteFinding(
-                code=StatuteErrorCode.ARTICLE_NUMBER_ERROR,
-                risk_level="HIGH",
-                summary="内部转引与主法条原文明示援引的条号不一致",
-                suggestion=_verified_correction_suggestion(
-                    StatuteErrorCode.ARTICLE_NUMBER_ERROR, corrected
-                ),
-                resolved_locator=resolved,
-                revision=_locator_revision(item, resolved),
-            )]
-            continue
-        lookup_result, attempts = lookup_results[item.lookup_key]
-        if item.structure is not None:
-            if (
-                lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
-                or int(lookup_result.trace.metadata.get("candidate_count", 1)) > 1
-            ):
-                results[index] = [StatuteFinding(
-                    code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
-                    risk_level=(
-                        "HIGH" if lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
-                        else "MEDIUM"
-                    ),
-                    summary=lookup_result.trace.message,
-                    suggestion=f"{lookup_result.trace.message}，请核实章节编号及其上级结构。",
-                )]
-            else:
-                results[index] = []
-            continue
-        findings = assess_statute(
-            item.law_title,
-            item.article_no,
-            lookup_result,
-            attempts,
+        lookup = lookup_results.get(item.lookup_key)
+        if lookup is None and not (
+            item.skip_lookup
+            or item.relation_status in {"parent_unavailable", "insufficient", "locator_mismatch"}
+        ):
+            raise KeyError(item.lookup_key)
+        results[index] = judge_item(
+            item,
+            lookup,
             known_titles,
             historical_versions.get(item.lookup_key),
-            claim_text=item.claim.text,
+            location_repairs.get(index),
         )
-        findings.extend(_format_findings(item))
-        article_missing = _article_is_missing(item, lookup_result)
-        repair = location_repairs.get(index)
-        repair_finding = _verified_repair_finding(item)
-        if repair_finding is not None:
-            findings = [f for f in findings if f.code not in {
-                StatuteErrorCode.ARTICLE_NOT_FOUND, StatuteErrorCode.ARTICLE_NUMBER_ERROR,
-                StatuteErrorCode.CITATION_HIERARCHY_ERROR, StatuteErrorCode.SOURCE_NOT_FOUND,
-                StatuteErrorCode.LAW_NAME_ERROR}]
-            findings.append(repair_finding)
-            results[index] = findings
-            continue
-        absence_override = _absence_override_findings(item, lookup_result, attempts, findings)
-        if absence_override is not None:
-            results[index] = absence_override
-            continue
-
-        location = (
-            LocationAssessment(LocationStatus.VALID)
-            if article_missing else _assess_item_location(item, lookup_result)
-        )
-        if location.status == LocationStatus.INVALID:
-            historical = _matching_historical_location(
-                item, historical_versions.get(item.lookup_key, [])
-            )
-            if historical is not None:
-                findings.append(StatuteFinding(
-                    code=StatuteErrorCode.SOURCE_AMENDED,
-                    risk_level="HIGH",
-                    summary=f"现行版本中{location.message}，但历史版本存在所引位置",
-                    suggestion="法源版本或效力错误，请核对适用时间和现行规定。",
-                    cited_locator=_item_locators(item)[0],
-                    historical_version=historical,
-                ))
-            else:
-                finding = StatuteFinding(
-                    code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
-                    risk_level="HIGH",
-                    summary=location.message,
-                    suggestion=_location_user_message(location.message, repair),
-                )
-                if repair is not None and repair.status == "resolved":
-                    resolved = repair.candidates[0].locator
-                    corrected = "".join(filter(None, (
-                        resolved.article_no, resolved.paragraph_no, resolved.item_no,
-                    )))
-                    finding.suggestion = _verified_correction_suggestion(
-                        StatuteErrorCode.CITATION_HIERARCHY_ERROR,
-                        f"《{item.display_title}》{corrected}",
-                    )
-                    finding.resolved_locator = resolved
-                    finding.revision = _locator_revision(item, resolved)
-                findings.append(finding)
-        elif location.status == LocationStatus.STRUCTURE_UNAVAILABLE:
-            findings.append(StatuteFinding(
-                code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
-                risk_level="MEDIUM",
-                summary=location.message,
-                suggestion=f"{location.message}，请分别注明各款、项的对应关系。",
-            ))
-        results[index] = findings
     return results
+
+
+def judge_item(
+    item: _CheckItem,
+    lookup: tuple[LookupResult, list[SourceTrace]] | None,
+    known_titles: list[str],
+    historical: list[StatuteVersion] | None,
+    location_resolution: StatuteLocationResolution | None,
+) -> list[StatuteFinding]:
+    """单条引用的判定收口；与批量判定循环同一实现，便于按引用驱动。"""
+    if item.skip_lookup:
+        return []
+    if item.relation_status in {"parent_unavailable", "insufficient"}:
+        return []
+    if item.relation_status == "locator_mismatch":
+        corrected = f"《{item.display_title}》{item.relation_candidate_article_no or ''}"
+        resolved = StatuteLocator(article_no=item.relation_candidate_article_no)
+        return [StatuteFinding(
+            code=StatuteErrorCode.ARTICLE_NUMBER_ERROR,
+            risk_level="HIGH",
+            summary="内部转引与主法条原文明示援引的条号不一致",
+            suggestion=_verified_correction_suggestion(
+                StatuteErrorCode.ARTICLE_NUMBER_ERROR, corrected
+            ),
+            resolved_locator=resolved,
+            revision=_locator_revision(item, resolved),
+        )]
+    lookup_result, attempts = lookup
+    if item.structure is not None:
+        if (
+            lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+            or int(lookup_result.trace.metadata.get("candidate_count", 1)) > 1
+        ):
+            return [StatuteFinding(
+                code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
+                risk_level=(
+                    "HIGH" if lookup_result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
+                    else "MEDIUM"
+                ),
+                summary=lookup_result.trace.message,
+                suggestion=f"{lookup_result.trace.message}，请核实章节编号及其上级结构。",
+            )]
+        return []
+    findings = assess_statute(
+        item.law_title,
+        item.article_no,
+        lookup_result,
+        attempts,
+        known_titles,
+        historical,
+        claim_text=item.claim.text,
+    )
+    findings.extend(_format_findings(item))
+    article_missing = _article_is_missing(item, lookup_result)
+    repair_finding = _verified_repair_finding(item)
+    if repair_finding is not None:
+        findings = [f for f in findings if f.code not in {
+            StatuteErrorCode.ARTICLE_NOT_FOUND, StatuteErrorCode.ARTICLE_NUMBER_ERROR,
+            StatuteErrorCode.CITATION_HIERARCHY_ERROR, StatuteErrorCode.SOURCE_NOT_FOUND,
+            StatuteErrorCode.LAW_NAME_ERROR}]
+        findings.append(repair_finding)
+        return findings
+    absence_override = _absence_override_findings(item, lookup_result, attempts, findings)
+    if absence_override is not None:
+        return absence_override
+
+    location = (
+        LocationAssessment(LocationStatus.VALID)
+        if article_missing else _assess_item_location(item, lookup_result)
+    )
+    if location.status == LocationStatus.INVALID:
+        historical_match = _matching_historical_location(item, historical or [])
+        if historical_match is not None:
+            findings.append(StatuteFinding(
+                code=StatuteErrorCode.SOURCE_AMENDED,
+                risk_level="HIGH",
+                summary=f"现行版本中{location.message}，但历史版本存在所引位置",
+                suggestion="法源版本或效力错误，请核对适用时间和现行规定。",
+                cited_locator=_item_locators(item)[0],
+                historical_version=historical_match,
+            ))
+        else:
+            finding = StatuteFinding(
+                code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
+                risk_level="HIGH",
+                summary=location.message,
+                suggestion=_location_user_message(location.message, location_resolution),
+            )
+            if location_resolution is not None and location_resolution.status == "resolved":
+                resolved = location_resolution.candidates[0].locator
+                corrected = "".join(filter(None, (
+                    resolved.article_no, resolved.paragraph_no, resolved.item_no,
+                )))
+                finding.suggestion = _verified_correction_suggestion(
+                    StatuteErrorCode.CITATION_HIERARCHY_ERROR,
+                    f"《{item.display_title}》{corrected}",
+                )
+                finding.resolved_locator = resolved
+                finding.revision = _locator_revision(item, resolved)
+            findings.append(finding)
+    elif location.status == LocationStatus.STRUCTURE_UNAVAILABLE:
+        findings.append(StatuteFinding(
+            code=StatuteErrorCode.CITATION_HIERARCHY_ERROR,
+            risk_level="MEDIUM",
+            summary=location.message,
+            suggestion=f"{location.message}，请分别注明各款、项的对应关系。",
+        ))
+    return findings
 
 
 def _pkulaw_confirms_absence(attempts: list[SourceTrace]) -> dict | None:
