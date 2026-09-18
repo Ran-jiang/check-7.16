@@ -65,6 +65,10 @@ class ArticleRef(BaseModel):
     条款号格式由规则抽取器保证。
     """
     article: str = Field(description="条款文本，如'第四十八条'、'第一百八十四条之一'")
+    raw_locator: str | None = Field(
+        default=None,
+        description="原文误用款作条号时保留原始定位文本",
+    )
     paragraphs: list[str] = Field(
         default_factory=list,
         description="款号列表，如['第一款', '第二款']"
@@ -135,11 +139,15 @@ class LegalSource(BaseModel):
     title: str = Field(description="法规名称，不含书名号")
     canonical_title: Optional[str] = Field(
         default=None,
-        description="旧版输入兼容字段；Recognition 不写入",
+        description="确定性名称形态（不表示法规已被检索确认存在）",
     )
     raw_title_candidate: Optional[str] = Field(
         default=None,
         description="裸引用中仅凭文本边界得到的法名候选",
+    )
+    raw_time: Optional[str] = Field(
+        default=None,
+        description="原文中与该来源相邻的时间或相对版本表达，不作解释",
     )
     jurisdiction: Optional[str] = Field(
         default=None,

@@ -1,4 +1,4 @@
-import { APPLICATION_ERROR_LABELS, STATUTE_ERROR_LABELS } from "./statute-view-model.js"
+import { APPLICATION_ERROR_LABELS, STATUTE_ERROR_LABELS, statuteErrorLabel } from "./statute-view-model.js"
 import { CASE_ERROR_LABELS, CASE_STATUS_LABELS } from "./case-view-model.js"
 
 export function buildResultCards(verification) {
@@ -60,9 +60,9 @@ export function buildResultCards(verification) {
 
 export function normalizeStatuteResult(result) {
   const locator = result.cited_locators?.[0] || {}
-  const citationTypes = result.findings?.map(item => STATUTE_ERROR_LABELS[item.code] || item.code) || []
+  const citationTypes = result.findings?.map(item => statuteErrorLabel(item.code, result)) || []
   const applicationTypes = result.application_check?.reviews?.map(
-    item => `法律适用待核查：${APPLICATION_ERROR_LABELS[item.error_type] || item.error_type}`
+    item => APPLICATION_ERROR_LABELS[item.error_type] || item.error_type
   ) || []
   return {
     ...result,
@@ -85,7 +85,9 @@ export function normalizeCaseResult(result) {
 }
 
 export function findingLabel(finding, kind) {
-  return (kind === "case" ? CASE_ERROR_LABELS : STATUTE_ERROR_LABELS)[finding.code] || finding.code
+  return kind === "case"
+    ? CASE_ERROR_LABELS[finding.code] || finding.code
+    : STATUTE_ERROR_LABELS[finding.code] || finding.code
 }
 
 function caseStatusLabel(status) {

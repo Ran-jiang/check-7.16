@@ -44,7 +44,7 @@ log "预检"
   || die "运行目录结构不对（缺 src/ 或 apps/）：$INSTALL_DIR"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || die "不是 git 仓库：$REPO"
 
-# 只关心已跟踪文件；未跟踪的产物目录（artifacts/、tmp/ 等）不算脏
+# 只关心已跟踪文件；未跟踪的产物目录不算脏
 if ! git -C "$REPO" diff --quiet || ! git -C "$REPO" diff --cached --quiet; then
   echo
   git -C "$REPO" status --short --untracked-files=no

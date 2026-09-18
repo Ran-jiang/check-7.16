@@ -98,8 +98,8 @@ def test_ambiguous_structure_citation_goes_to_manual(tmp_path: Path):
         include_cases=False,
     )
     check = doc.statute_results[0]
-    assert not check.findings
-    assert check.meaning_check.skipped_reason == "structure_ambiguous"
+    assert check.findings[0].code == StatuteErrorCode.CITATION_HIERARCHY_ERROR
+    assert check.outcome == "issue"
     assert check.evidence.structure_path.startswith("候选：")
 
 

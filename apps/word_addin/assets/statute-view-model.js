@@ -1,26 +1,20 @@
 import { BADGE_TEXT, sourceUrlOf, stripRepeatedArticleHeading } from "./view-model.js"
 
-export const LOOKUP_STATUS_LABELS = {
-  article_found: "已取得法条原文", relevant_articles_found: "已召回相关条款",
-  law_found_article_missing: "法规存在，未找到该条", law_found_text_unavailable: "法规存在，条文全文不可用",
-  law_not_found: "未检索到该法规", source_not_configured: "数据源未配置",
-  source_error: "数据源调用失败", not_verifiable: "非法条类文件，不做条文核验",
-  out_of_scope: "超出核查边界",
-}
-
 export const STATUTE_ERROR_LABELS = {
-  source_not_found: "北大法宝未检索到所引法源", law_name_error: "法律名称错误",
-  article_not_found: "条文不存在", article_number_error: "条号错误",
-  citation_hierarchy_error: "层级错误",
-  source_name_ambiguous: "法规名称无法确定",
-  source_repealed: "法源已废止或失效", source_amended: "法源已修改", meaning_distorted: "曲解权威文本原意",
+  source_not_found: "MCP未检索到所引法源",
+  law_name_error: "法规名称错误",
+  article_not_found: "所引条文待核实",
+  format_error: "引用编号格式错误",
+  article_number_error: "条文序号错误",
+  citation_hierarchy_error: "条款项层级错误",
+  source_repealed: "法源版本或效力错误",
+  source_amended: "法源版本或效力错误",
 }
 
 export const APPLICATION_ERROR_LABELS = {
-  rule_fact_mismatch: "法条与事实关联性",
-  direct_quote_unfaithful: "直接引用改写权威来源",
-  application_logic_error: "法律适用逻辑",
-  legal_alias_inconsistent: "法律简称歧义或不一致",
+  rule_fact_mismatch: "法条与事实关联性弱",
+  meaning_distorted: "引文不忠实于权威原文",
+  legal_alias_inconsistent: "全文法规引用简称不一致",
   format_error: "格式错误",
 }
 
@@ -43,7 +37,7 @@ export function statuteViewOf(check, options = {}) {
     refLine: { label: "核查对象", text: formatReference(check), status: null },
     verdict: statuteVerdict(check, state, findings, applicationReviews), evidence: statuteEvidence(check),
     typeTags: [
-      ...findings.map(finding => STATUTE_ERROR_LABELS[finding.code] || finding.code),
+      ...findings.map(finding => statuteErrorLabel(finding.code, check)),
       ...applicationReviews.map(review => APPLICATION_ERROR_LABELS[review.error_type] || review.error_type),
     ],
     actions: { jump: !options.compact, decide: true }, raw: check,
@@ -51,13 +45,13 @@ export function statuteViewOf(check, options = {}) {
 }
 
 function statuteTypeLabel(check, state, findings, applicationReviews) {
-  const labels = findings.map(f => STATUTE_ERROR_LABELS[f.code] || f.code)
-  labels.push(...applicationReviews.map(review => `法律适用待核查：${APPLICATION_ERROR_LABELS[review.error_type] || review.error_type}`))
+  const labels = findings.map(finding => statuteErrorLabel(finding.code, check))
+  labels.push(...applicationReviews.map(review => APPLICATION_ERROR_LABELS[review.error_type] || review.error_type))
   if (labels.length) return labels.join("；")
   if (check.lookup_status === "out_of_scope") return "超出核查边界"
   if (state === "pass") {
     if (check.lookup_status === "law_found_text_unavailable" && !(check.cited_locators || []).length) return "法源存在性核验通过"
-    if (check.jurisdiction === "EU" && !check.meaning_check) return "欧盟法规：已核验存在性"
+    if (check.jurisdiction === "EU" && !check.application_check) return "欧盟法规：已核验存在性"
     if (/[编章节]$/.test(check.article_no || "")) return "章节引用：已核验存在"
     if (check.reference_role === "nested") {
       if (check.relation_status === "resolved") return "内部转引：已确认关系并更正引用位置"
@@ -65,25 +59,24 @@ function statuteTypeLabel(check, state, findings, applicationReviews) {
     }
     return "法律引用无问题"
   }
-  if (check.meaning_check?.skipped_reason === "structure_ambiguous") return "章节引用存在多个候选，请人工确认"
-  if (check.meaning_check?.execution_status === "llm_error") return "语义核查服务失败，可重试"
-  if (check.meaning_check?.verdict === "insufficient_input") return "输入不足，需人工处理"
-  return LOOKUP_STATUS_LABELS[check.lookup_status] || "未完成核查，需人工处理"
+  if (state === "review" && check.location_resolution) return "引文对应位置待核查"
+  if (check.application_check?.execution_status === "llm_error") return "模型服务不可用"
+  return sourceUnavailableLabel(check)
 }
 
 function statuteVerdict(check, state, findings, applicationReviews) {
   if (findings.length) {
     const first = findings[0]
-    const applicationText = applicationReviews.map(review => review.suggestion || review.summary).filter(Boolean).join("；")
+    const applicationText = applicationReviewText(applicationReviews)
     return {
       riskText: first.risk_level === "HIGH" ? "高" : "中",
-      suggestion: [findingText(first), applicationText && `法律适用待核查：${applicationText}`].filter(Boolean).join("\n"),
+      suggestion: [findingText(first), applicationText].filter(Boolean).join("\n"),
     }
   }
   if (applicationReviews.length) {
     return {
-      riskText: "待核查",
-      suggestion: applicationReviews.map(review => review.suggestion || review.summary).filter(Boolean).join("；"),
+      riskText: "待核实",
+      suggestion: applicationReviewText(applicationReviews),
     }
   }
   if (check.lookup_status === "out_of_scope") {
@@ -93,17 +86,56 @@ function statuteVerdict(check, state, findings, applicationReviews) {
   if (check.reference_role === "nested" && check.relation_message) {
     return { riskText: null, suggestion: check.relation_message }
   }
-  if (state === "bug" && check.message) {
+  if ((state === "bug" || state === "review") && check.message) {
     return { riskText: null, suggestion: check.message }
   }
-  return state === "bug" && check.meaning_check?.notes ? { riskText: null, suggestion: check.meaning_check.notes } : null
+  return null
+}
+
+function applicationReviewText(reviews) {
+  const text = reviews
+    .map(review => review.suggestion || review.summary)
+    .filter(Boolean)
+    .map(value => String(value).trim().replace(/[。；]+$/, ""))
+    .filter(Boolean)
+    .join("；")
+  return text ? `${text}。` : ""
+}
+
+export function statuteErrorLabel(code, check = {}) {
+  if (code === "article_not_found" && check.findings?.some(f => f.code === code && f.risk_level === "HIGH")) return "该版本中不存在所引条号"
+  const label = STATUTE_ERROR_LABELS[code] || code
+  return code === "source_not_found" ? `${sourceNameOf(check)}未检索到所引法源` : label
+}
+
+function sourceUnavailableLabel(check) {
+  return `${sourceNameOf(check, ["source_error", "source_not_configured"])}不可用`
+}
+
+function sourceNameOf(check, statuses = ["law_not_found"]) {
+  const attempts = check.source_attempts || []
+  const trace = [...attempts].reverse().find(item => statuses.includes(item.status))
+    || check.evidence?.data_source
+  const fallback = check.jurisdiction === "EU"
+    ? "EUR-Lex MCP"
+    : check.jurisdiction === "CN" ? "北大法宝 MCP" : "Ansvar Gateway"
+  const name = String(trace?.source_name || fallback).trim()
+  return /\bMCP$/i.test(name) ? name : `${name} MCP`
 }
 
 function statuteEvidence(check) {
   const evidence = check.evidence
   const url = sourceUrlOf(check)
-  const articleText = stripRepeatedArticleHeading(evidence?.article_text, check.article_no)
-  const related = (evidence?.related_articles || []).map(item => ({ heading: item.article_no || "", text: item.article_text || "" }))
+  const related = (evidence?.related_articles || []).map(item => ({ heading: item.locator || item.article_no || "", text: item.article_text || "" }))
+  if (check.correction_evidence?.article_text) {
+    related.push({ heading: `纠正候选 · ${check.correction_evidence.article_no || ""}`, text: check.correction_evidence.article_text })
+    if (evidence?.article_text && !evidence?.related_articles?.length) {
+      related.unshift({ heading: `原引用 · ${evidence.article_no || ""}`, text: evidence.article_text })
+    }
+  }
+  // related_articles 是 article_text 聚合内容的逐条结构化版本；两者只能展示
+  // 一种，否则同一色块会先显示整组法条，再逐条重复一次。
+  const articleText = related.length ? "" : stripRepeatedArticleHeading(evidence?.article_text, check.article_no)
   const structurePath = evidence?.structure_path || ""
   if (!articleText && !related.length && !url && !structurePath) return null
   const lawTitle = evidence?.law_title || check.law_title

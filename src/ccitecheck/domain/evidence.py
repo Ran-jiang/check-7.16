@@ -14,6 +14,8 @@ class SourceTier(str, Enum):
     LOCAL_SQLITE = "local_sqlite"
     PKULAW_FALLBACK = "pkulaw_fallback"
     EURLEX = "eurlex"
+    ANSVAR = "ansvar"
+    FTC_OFFICIAL = "ftc_official"
 
 
 class LookupStatus(str, Enum):
@@ -67,7 +69,12 @@ class SourceTrace(BaseModel):
 
 
 class ArticleExcerpt(BaseModel):
-    article_no: str
+    law_title: str | None = None
+    version_key: str | None = None
+    source_url: str | None = None
+    article_no: str = ""
+    locator: str | None = None
+    locator_type: Literal["article", "paragraph"] = "article"
     article_text: str
     relevance_score: float = Field(ge=0)
 

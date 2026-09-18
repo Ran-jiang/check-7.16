@@ -108,14 +108,14 @@ def _local_partial_result(law_title: str, article_no: str, article_count: int):
     return LookupResult(trace.status, evidence, trace), [trace]
 
 
-def test_article_not_exist_produces_high_finding():
+def test_article_count_alone_does_not_produce_high_finding():
     result, attempts = _local_partial_result("中华人民共和国民法典", "第一千三百条", 1260)
     findings = assess_statute(
         "中华人民共和国民法典", "第一千三百条", result, attempts, []
     )
     assert any(
         f.code == StatuteErrorCode.ARTICLE_NOT_FOUND
-        and f.risk_level == "HIGH"
+        and f.risk_level == "MEDIUM"
         for f in findings
     )
 

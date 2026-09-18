@@ -20,6 +20,27 @@ class RunState(str, Enum):
     STOPPED = "stopped"
 
 
+_ALLOWED_TRANSITIONS = {
+    RunState.NEW: {RunState.HYPOTHESIS_READY},
+    RunState.HYPOTHESIS_READY: {RunState.RETRIEVING, RunState.STOPPED},
+    RunState.RETRIEVING: {
+        RunState.EVIDENCE_READY,
+        RunState.HYPOTHESIS_READY,
+        RunState.STOPPED,
+    },
+    RunState.EVIDENCE_READY: {RunState.VERIFYING},
+    RunState.VERIFYING: {RunState.VERIFIED},
+    RunState.VERIFIED: {
+        RunState.RETRIEVING,
+        RunState.HYPOTHESIS_READY,
+        RunState.OUTPUT,
+        RunState.STOPPED,
+    },
+    RunState.OUTPUT: set(),
+    RunState.STOPPED: set(),
+}
+
+
 class SourceAttempt(BaseModel):
     source_id: str
     hypothesis_id: str
@@ -52,6 +73,13 @@ class VerificationRun(BaseModel):
     max_hypothesis_retries: int = 3
     terminal_reason: str | None = None
     model_config = ConfigDict(extra="forbid")
+
+    def transition(self, target: RunState) -> None:
+        if target == self.state:
+            return
+        if target not in _ALLOWED_TRANSITIONS[self.state]:
+            raise ValueError(f"invalid run transition: {self.state.value} -> {target.value}")
+        self.state = target
 
 
 __all__ = [

@@ -114,8 +114,10 @@ def test_eu_statute_routes_to_eurlex_and_skips_semantic(tmp_path: Path, monkeypa
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "https://eurlex.test")
     monkeypatch.setattr(
         verify_claims_module,
-        "build_eu_sources",
-        lambda: [EurLexSource(client=FakeEurLexClient(records=[GDPR_RECORD]))],
+        "sources_for_jurisdiction",
+        lambda jurisdiction, cn_chain=None: [
+            EurLexSource(client=FakeEurLexClient(records=[GDPR_RECORD]))
+        ] if jurisdiction == "EU" else cn_chain,
     )
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
@@ -149,7 +151,7 @@ def test_eu_statute_routes_to_eurlex_and_skips_semantic(tmp_path: Path, monkeypa
     assert check.jurisdiction == "EU"
     assert check.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
     # 无条号引用只核验存在性，不做语义核查
-    assert check.meaning_check is None
+    assert not hasattr(check, "meaning_check")
     assert check.outcome == "pass"
     assert check.evidence.source_metadata["celex"] == "32016R0679"
 
@@ -197,17 +199,19 @@ def test_eurlex_article_fetch_failure_degrades_to_existence():
     assert result.evidence is not None
 
 
-def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeypatch):
-    from ccitecheck.domain.checks import CheckVerdict
-    from ccitecheck.domain.statute_results import StatuteMeaningCheck
+def test_eu_article_citation_goes_through_application_check(tmp_path: Path, monkeypatch):
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
 
     class PassChecker:
         def __init__(self):
             self.calls = []
 
-        def compare(self, claim_text, cited_source, evidence):
-            self.calls.append({"claim_text": claim_text, "statute_text": evidence.article_text})
-            return StatuteMeaningCheck(verdict=CheckVerdict.PASS)
+        def compare_application(self, original_text, authorities):
+            self.calls.append({
+                "claim_text": original_text,
+                "statute_text": authorities[0].article_text,
+            })
+            return LegalApplicationCheck(verdict="pass")
 
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "https://eurlex.test")
     client = FakeEurLexClientWithDocument(
@@ -215,7 +219,10 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
         article={"text": GDPR_ARTICLE_17, "title": "Regulation (EU) 2016/679", "in_force": True},
     )
     monkeypatch.setattr(
-        verify_claims_module, "build_eu_sources", lambda: [EurLexSource(client=client)]
+        verify_claims_module,
+        "sources_for_jurisdiction",
+        lambda jurisdiction, cn_chain=None: [EurLexSource(client=client)]
+        if jurisdiction == "EU" else cn_chain,
     )
     checker = PassChecker()
     claim_doc = ClaimDocument(
@@ -242,57 +249,38 @@ def test_eu_article_citation_goes_through_semantic_check(tmp_path: Path, monkeyp
     )
     check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
-    assert check.meaning_check.verdict.value == "pass"
+    assert check.application_check.verdict == "pass"
+    assert not hasattr(check, "meaning_check")
     assert checker.calls and "Right to erasure" in checker.calls[0]["statute_text"]
     assert checker.calls[0]["claim_text"] == claim_doc.claims[0].text
 
 
-def test_prompt_authorizes_cross_language_comparison():
-    from ccitecheck.verification.semantic import PROMPT_PATH
-
-    prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    assert "跨语言比对" in prompt
-
-
-# ---------- 抓错后补取建议条文 ----------
-
-def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
-    from ccitecheck.domain.evidence import ArticleExcerpt
-    from ccitecheck.domain.checks import CheckVerdict
+def test_eu_unfaithful_quote_is_reported_by_application_check(tmp_path: Path, monkeypatch):
     from ccitecheck.domain.statute_results import (
-        StatuteErrorCode, StatuteFinding, StatuteMeaningCheck,
+        LegalApplicationCheck, LegalApplicationReview,
     )
 
     class IssueChecker:
-        def compare(self, claim_text, cited_source, evidence):
-            return StatuteMeaningCheck(
-                verdict=CheckVerdict.ISSUE,
-                findings=[StatuteFinding(
-                    code=StatuteErrorCode.MEANING_DISTORTED,
-                    risk_level="HIGH",
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(
+                verdict="review",
+                reviews=[LegalApplicationReview(
+                    error_type="meaning_distorted",
                     summary="文书写数据可携权，原文是第十七条的删除权，可携权实际规定在第二十条",
-                    suggestion="核实引用的条款号，数据可携权通常对应《通用数据保护条例》第二十条。",
+                    suggestion="引文不忠实于权威原文，请按原文修正。",
                 )],
             )
 
-    fetched = []
-
-    def fake_fetch(celex, number):
-        fetched.append((celex, number))
-        return ArticleExcerpt(
-            article_no=f"Article {number}",
-            article_text="Right to data portability…",
-            relevance_score=1.0,
-        )
-
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "https://eurlex.test")
-    monkeypatch.setattr(verify_claims_module, "fetch_article_excerpt", fake_fetch)
     client = FakeEurLexClientWithDocument(
         records=[GDPR_RECORD],
         article={"text": GDPR_ARTICLE_17, "title": "Regulation (EU) 2016/679", "in_force": True},
     )
     monkeypatch.setattr(
-        verify_claims_module, "build_eu_sources", lambda: [EurLexSource(client=client)]
+        verify_claims_module,
+        "sources_for_jurisdiction",
+        lambda jurisdiction, cn_chain=None: [EurLexSource(client=client)]
+        if jurisdiction == "EU" else cn_chain,
     )
     claim_doc = ClaimDocument(
         claim_meta=ClaimMeta(
@@ -317,9 +305,6 @@ def test_eu_issue_appends_suggested_article(tmp_path: Path, monkeypatch):
         claim_doc, db_path, semantic_checker=IssueChecker(), include_cases=False
     )
     check = frontend_doc.statute_results[0]
-    assert fetched == [("32016R0679", 20)]
-    related = check.evidence.related_articles
-    assert len(related) == 1
-    assert related[0].article_no == "Article 20"
-    # 展示层条号采用欧盟体例
+    assert check.application_check.reviews[0].error_type == "meaning_distorted"
+    assert check.outcome == "review"
     assert check.evidence.article_no == "Article 17"

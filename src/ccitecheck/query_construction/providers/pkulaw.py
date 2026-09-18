@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ...infrastructure.database import normalize_article_key, normalize_title
+from ...domain.law_titles import cn_title_shape_variants
 from ..matching import match_law_record
 
 
@@ -73,11 +74,7 @@ def resolve_law_name(
 
 def _safe_title_variants(title: str) -> list[str]:
     normalized = normalize_title(title)
-    variants = [normalized]
-    short = normalized.removeprefix("中华人民共和国")
-    if short != normalized:
-        variants.append(short)
-    return sorted(set(variants), key=len, reverse=True)
+    return sorted(cn_title_shape_variants(normalized), key=len, reverse=True)
 
 
 __all__ = ["ResolvedLawName", "resolve_law_name"]

@@ -11,28 +11,29 @@ from .models import (
     PkulawLawRecord,
     PkulawMcpError,
     PkulawNotFoundError,
+    PkulawRecognizedLaw,
 )
 from .urls import usable_mcp_url
 
 
 def parse_exact_article(data: Any, requested_article_no: str) -> PkulawArticle:
     item = response_data(data)
+    if isinstance(item, list):
+        item = item[0] if len(item) == 1 else None
     if item is None or (isinstance(item, str) and "未找到" in item):
         raise PkulawNotFoundError("未找到数据")
     if not isinstance(item, dict):
         raise PkulawMcpError("Unexpected get_article response shape")
-    title = first_value(item, "Title", "title")
-    text = first_value(item, "Article", "article")
+    record = flatten_metadata(item)
+    title = first_value(record, "Title", "title")
+    text = first_value(record, "Article", "article", "FullText", "fulltext")
     if not title and not text:
+        raise PkulawNotFoundError("未找到数据")
+    if title and not text:
         raise PkulawNotFoundError("未找到数据")
     if not title or not text:
         raise PkulawMcpError("Pkulaw response is missing title or article text")
-    return PkulawArticle(
-        title=str(title),
-        url=usable_mcp_url(optional_text(first_value(item, "Url", "url"))),
-        article_no=requested_article_no,
-        article_text=strip_article_heading(str(text)),
-    )
+    return article_from_record(parse_law_record(record), requested_article_no, str(text))
 
 
 def parse_case_records(data: Any) -> list[PkulawCaseRecord]:
@@ -42,6 +43,38 @@ def parse_case_records(data: Any) -> list[PkulawCaseRecord]:
         if isinstance(item, dict)
         if (parsed := parse_case_record(item)) is not None
     ]
+
+
+_SEMANTIC_CASE_HEADER = re.compile(
+    r"(?m)^(?P<number>\d+)\.\s+\[[^\]]+\]\s+"
+    r"(?P<title>.+?)[ \t]*\|[ \t]*(?P<case_number>[^\n]*)$"
+)
+
+
+def parse_semantic_case_text(text: str) -> list[PkulawCaseRecord]:
+    """解析北大法宝 search_case 当前返回的可读文本候选。"""
+    headers = list(_SEMANTIC_CASE_HEADER.finditer(text))
+    records: list[PkulawCaseRecord] = []
+    for index, header in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        block = text[header.end():end].strip()
+
+        def field(label: str) -> str:
+            match = re.search(rf"(?:^|\|\s*){re.escape(label)}：([^|\n]+)", block, re.MULTILINE)
+            return match.group(1).strip() if match else ""
+
+        url_match = re.search(r"(?m)^\s*链接：(https?://\S+)", block)
+        fulltext = re.sub(r"(?m)^\s*链接：https?://\S+\s*$", "", block).strip()
+        records.append(PkulawCaseRecord(
+            title=header.group("title").strip(),
+            case_number=header.group("case_number").strip(),
+            court=field("审理法院"),
+            last_instance_date=field("审结日期") or None,
+            url=url_match.group(1) if url_match else None,
+            fulltext=fulltext or None,
+            holding=fulltext or None,
+        ))
+    return records
 
 
 def parse_case_record(item: dict[str, Any]) -> PkulawCaseRecord | None:
@@ -85,11 +118,31 @@ def parse_article_records(data: Any) -> list[PkulawArticle]:
         if not title or not article_text:
             continue
         base = parse_law_record(record)
-        article_no = first_value(record, "ArticleNO", "article_no")
+        article_no = first_value(record, "ArticleNO", "article_no") or article_heading(
+            str(article_text)
+        )
         articles.append(
             article_from_record(base, str(article_no or ""), str(article_text))
         )
     return articles
+
+
+def parse_recognized_laws(data: Any) -> list[PkulawRecognizedLaw]:
+    laws: list[PkulawRecognizedLaw] = []
+    for item in response_records(data):
+        if not isinstance(item, dict):
+            continue
+        canonical = first_value(item, "original", "Original")
+        fulltext = first_value(item, "fulltext", "Fulltext", "FullText")
+        if not canonical or not fulltext:
+            continue
+        laws.append(PkulawRecognizedLaw(
+            mentioned_title=str(first_value(item, "text", "Text") or canonical),
+            canonical_title=str(canonical),
+            fulltext=str(fulltext),
+            url=usable_mcp_url(optional_text(first_value(item, "source", "Source"))),
+        ))
+    return laws
 
 
 def parse_law_record(record: dict[str, Any]) -> PkulawLawRecord:
@@ -97,13 +150,17 @@ def parse_law_record(record: dict[str, Any]) -> PkulawLawRecord:
         title=str(first_value(record, "Title", "title") or ""),
         url=usable_mcp_url(optional_text(first_value(record, "Url", "url"))),
         category=as_list(first_value(record, "Category", "category")),
-        document_no=optional_text(first_value(record, "DocumentNO", "document_no")),
+        document_no=optional_text(
+            first_value(record, "DocumentNO", "document_no", "doc_no")
+        ),
         issue_department=as_list(
             first_value(record, "IssueDepartment", "issue_department")
         ),
         issue_date=optional_text(first_value(record, "IssueDate", "issue_date")),
         implement_date=optional_text(
-            first_value(record, "ImplementDate", "implement_date")
+            first_value(
+                record, "ImplementDate", "implement_date", "implementation_date"
+            )
         ),
         timeliness=as_list(first_value(record, "TimelinessDic", "timeliness")),
         effectiveness=as_list(first_value(record, "EffectivenessDic", "effectiveness")),
@@ -157,13 +214,19 @@ def article_from_record(
     )
 
 
+_ARTICLE_HEADING = re.compile(
+    r"^\s*(?P<number>第[〇零一二三四五六七八九十百千万两0-9]+条"
+    r"(?:之[〇零一二三四五六七八九十百千万两0-9]+)?)[\s　]*"
+)
+
+
+def article_heading(text: str) -> str:
+    match = _ARTICLE_HEADING.match(text)
+    return match.group("number") if match else ""
+
+
 def strip_article_heading(text: str) -> str:
-    return re.sub(
-        r"^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*",
-        "",
-        text,
-        count=1,
-    )
+    return _ARTICLE_HEADING.sub("", text, count=1)
 
 
 def flatten_metadata(record: dict[str, Any]) -> dict[str, Any]:
@@ -205,4 +268,6 @@ __all__ = [
     "parse_case_records",
     "parse_exact_article",
     "parse_law_records",
+    "parse_recognized_laws",
+    "parse_semantic_case_text",
 ]

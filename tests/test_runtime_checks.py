@@ -13,6 +13,7 @@ def test_check_runtime_reports_ready_law_db(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+    monkeypatch.setenv("ANSVAR_MCP_GATEWAY", "")
 
     results = check_runtime(db_path)
 
@@ -23,6 +24,7 @@ def test_check_runtime_reports_ready_law_db(tmp_path: Path, monkeypatch):
     assert "DASHSCOPE_API_KEY" in results[1].message
     assert results[2].ok
     assert results[2].message == "optional fallback not configured"
+    assert results[4].message == "optional multi-jurisdiction source not configured"
 
 
 def test_check_runtime_reports_missing_db(tmp_path: Path):

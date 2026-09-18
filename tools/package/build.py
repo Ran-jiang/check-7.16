@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
+import tomllib
 import urllib.request
 import zipfile
 from datetime import date
@@ -120,24 +120,20 @@ def extract_node(archive: Path, staging: Path, target_platform: str) -> None:
 
 
 def pip_install(python_bin: Path, staging: Path, target_platform: str, cross: bool) -> None:
-    runtime_reqs = [
-        line for line in (REPO / "requirements.txt").read_text().splitlines()
-        if line.strip() and not line.startswith("#") and not line.startswith("pytest")
-    ]
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as reqs:
-        reqs.write("\n".join(runtime_reqs))
-        reqs_path = reqs.name
+    runtime_reqs = tomllib.loads(
+        (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["dependencies"]
     target = staging / "runtime" / "site-packages"
     interpreter = str(python_bin) if python_bin.exists() else sys.executable
     cmd = [interpreter, "-m", "pip", "install", "--quiet", "--no-compile",
-           "--target", str(target), "-r", reqs_path]
+           "--target", str(target)]
     if cross:
         cmd += ["--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12"]
         for pip_platform in PIP_CROSS_PLATFORMS[target_platform]:
             cmd += ["--platform", pip_platform]
+    cmd += runtime_reqs
     log(f"pip 安装依赖（cross={cross}）")
     subprocess.run(cmd, check=True)
-    Path(reqs_path).unlink(missing_ok=True)
 
 
 def npm_vendor(staging: Path) -> None:

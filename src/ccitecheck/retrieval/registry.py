@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .sources.ansvar import AnsvarSource
 from .sources.base import StatuteSource
 from .sources.eurlex import EurLexSource
 from .sources.local_laws import LocalSQLiteSource
@@ -25,6 +26,7 @@ class SourceRegistry:
             "pkulaw": PkulawFallbackSource(),
             "pkulaw_cases": PkulawCaseSource(),
             "eurlex": EurLexSource(),
+            "ansvar": AnsvarSource(),
         })
 
     def get(self, source_id: str) -> SourceAdapter | None:

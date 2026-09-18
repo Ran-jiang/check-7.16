@@ -1,4 +1,4 @@
-"""使用千问将文书引用与已取得的法条证据做语义比较。"""
+"""使用大模型执行法律适用核查、案例核查与检索规划。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
+
+from pydantic import BaseModel, ValidationError
 
 from ..infrastructure.config import load_project_env
 from ..infrastructure.http import (
@@ -17,18 +19,22 @@ from ..infrastructure.http import (
     post_json_with_retry,
 )
 
-from ..domain.evidence import ArticleEvidence
+from ..domain.queries import (
+    QueryExtractionFill,
+    QueryInference,
+    RepairPlan,
+    RerankBatch,
+    RerankCandidate,
+    RetrievalQueryPlan,
+)
 from ..domain.case_results import CaseErrorCode, CaseFinding, CaseHoldingCheck
 from ..domain.checks import CheckVerdict
 from ..domain.revisions import RevisionProposal
 from ..domain.statute_results import (
     LegalApplicationCheck,
     LegalApplicationReview,
-    NestedReferenceMatch,
-    StatuteErrorCode,
-    StatuteFinding,
-    StatuteMeaningCheck,
 )
+from ..query_construction.versioning import explicit_version_hint
 from .legal_application import ApplicationAuthority
 from .markers import strip_internal_markers
 from .reasoning import (
@@ -40,48 +46,58 @@ from .reasoning import (
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-PROMPT_PATH = (
-    Path(__file__).resolve().parent / "prompts" / "statute_meaning_check.md"
-)
 REASONING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_reasoning_check.md"
-REPROPOSAL_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_locator_reproposal.md"
-NESTED_REFERENCE_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "nested_reference_match.md"
 APPLICATION_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_application_check.md"
-_ARTICLE_NO_FORMAT = re.compile(r"第[零一二两三四五六七八九十百千0-9]+条")
-_LLM_ISSUE_TYPES = {
-    "曲解权威文本原意",
-}
+RELATED_PLANNER_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "query_construction" / "prompts" / "related_planner.md"
+)
+REPAIR_PLANNER_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "query_construction" / "prompts" / "repair_planner.md"
+)
+EXTRACTION_FILL_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "query_construction" / "prompts" / "extraction_fill.md"
+)
+QUERY_INFERENCE_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "query_construction" / "prompts" / "query_inference.md"
+)
+RELATED_RERANKER_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "retrieval" / "prompts" / "related_reranker.md"
+)
 _APPLICATION_ERROR_TYPES = {
     "rule_fact_mismatch",
-    "direct_quote_unfaithful",
-    "application_logic_error",
+    "meaning_distorted",
     "legal_alias_inconsistent",
     "format_error",
 }
+_StructuredModel = TypeVar("_StructuredModel", bound=BaseModel)
 
 
 class SemanticChecker(Protocol):
-    def compare(
-        self,
-        claim_text: str,
-        cited_source: str,
-        evidence: ArticleEvidence,
-    ) -> StatuteMeaningCheck: ...
-
     def compare_application(
         self,
         original_text: str,
         authorities: list[ApplicationAuthority],
     ) -> LegalApplicationCheck: ...
 
-    def compare_nested_reference(
-        self,
-        *,
-        parent_source: str,
-        parent_text: str,
-        child_source: str,
-        child_text: str,
-    ) -> NestedReferenceMatch: ...
+    def plan_related(
+        self, *, raw_text: str, raw_title: str, raw_time: str | None,
+        target_name: str,
+    ) -> RetrievalQueryPlan: ...
+
+    def plan_repair(self, **kwargs) -> RepairPlan: ...
+
+    def extract_query_facts(self, **kwargs) -> QueryExtractionFill: ...
+
+    def infer_query(self, **kwargs) -> QueryInference: ...
+
+    def rerank_related(
+        self, query_text: str, candidates: list[RerankCandidate]
+    ) -> RerankBatch: ...
 
 
 class SemanticCheckError(RuntimeError):
@@ -187,79 +203,51 @@ class QwenSemanticChecker:
             provider=option.provider,
         )
 
-    def _chat(self, system_prompt: str, user_content: str) -> str:
+    def _chat(
+        self, system_prompt: str, user_content: str,
+        *, temperature: float | None = None,
+    ) -> str:
         """按厂商协议发起一次对话并返回模型输出文本。"""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
         if self.provider == "dashscope":
+            payload = {
+                "model": self.model, "input": messages, "enable_thinking": False,
+            }
+            if temperature is not None:
+                payload["temperature"] = temperature
             return _extract_output_text(
-                self._post("/responses", {
-                    "model": self.model, "input": messages, "enable_thinking": False,
-                })
+                self._post("/responses", payload)
             )
-        return _extract_chat_text(
-            self._post("/chat/completions", {"model": self.model, "messages": messages})
-        )
-
-    def compare(
-        self,
-        claim_text: str,
-        cited_source: str,
-        evidence: ArticleEvidence,
-    ) -> StatuteMeaningCheck:
-        if not evidence.article_text:
-            raise SemanticCheckError("未取得法条原文，无法进行语义对比")
-
-        user_input = {
-            "claim_text": claim_text,
-            "cited_source": cited_source,
-            "statute_text": evidence.article_text,
-            "source_metadata": _source_metadata(evidence),
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            # DeepSeek V4 默认开启高强度思考。CCitecheck 的这些调用均要求
+            # 结构化 JSON，关闭思考可避免短任务被推理耗时拖至超时。
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
         }
-        output_text = self._chat(
-            PROMPT_PATH.read_text(encoding="utf-8"),
-            json.dumps(user_input, ensure_ascii=False),
+        if temperature is not None:
+            payload["temperature"] = temperature
+        return _extract_chat_text(
+            self._post("/chat/completions", payload)
         )
-        try:
-            raw_comparison = _load_json_object(output_text)
-        except (json.JSONDecodeError, ValueError):
-            repaired = self._chat(
-                "将用户提供的内容修复为一个语义等价、可由 JSON.parse() 直接解析的"
-                "合法 JSON 对象。不得增删事实，不得输出 Markdown 或解释。",
-                output_text,
-            )
-            try:
-                raw_comparison = _load_json_object(repaired)
-            except (json.JSONDecodeError, ValueError) as exc:
-                raise SemanticResponseError(
-                    f"Qwen returned invalid semantic JSON: {exc}"
-                    , "invalid_json"
-                ) from exc
 
-        try:
-            raw_comparison["notes"] = strip_internal_markers(str(raw_comparison.get("notes", "")))
-            for issue in raw_comparison.get("issues", []):
-                if not isinstance(issue, dict) or issue.get("error_type") not in _LLM_ISSUE_TYPES:
-                    raise SemanticResponseError(
-                        "Qwen returned an error_type reserved for deterministic checks",
-                        "invalid_schema",
-                    )
-                for field in ("diff_summary", "suggestion", "revised_text"):
-                    if isinstance(issue.get(field), str):
-                        issue[field] = strip_internal_markers(issue[field])
-                if issue.get("revised_text") == claim_text:
-                    issue["revised_text"] = None
-            comparison = _statute_check_from_raw(raw_comparison)
-            _approve_statute_revisions(comparison, raw_comparison, claim_text)
-            return comparison
-        except SemanticResponseError:
-            raise
-        except ValueError as exc:
-            raise SemanticResponseError(
-                f"Qwen returned invalid semantic JSON: {exc}"
-            ) from exc
+    def verify_location(self, quote: str, current_text: str, candidate_text: str) -> dict:
+        prompt = (
+            "只比较给定引文、当前所引原文和候选原文，禁止凭记忆补写条号。"
+            "判断候选是否完整支持引文，逐项核对主体、条件、数字、否定和法律后果。"
+            "节选及同款拼接可以支持；遗漏必要条件、否定、法律后果不可以。"
+            "返回 JSON：supported 布尔值；differences 为未解释实质差异数组；"
+            "checks 对象含 subject/condition/numbers/negation/consequence 五个布尔值；"
+            "evidence 数组每项含 quote_start/quote_end/source_start/source_end（原字符串字符半开偏移）"
+            "以及逐字对应的 quote/source。证据须覆盖引文所有实质内容。无法确定时 supported=false。"
+        )
+        return _load_json_object(self._chat(prompt, json.dumps({
+            "quote": quote, "current_text": current_text, "candidate_text": candidate_text,
+        }, ensure_ascii=False)))
 
     def compare_application(
         self,
@@ -276,6 +264,7 @@ class QwenSemanticChecker:
         output_text = self._chat(
             APPLICATION_PROMPT_PATH.read_text(encoding="utf-8"),
             json.dumps(user_input, ensure_ascii=False),
+            temperature=0.0,
         )
         try:
             raw = _load_json_object(output_text)
@@ -321,6 +310,7 @@ class QwenSemanticChecker:
                     ],
                 "reasoning_truncated": truncated,
             }, ensure_ascii=False),
+            temperature=0.0,
         )
         raw = _load_json_object(raw_text)
         try:
@@ -328,59 +318,138 @@ class QwenSemanticChecker:
         except (ValueError, TypeError) as exc:
             raise SemanticResponseError(f"Qwen returned invalid case reasoning JSON: {exc}") from exc
 
-    def propose_locator_candidate(
-        self,
-        *,
-        law_title: str,
-        claim_text: str,
-        cited_article_no: str,
-        cited_article_text: str,
-        tried: list[dict[str, str]],
-    ) -> str | None:
-        """已验证候选均不匹配后，携带验证反馈向模型索取下一个候选条号。"""
-        raw_text = self._chat(
-            REPROPOSAL_PROMPT_PATH.read_text(encoding="utf-8"),
-            json.dumps({
-                    "law_title": law_title,
-                    "claim_text": claim_text,
-                    "cited_article": {
-                        "article_no": cited_article_no,
-                        "article_text": cited_article_text,
-                    },
-                "tried_candidates": tried,
-            }, ensure_ascii=False),
+    def plan_related(
+        self, *, raw_text: str, raw_title: str, raw_time: str | None,
+        target_name: str,
+    ) -> RetrievalQueryPlan:
+        return self._structured(
+            RELATED_PLANNER_PROMPT_PATH,
+            {
+                "raw_text": raw_text,
+                "raw_title": raw_title,
+                "raw_time": raw_time,
+                "target_name": target_name,
+            },
+            RetrievalQueryPlan,
+            "related planner",
         )
-        raw = _load_json_object(raw_text)
-        return _valid_article_no(raw.get("candidate_article_no"))
 
-    def compare_nested_reference(
-        self,
-        *,
-        parent_source: str,
-        parent_text: str,
-        child_source: str,
-        child_text: str,
-    ) -> NestedReferenceMatch:
-        """只判断 child 是否为 parent 权威条文实际转引的规则。"""
-        raw = _load_json_object(self._chat(
-            NESTED_REFERENCE_PROMPT_PATH.read_text(encoding="utf-8"),
-            json.dumps({
-                "parent_source": parent_source,
-                "parent_text": parent_text,
-                "child_source": child_source,
-                "child_text": child_text,
-            }, ensure_ascii=False),
-        ))
-        try:
-            return NestedReferenceMatch(
-                verdict=str(raw.get("verdict", "")),
-                matched_locator=_valid_article_no(raw.get("matched_locator")),
-                reason=strip_internal_markers(str(raw.get("reason", ""))),
-            )
-        except ValueError as exc:
+    def extract_query_facts(
+        self, *, claim_text: str, mention: dict, missing_fields: list[str],
+    ) -> QueryExtractionFill:
+        return self._structured(
+            EXTRACTION_FILL_PROMPT_PATH,
+            {
+                "claim_text": claim_text,
+                "mention": mention,
+                "missing_fields": missing_fields,
+            },
+            QueryExtractionFill,
+            "query extraction fill",
+            temperature=0.0,
+        )
+
+    def infer_query(
+        self, *, claim_text: str, context_text: str, extracted: dict,
+        alias_context: dict | None, inherited_context: dict | None,
+        allowed_title_candidates: list[str],
+    ) -> QueryInference:
+        return self._structured(
+            QUERY_INFERENCE_PROMPT_PATH,
+            {
+                "claim_text": claim_text,
+                "context_text": context_text,
+                "extracted": extracted,
+                "alias_context": alias_context,
+                "inherited_context": inherited_context,
+                "allowed_title_candidates": allowed_title_candidates,
+            },
+            QueryInference,
+            "query inference",
+            temperature=0.0,
+        )
+
+    def plan_repair(
+        self, *, raw_text: str, raw_title: str, raw_time: str | None,
+        article_no: str | None, retrieval_status: str,
+        candidate_titles: list[str], fuzzy_candidates: list[str],
+    ) -> RepairPlan:
+        plan = self._structured(
+            REPAIR_PLANNER_PROMPT_PATH,
+            {
+                "raw_text": raw_text,
+                "raw_title": raw_title,
+                "raw_time": raw_time,
+                "article_no": article_no,
+                "retrieval_status": retrieval_status,
+                "candidate_titles": candidate_titles,
+                "fuzzy_candidates": fuzzy_candidates,
+            },
+            RepairPlan,
+            "repair planner",
+        )
+        if plan.retry_request and not plan.retry_request.version_hint:
+            hint = _raw_version_hint(raw_time)
+            if hint:
+                plan = plan.model_copy(update={
+                    "retry_request": plan.retry_request.model_copy(
+                        update={"version_hint": hint}
+                    )
+                })
+        return plan
+
+    def rerank_related(
+        self, query_text: str, candidates: list[RerankCandidate]
+    ) -> RerankBatch:
+        result = self._structured(
+            RELATED_RERANKER_PROMPT_PATH,
+            {
+                "query_text": query_text,
+                "candidates": [item.model_dump(mode="json") for item in candidates],
+            },
+            RerankBatch,
+            "related reranker",
+        )
+        expected = {item.candidate_id for item in candidates}
+        returned = [item.candidate_id for item in result.results]
+        if len(returned) != len(set(returned)) or set(returned) != expected:
             raise SemanticResponseError(
-                f"Qwen returned invalid nested-reference JSON: {exc}"
-            ) from exc
+                "related reranker returned missing, duplicate, or unknown candidate_id",
+                "invalid_schema",
+            )
+        return result
+
+    def _structured(
+        self,
+        prompt_path: Path,
+        payload: dict[str, Any],
+        model_type: type[_StructuredModel],
+        label: str,
+        *,
+        temperature: float = 0.1,
+    ) -> _StructuredModel:
+        output = self._chat(
+            prompt_path.read_text(encoding="utf-8"),
+            json.dumps(payload, ensure_ascii=False),
+            temperature=temperature,
+        )
+        for attempt in range(2):
+            try:
+                return model_type.model_validate(_load_json_object(output))
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+                if attempt:
+                    raise SemanticResponseError(
+                        f"LLM returned invalid {label} JSON: {exc}", "invalid_schema"
+                    ) from exc
+                output = self._chat(
+                    "只修复输入 JSON，使其严格符合给定 JSON Schema。不得增删语义，"
+                    "不得输出 Markdown 或解释。",
+                    json.dumps({
+                        "schema": model_type.model_json_schema(),
+                        "invalid_output": output,
+                    }, ensure_ascii=False),
+                    temperature=0.0,
+                )
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -407,65 +476,9 @@ class QwenSemanticChecker:
             ) from exc
 
 
-def _source_metadata(evidence: ArticleEvidence) -> dict[str, Any]:
-    return {
-        "law_name": evidence.law_title,
-        "article": evidence.article_no,
-        "retrieved_articles": [
-            item.model_dump(mode="json") for item in evidence.related_articles
-        ],
-    }
-
-
-def _approve_statute_revisions(
-    comparison: StatuteMeaningCheck,
-    raw: dict[str, Any],
-    claim_text: str,
-) -> None:
-    """批准仅替换本次完整 claim 的法规语义修订。"""
-    for issue, raw_issue in zip(comparison.findings, raw.get("issues", [])):
-        proposed_text = raw_issue.get("revised_text")
-        if not _safe_llm_revision(claim_text, proposed_text):
-            continue
-        issue.revision = RevisionProposal(
-            strategy="replace_exact_text",
-            original_text=claim_text,
-            revised_text=proposed_text,
-            rationale=issue.suggestion,
-            machine_applicable=True,
-            preconditions=["original_text_unique", "document_unchanged"],
-        )
-
-
 def _risk_level(issue: dict[str, Any]) -> str:
     """模型偶尔返回小写风险等级，统一大写后再交给领域模型校验。"""
     return str(issue.get("risk_level", "")).strip().upper()
-
-
-def _valid_article_no(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped if _ARTICLE_NO_FORMAT.fullmatch(stripped) else None
-
-
-def _statute_check_from_raw(raw: dict[str, Any]) -> StatuteMeaningCheck:
-    findings = []
-    for issue in raw.get("issues", []):
-        finding = StatuteFinding(
-            code=StatuteErrorCode.MEANING_DISTORTED,
-            risk_level=_risk_level(issue),
-            summary=issue["diff_summary"],
-            suggestion=issue["suggestion"],
-            location_recheck_required=bool(issue.get("location_recheck_required", False)),
-            candidate_article_no=_valid_article_no(issue.get("candidate_article_no")),
-        )
-        findings.append(finding)
-    return StatuteMeaningCheck(
-        verdict=CheckVerdict(raw["verdict"]),
-        findings=findings,
-        notes=raw.get("notes", ""),
-    )
 
 
 def _application_check_from_raw(raw: dict[str, Any]) -> LegalApplicationCheck:
@@ -485,7 +498,7 @@ def _application_check_from_raw(raw: dict[str, Any]) -> LegalApplicationCheck:
         reviews.append(LegalApplicationReview(
             error_type=error_type,
             review_level="待核查",
-            summary=strip_internal_markers(str(item["summary"])),
+            summary=_user_text(str(item["summary"]), limit=300),
             suggestion=strip_internal_markers(str(item["suggestion"])),
             related_sources=[
                 strip_internal_markers(str(source)) for source in sources
@@ -496,7 +509,7 @@ def _application_check_from_raw(raw: dict[str, Any]) -> LegalApplicationCheck:
     return LegalApplicationCheck(
         verdict="review" if reviews else "pass",
         reviews=reviews,
-        comparison=strip_internal_markers(str(raw.get("comparison", ""))),
+        comparison=_user_text(str(raw.get("comparison", "")), limit=300),
         notes=(
             strip_internal_markers(str(raw.get("notes", "")))
             if reviews else ""
@@ -531,7 +544,7 @@ def _case_reasoning_check_from_raw(
         judgment = item.get("judgment")
         hits = [hit for hit in item.get("hit_sentence_ids") or [] if isinstance(hit, int)]
         valid_hits = [hit for hit in hits if 1 <= hit <= len(sentences)]
-        if judgment == "supported":
+        if judgment in {"supported", "not_holding"}:
             continue
         if judgment == "distorted" and valid_hits:
             finding = CaseFinding(
@@ -615,6 +628,10 @@ def _safe_llm_revision(original: str, revised: Any) -> bool:
         if pattern.findall(original) != pattern.findall(revised):
             return False
     return True
+
+
+def _raw_version_hint(raw_time: str | None) -> str | None:
+    return explicit_version_hint(raw_time)
 
 
 def _load_json_object(text: str) -> dict[str, Any]:

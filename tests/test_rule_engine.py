@@ -37,6 +37,13 @@ def test_partial_refs_require_legal_predicate():
     assert extract_partial_refs("公司发布的第二款产品完成了第三项任务。") is None
 
 
+def test_standalone_paragraph_after_law_title_is_kept_as_malformed_article_locator():
+    source = extract_legal_sources("《民法典》第100款规定，非法人组织可以确定代表人。")[0]
+
+    assert source.articles[0].article == "第100条"
+    assert source.articles[0].raw_locator == "第100款"
+
+
 # ============================================================
 # 辅助函数：构建测试用的 ParsedDocument
 # ============================================================
@@ -414,6 +421,21 @@ def test_carry_forward_entity_only_not_anchor_chain():
     # 没有任何 claim 跨 2 个以上 anchor
     for c in candidates:
         assert len(c.anchor_ids) == 1, f"claim {c.anchor_ids} should be single-anchor"
+
+
+def test_bare_anaphor_article_inherits_previous_law():
+    doc = _make_parsed_doc([
+        "《中华人民共和国公司法》是公司治理的基本法律。",
+        "该法第十条规定了公司的权利能力。",
+    ])
+
+    candidates = extract_rule_candidates(doc, _make_indexes(doc))
+
+    inherited = next(c for c in candidates if c.anchor_ids == ["line00002"])
+    source = inherited.entities.legal_sources[0]
+    assert source.title == "中华人民共和国公司法"
+    assert source.articles[0].article == "第十条"
+    assert source.recognition.form == "inherited"
 
 
 def test_carry_forward_resets_on_section_change():

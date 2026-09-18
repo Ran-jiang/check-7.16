@@ -19,6 +19,7 @@ import tempfile
 from docx import Document as DocxDocument
 
 from ccitecheck.parsing.docx import (
+    _format_number,
     parse_docx,
 )
 from ccitecheck.domain.document import BlockType
@@ -228,6 +229,24 @@ class TestParsing:
         finally:
             os.unlink(path)
 
+    def test_common_chinese_headings(self):
+        """整段的无编号、阿拉伯数字和中文编号标题均建立章节路径。"""
+        doc = DocxDocument()
+        for text in ("概述", "1.适用范围", "一、劳动者严重违纪"):
+            doc.add_paragraph(text)
+
+        path = _tmp_docx_path()
+        _write_docx(doc, path)
+        try:
+            parsed = parse_docx(path)
+            assert [block.type for block in parsed.blocks] == [
+                BlockType.HEADING,
+                BlockType.HEADING,
+                BlockType.HEADING,
+            ]
+        finally:
+            os.unlink(path)
+
     def test_article_start_detection(self):
         """'第X条' is_article_start 检测。"""
         doc = DocxDocument()
@@ -287,6 +306,11 @@ class TestNormalization:
         assert norm("  leading") == "leading"
         assert norm("trailing  ") == "trailing"
         assert norm("") == ""
+
+    def test_chinese_numbering_uses_shared_converter(self):
+        assert _format_number(0, "chineseCounting") == "零"
+        assert _format_number(101, "chineseCounting") == "一百零一"
+        assert _format_number(10000, "chineseCounting") is None
 
     def test_is_empty_text(self):
         """空白文本判断。"""

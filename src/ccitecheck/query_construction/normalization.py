@@ -3,12 +3,14 @@
 import re
 
 from ..infrastructure.database import normalize_title
+from ..domain.law_titles import canonical_cn_title_shape
 
 _VERSION = re.compile(r"[（(](?P<year>\d{4})\s*年?\s*(?P<kind>修正|修订)[）)]")
 
 
 def normalize_identity_title(value: str) -> str:
-    return normalize_title(value.strip().removeprefix("《").removesuffix("》"))
+    normalized = normalize_title(value.strip().removeprefix("《").removesuffix("》"))
+    return canonical_cn_title_shape(normalized)
 
 
 def split_version_annotation(value: str) -> tuple[str, int | None, str | None]:

@@ -10,12 +10,13 @@ from ..domain.citation import (
     Claim,
 )
 from ..domain.legal_numbers import chinese_number_to_int
+from ..domain.law_titles import cn_title_shape_variants
 from .statutes import COMPACT_ARTICLE_RANGE_PATTERN
 
 _ARTICLE_MENTION = re.compile(
-    r"第[0-9○零一二三四五六七八九十百千两]+条(?:之[0-9○零一二三四五六七八九十]+)?"
+    r"第[0-9○〇零一二三四五六七八九十百千两]+条(?:之[0-9○〇零一二三四五六七八九十]+)?"
 )
-_NUM = r"[0-9○零一二三四五六七八九十百千两]+"
+_NUM = r"[0-9○〇零一二三四五六七八九十百千两]+"
 _ARTICLE_ENUM = re.compile(rf"第(?P<values>{_NUM}(?:[、,，]{_NUM})+)条")
 _ARTICLE_RANGE = re.compile(rf"第(?P<start>{_NUM})条(?:至|到)第?(?P<end>{_NUM})条")
 _RELATIVE_ARTICLE = re.compile(r"前条|该条")
@@ -25,7 +26,7 @@ _ITEM_OCCURRENCE = re.compile(rf"第[（(]?(?P<number>{_NUM})[）)]?项")
 
 def _normalize_article_no(value: str) -> str:
     match = re.fullmatch(
-        r"第(?P<base>[0-9○零一二三四五六七八九十百千两]+)条(?:之(?P<suffix>[0-9○零一二三四五六七八九十]+))?",
+        r"第(?P<base>[0-9○〇零一二三四五六七八九十百千两]+)条(?:之(?P<suffix>[0-9○〇零一二三四五六七八九十]+))?",
         value.strip(),
     )
     if not match:
@@ -125,10 +126,11 @@ def locate_claim_article_spans(claim: Claim) -> None:
     for source in sources:
         if not source.title:
             continue
-        aliases.append((source.title, source.title))
-        short = source.title.removeprefix("中华人民共和国")
-        if short != source.title:
-            aliases.append((short, source.title))
+        for name in (source.title, source.canonical_title):
+            if name:
+                aliases.extend(
+                    (variant, source.title) for variant in cn_title_shape_variants(name)
+                )
     mentions = []
     for start, end, normalized in _raw_mentions(text):
         sentence_start = max(text.rfind(mark, 0, start) for mark in "。！？；;\n") + 1
@@ -140,6 +142,20 @@ def locate_claim_article_spans(claim: Claim) -> None:
         ]
         owner = max(owners)[1] if owners else None
         mentions.append((start, end, normalized, owner))
+    for source in sources:
+        search_start = source.recognition.mention_span[1] if source.recognition.mention_span else 0
+        for article in source.articles:
+            if not article.raw_locator:
+                continue
+            start = text.find(article.raw_locator, search_start)
+            if start >= 0:
+                mentions.append((
+                    start,
+                    start + len(article.raw_locator),
+                    _normalize_article_no(article.article),
+                    source.title,
+                ))
+    mentions.sort()
     claimed_by: dict[str, set[str]] = {}
     for source in sources:
         for article in source.articles:

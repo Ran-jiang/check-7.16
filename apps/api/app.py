@@ -24,6 +24,7 @@ from ccitecheck.application import (
 )
 from ccitecheck.infrastructure.paths import PROJECT_ROOT
 from ccitecheck.infrastructure.config import load_project_env
+from ccitecheck.infrastructure.debug_timing import timing_session
 from ccitecheck.output import summarize_verification
 
 from .docx_text import sanitize_for_docx
@@ -106,6 +107,7 @@ def health() -> dict[str, str | bool]:
         "claim_schema_version": CLAIM_SCHEMA_VERSION,
         "verification_schema_version": VERIFICATION_SCHEMA_VERSION,
         "pkulaw_configured": bool(os.getenv("PKULAW_ACCESS_TOKEN", "").strip()),
+        "ansvar_configured": bool(os.getenv("ANSVAR_MCP_GATEWAY", "").strip()),
         "llm_configured": any(model_api_key(model) for model in SUPPORTED_MODELS),
     }
 
@@ -171,43 +173,46 @@ def _run_document_check(
         "docx_base64_length": len(request.docx_base64),
     })
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="ccitecheck-document-") as temporary_dir:
-            document_path = Path(temporary_dir) / "document.docx"
-            document_path.write_bytes(document_bytes)
-            parsed_document = parse_and_validate_document(document_path)
-            write_json(debug_run_id, "parsed-document.json", parsed_document)
-            claim_document = extract_document_claims(
-                parsed_document,
-                include_statutes=request.include_statutes,
-                include_cases=request.include_cases,
-            )
-            write_json(debug_run_id, "claim-document.json", claim_document)
-            verification = verify_document_claims(
-                claim_document,
-                LAW_DB,
-                semantic_check=request.semantic_check,
-                qwen_model=getattr(request, "model", None),
-                include_statutes=request.include_statutes,
-                include_cases=request.include_cases,
-            )
-    except DocumentPipelineError as exc:
-        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
-        raise
+    with timing_session() as timer:
+        try:
+            with tempfile.TemporaryDirectory(prefix="ccitecheck-document-") as temporary_dir:
+                document_path = Path(temporary_dir) / "document.docx"
+                document_path.write_bytes(document_bytes)
+                with timer.measure("recognition.total"):
+                    parsed_document = parse_and_validate_document(document_path)
+                    write_json(debug_run_id, "parsed-document.json", parsed_document)
+                    claim_document = extract_document_claims(
+                        parsed_document,
+                        include_statutes=request.include_statutes,
+                        include_cases=request.include_cases,
+                    )
+                    write_json(debug_run_id, "claim-document.json", claim_document)
+                verification = verify_document_claims(
+                    claim_document,
+                    LAW_DB,
+                    semantic_check=request.semantic_check,
+                    qwen_model=getattr(request, "model", None),
+                    include_statutes=request.include_statutes,
+                    include_cases=request.include_cases,
+                )
+        except DocumentPipelineError as exc:
+            write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+            raise
 
-    response = DocumentCheckResponse(
-        file_name=Path(request.file_name).name,
-        document_key="sha256:" + hashlib.sha256(document_bytes).hexdigest(),
-        semantic_check=request.semantic_check,
-        summary=summarize_verification(verification),
-        verification=verification,
-        debug_run_id=debug_run_id,
-    )
-    write_json(debug_run_id, "response.json", response)
-    return response
+        with timer.measure("output"):
+            response = DocumentCheckResponse(
+                file_name=Path(request.file_name).name,
+                document_key="sha256:" + hashlib.sha256(document_bytes).hexdigest(),
+                semantic_check=request.semantic_check,
+                summary=summarize_verification(verification),
+                verification=verification,
+                debug_run_id=debug_run_id,
+            )
+            write_json(debug_run_id, "response.json", response)
+        return response
 
 
 @app.post("/api/checks/selection", response_model=DocumentCheckResponse)
@@ -231,49 +236,52 @@ def check_selection(request: SelectionCheckRequest) -> DocumentCheckResponse:
         "debug_docx_base64_length": len(request.debug_docx_base64 or ""),
     })
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="ccitecheck-selection-") as temporary_dir:
-            selection_path = Path(temporary_dir) / "selection.docx"
-            selection_doc = DocxDocument()
-            for line in lines:
-                selection_doc.add_paragraph(sanitize_for_docx(line))
-            selection_doc.save(selection_path)
-            parsed_document = parse_and_validate_document(selection_path)
-            write_json(debug_run_id, "parsed-selection.json", parsed_document)
-            claim_document = extract_document_claims(
-                parsed_document,
-                include_statutes=request.include_statutes,
-                include_cases=request.include_cases,
-            )
-            write_json(debug_run_id, "claim-document.json", claim_document)
-            verification = verify_document_claims(
-                claim_document,
-                LAW_DB,
-                semantic_check=request.semantic_check,
-                qwen_model=getattr(request, "model", None),
-                include_statutes=request.include_statutes,
-                include_cases=request.include_cases,
-            )
-            _rebase_selection_locations(verification, request.source_blocks)
-    except DocumentPipelineError as exc:
-        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
-        raise
+    with timing_session() as timer:
+        try:
+            with tempfile.TemporaryDirectory(prefix="ccitecheck-selection-") as temporary_dir:
+                selection_path = Path(temporary_dir) / "selection.docx"
+                with timer.measure("recognition.total"):
+                    selection_doc = DocxDocument()
+                    for line in lines:
+                        selection_doc.add_paragraph(sanitize_for_docx(line))
+                    selection_doc.save(selection_path)
+                    parsed_document = parse_and_validate_document(selection_path)
+                    write_json(debug_run_id, "parsed-selection.json", parsed_document)
+                    claim_document = extract_document_claims(
+                        parsed_document,
+                        include_statutes=request.include_statutes,
+                        include_cases=request.include_cases,
+                    )
+                    write_json(debug_run_id, "claim-document.json", claim_document)
+                verification = verify_document_claims(
+                    claim_document,
+                    LAW_DB,
+                    semantic_check=request.semantic_check,
+                    qwen_model=getattr(request, "model", None),
+                    include_statutes=request.include_statutes,
+                    include_cases=request.include_cases,
+                )
+                _rebase_selection_locations(verification, request.source_blocks)
+        except DocumentPipelineError as exc:
+            write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            write_json(debug_run_id, "error.json", {"type": type(exc).__name__, "message": str(exc)})
+            raise
 
-    response = DocumentCheckResponse(
-        file_name=f"{Path(request.file_name).name}（选中片段）",
-        document_key="sha256:" + hashlib.sha256(
-            (Path(request.file_name).name + "\0" + request.text).encode("utf-8")
-        ).hexdigest(),
-        semantic_check=request.semantic_check,
-        summary=summarize_verification(verification),
-        verification=verification,
-        debug_run_id=debug_run_id,
-    )
-    write_json(debug_run_id, "response.json", response)
-    return response
+        with timer.measure("output"):
+            response = DocumentCheckResponse(
+                file_name=f"{Path(request.file_name).name}（选中片段）",
+                document_key="sha256:" + hashlib.sha256(
+                    (Path(request.file_name).name + "\0" + request.text).encode("utf-8")
+                ).hexdigest(),
+                semantic_check=request.semantic_check,
+                summary=summarize_verification(verification),
+                verification=verification,
+                debug_run_id=debug_run_id,
+            )
+            write_json(debug_run_id, "response.json", response)
+        return response
 
 
 def _rebase_selection_locations(verification, source_blocks) -> None:

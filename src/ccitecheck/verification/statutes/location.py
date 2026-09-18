@@ -56,40 +56,45 @@ def assess_location(
                     f"条文含多个列项款，无法确定{locator.item_no}所属款",
                 )
             item_index = locator_ordinal(locator.item_no, "项")
-            if item_index is None or item_index > len(paragraph.items):
+            selected_item = next((item for item in paragraph.items if locator_ordinal(item.item_no, "项") == item_index), None)
+            if item_index is None or item_index < 1 or selected_item is None:
                 return LocationAssessment(
                     LocationStatus.INVALID,
                     f"该条共{len(paragraph.items)}项，其中不存在{locator.item_no}",
                 )
-            selected.append(paragraph.items[item_index - 1].text)
+            selected.append(paragraph.introduction + selected_item.text)
             continue
         paragraph_index = locator_ordinal(locator.paragraph_no or "", "款")
-        if paragraph_index is None:
+        if paragraph_index is None or paragraph_index < 1:
             return LocationAssessment(
                 LocationStatus.STRUCTURE_UNAVAILABLE,
                 f"无法识别款编号：{locator.paragraph_no}",
             )
-        if paragraph_index > len(structure.paragraphs) and not structure.paragraph_boundaries_reliable:
+        paragraph = next((
+            item for item in structure.paragraphs
+            if locator_ordinal(item.paragraph_no, "款") == paragraph_index
+        ), None)
+        if paragraph is None and not structure.paragraph_boundaries_reliable:
             return LocationAssessment(
                 LocationStatus.STRUCTURE_UNAVAILABLE,
                 "权威条文未保留足以核验该款号的自然段边界",
             )
-        if paragraph_index > len(structure.paragraphs):
+        if paragraph is None:
             return LocationAssessment(
                 LocationStatus.INVALID,
-                f"权威条文共{len(structure.paragraphs)}款，其中不存在{locator.paragraph_no}",
+                f"权威条文中不存在{locator.paragraph_no}",
             )
-        paragraph = structure.paragraphs[paragraph_index - 1]
         if locator.item_no is None:
             selected.append(paragraph.text)
             continue
         item_index = locator_ordinal(locator.item_no, "项")
-        if item_index is None or item_index > len(paragraph.items):
+        selected_item = next((item for item in paragraph.items if locator_ordinal(item.item_no, "项") == item_index), None)
+        if item_index is None or item_index < 1 or selected_item is None:
             return LocationAssessment(
                 LocationStatus.INVALID,
                 f"{paragraph.paragraph_no}共{len(paragraph.items)}项，其中不存在{locator.item_no}",
             )
-        selected.append(paragraph.items[item_index - 1].text)
+        selected.append(paragraph.introduction + selected_item.text)
     return LocationAssessment(
         LocationStatus.VALID,
         authoritative_text="\n\n".join(selected),

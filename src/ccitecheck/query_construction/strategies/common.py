@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from ...domain.law_titles import canonical_cn_title_shape
 from ...infrastructure.database import normalize_title, strip_version_annotation
 
 
@@ -20,13 +21,13 @@ _EMPTY_CONNECTORS = {"中", "在", "在中", "于", "其中", "对此"}
 
 
 def build_law_title_query(title: str) -> str:
-    return strip_version_annotation(normalize_title(title))
+    return canonical_cn_title_shape(strip_version_annotation(normalize_title(title)))
 
 
 def build_article_exact_title(title: str) -> str:
     # 精确条文查询必须保留“（2020修正）”等版本注记。删除版本后，
     # 同名历史版本会进入候选并可能污染条文与时效信息。
-    return normalize_title(title)
+    return canonical_cn_title_shape(normalize_title(title))
 
 
 def build_article_semantic_fallback_query(title: str, article_no: str) -> str:

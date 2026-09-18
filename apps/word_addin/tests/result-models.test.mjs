@@ -21,9 +21,30 @@ test("new statute results are grouped without reading legacy findings", () => {
     case_results: [],
   })
 
-  assert.equal(cards[0].references[0].type, "层级错误")
+  assert.equal(cards[0].references[0].type, "条款项层级错误")
   assert.equal(cards[0].references[0].state, "issue")
   assert.deepEqual(cards[0].references[0].paragraphs, ["第三款"])
+})
+
+
+test("statute result types use source-specific and prefix-free labels", () => {
+  const cards = buildResultCards({
+    statute_results: [{
+      check_id: "vc_1", card_id: "card_1", display_group_id: "dg_1",
+      claim_id: "claim_1", claim_text: "引用内容", law_title: "GDPR",
+      jurisdiction: "EU", cited_locators: [], outcome: "issue",
+      source_attempts: [{ status: "law_not_found", source_name: "EUR-Lex MCP" }],
+      findings: [{ code: "source_not_found", risk_level: "HIGH" }],
+      application_check: { reviews: [{ error_type: "meaning_distorted" }] },
+      source_locations: [],
+    }],
+    case_results: [],
+  })
+
+  assert.equal(
+    cards[0].references[0].type,
+    "EUR-Lex MCP未检索到所引法源；引文不忠实于权威原文",
+  )
 })
 
 

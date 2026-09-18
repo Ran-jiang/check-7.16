@@ -13,7 +13,7 @@ class RelationItem(Protocol):
 
 
 _PARENT_REPORTING = re.compile(
-    r"^\s*(?:的|之)?(?:明确)?(?:规定|指出|载明|所称|明确)"
+    r"^\s*(?:的|之)?(?:明确)?(?:规定|指出|载明|所称)"
 )
 
 

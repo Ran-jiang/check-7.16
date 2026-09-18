@@ -8,7 +8,9 @@ from ccitecheck.domain.evidence import (
     SourceTier,
     SourceTrace,
 )
-from ccitecheck.domain.runs import RunState
+import pytest
+
+from ccitecheck.domain.runs import RunState, VerificationRun
 from ccitecheck.infrastructure.database import init_db
 from ccitecheck.orchestration import SchedulerContext, verify_claim
 from ccitecheck.retrieval import SourceRegistry
@@ -44,6 +46,13 @@ class CandidateSource:
             metadata={"candidate_titles": ["中华人民共和国正确法"]},
         )
         return LookupResult(LookupStatus.LAW_NOT_FOUND, None, trace)
+
+
+def test_run_state_rejects_invalid_transition():
+    run = VerificationRun(claim_id="claim-1")
+
+    with pytest.raises(ValueError, match="new -> output"):
+        run.transition(RunState.OUTPUT)
 
 
 def test_scheduler_rebuilds_hypothesis_without_mutating_raw_claim(tmp_path: Path):

@@ -73,6 +73,12 @@ def equivalent_case_name(cited: str, authoritative: str) -> bool:
     normalized_authoritative = normalize_case_name(authoritative)
     if normalized_cited == normalized_authoritative:
         return True
+    if (
+        len(normalized_cited) >= 8
+        and "典型案例" in authoritative
+        and normalized_cited in normalized_authoritative
+    ):
+        return True
     cited_guiding_id = guiding_case_id(normalized_cited)
     if cited_guiding_id and cited_guiding_id == guiding_case_id(normalized_authoritative):
         return True

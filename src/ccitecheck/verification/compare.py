@@ -14,7 +14,8 @@ from ..domain.verification import (
     VerificationStatus,
     overall_status,
 )
-from ..infrastructure.database import normalize_article_key, normalize_title
+from ..infrastructure.database import normalize_article_key
+from ..query_construction.matching import equivalent_law_titles
 from .cases.identity import (
     equivalent_case_name,
     normalize_case_number,
@@ -65,10 +66,7 @@ def verify(
     identity_matches = bool(
         raw_title
         and candidate.title
-        and (
-            normalize_title(raw_title) == normalize_title(candidate.title)
-            or normalize_title(candidate.title).endswith(normalize_title(raw_title))
-        )
+        and equivalent_law_titles(raw_title, candidate.title)
     )
     dimensions = {"source_identity": DimensionResult(
         status=(VerificationStatus.MATCH if identity_matches else VerificationStatus.MISMATCH),

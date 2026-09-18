@@ -65,7 +65,7 @@ def test_location_validates_item_inside_its_paragraph():
         [StatuteLocator(article_no="第二条", paragraph_no="第三款", item_no="第二项")],
     )
 
-    assert valid.authoritative_text == "（二）第二项内容。"
+    assert valid.authoritative_text == "第二款引导语：\n（二）第二项内容。"
     assert invalid.status == LocationStatus.INVALID
     assert "第三款共0项" in invalid.message
 
@@ -120,7 +120,7 @@ def test_item_without_paragraph_resolves_within_single_item_paragraph():
         [StatuteLocator(article_no="第五条", item_no="第一项")],
     )
     assert valid.status == LocationStatus.VALID
-    assert valid.authoritative_text.startswith("（一）法律、法规")
+    assert valid.authoritative_text.startswith("本法不适用于：\n（一）法律、法规")
 
     out_of_range = assess_location(
         structure,
@@ -156,23 +156,6 @@ def test_untrusted_single_line_article_stays_structure_unavailable():
         [StatuteLocator(article_no="第九条", paragraph_no="第二款")],
     )
     assert assessment.status == LocationStatus.STRUCTURE_UNAVAILABLE
-
-
-def test_pkulaw_source_also_trusts_single_line_paragraph():
-    """北大法宝与本地库一样以换行保留款边界，其单行条文亦按可靠单款处理。"""
-    from ccitecheck.domain.evidence import SourceTier
-    # 复用应用层判定：LOCAL_SQLITE 与 PKULAW_FALLBACK 均视为款边界可靠
-    reliable = {SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK}
-    assert SourceTier.PKULAW_FALLBACK in reliable
-    assert SourceTier.EURLEX not in reliable
-
-
-def test_pkulaw_source_also_trusts_single_line_paragraph():
-    """北大法宝与本地库一样以换行保留款边界，其单行条文亦按可靠单款处理。"""
-    from ccitecheck.domain.evidence import SourceTier
-    reliable = {SourceTier.LOCAL_SQLITE, SourceTier.PKULAW_FALLBACK}
-    assert SourceTier.PKULAW_FALLBACK in reliable
-    assert SourceTier.EURLEX not in reliable
 
 
 def test_reference_modifiers_stripped_from_bare_law_name():

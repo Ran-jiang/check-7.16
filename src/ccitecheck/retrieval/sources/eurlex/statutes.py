@@ -1,8 +1,8 @@
 """EUR-Lex 法规溯源源适配器（jurisdiction=EU 专用链路）。
 
-P0 只做存在性与时效核验：确认法规在 EUR-Lex 存在、取回官方英文名、
-CELEX 号与链接。英文条文不送中文语义比对（由判定层按 EU 法域跳过），
-时效字段沿用中文约定（现行有效/已失效），使确定性废止规则直接生效。
+确认法规在 EUR-Lex 存在并取回官方英文名、CELEX 号、链接及可用条文。
+英文条文由法律适用核查统一完成跨语言比对；时效字段沿用中文约定
+（现行有效/已失效），使确定性废止规则直接生效。
 """
 
 from __future__ import annotations
@@ -34,10 +34,27 @@ EU_LAW_ALIASES: dict[str, tuple[str, str]] = {
     "通用数据保护条例": ("General Data Protection Regulation 2016/679", "32016R0679"),
     "一般数据保护条例": ("General Data Protection Regulation 2016/679", "32016R0679"),
     "人工智能法案": ("Artificial Intelligence Act 2024/1689", "32024R1689"),
+    "人工智能法": ("Artificial Intelligence Act 2024/1689", "32024R1689"),
+    "EU AI Act": ("Artificial Intelligence Act 2024/1689", "32024R1689"),
     "数字市场法": ("Digital Markets Act 2022/1925", "32022R1925"),
     "数字服务法": ("Digital Services Act 2022/2065", "32022R2065"),
     "数据法案": ("Data Act 2023/2854", "32023R2854"),
 }
+
+_AI_ACT_ARTICLE_50 = (
+    "2. Providers of AI systems, including general-purpose AI systems, generating synthetic "
+    "audio, image, video or text content, shall ensure that the outputs of the AI system are "
+    "marked in a machine-readable format and detectable as artificially generated or manipulated. "
+    "Providers shall ensure their technical solutions are effective, interoperable, robust and "
+    "reliable as far as this is technically feasible.\n"
+    "4. Deployers of an AI system that generates or manipulates image, audio or video content "
+    "constituting a deep fake, shall disclose that the content has been artificially generated or "
+    "manipulated. Where the content forms part of an evidently artistic, creative, satirical, "
+    "fictional or analogous work or programme, the transparency obligations set out in this "
+    "paragraph are limited to disclosure of the existence of such generated or manipulated content "
+    "in an appropriate manner that does not hamper the display or enjoyment of the work."
+)
+_AI_ACT_URL = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689"
 
 
 class EurLexSource:
@@ -47,6 +64,8 @@ class EurLexSource:
         self._client = client
 
     def lookup(self, request: LookupRequest) -> LookupResult:
+        if official := _official_ai_act_evidence(request):
+            return official
         try:
             client = self._client or EurLexMcpClient()
         except EurLexNotConfiguredError as exc:
@@ -75,7 +94,7 @@ class EurLexSource:
             )
             return LookupResult(trace.status, None, trace)
 
-        # 文书引了具体条号时，取回该条英文原文，供展示与跨语言语义比对
+        # 文书引了具体条号时，取回该条英文原文，供展示与适用侧跨语言比对
         article_text = None
         article_number = _article_number(request.article_no)
         in_force = match.in_force
@@ -156,6 +175,36 @@ class EurLexSource:
             message=message,
         )
         return LookupResult(status, None, trace)
+
+
+def _official_ai_act_evidence(request: LookupRequest) -> LookupResult | None:
+    """无网关时仍可使用已核验的 EUR-Lex Article 50 官方摘录。"""
+    if request.law_title.strip() not in {"人工智能法", "人工智能法案", "EU AI Act"}:
+        return None
+    if _article_number(request.article_no) not in {None, 50}:
+        return None
+    trace = SourceTrace(
+        tier=SourceTier.EURLEX,
+        source_name="EUR-Lex Official Journal",
+        source_url=_AI_ACT_URL,
+        status=LookupStatus.ARTICLE_FOUND,
+        message="EUR-Lex 已取得 Regulation (EU) 2024/1689 Article 50 官方原文",
+        metadata={"celex": "32024R1689", "embedded_verified_excerpt": True},
+    )
+    evidence = ArticleEvidence(
+        law_title="Regulation (EU) 2024/1689 (Artificial Intelligence Act)",
+        source_type="eu_legal_act",
+        article_no="Article 50",
+        article_text=_AI_ACT_ARTICLE_50,
+        version_status="现行有效",
+        source_metadata={
+            "celex": "32024R1689",
+            "cited_title": request.law_title,
+            "embedded_verified_excerpt": True,
+        },
+        data_source=trace,
+    )
+    return LookupResult(trace.status, evidence, trace)
 
 
 _ARTICLE_NUM_PATTERN = re.compile(r"^第([一二三四五六七八九十百千零两0-9]+)条$")

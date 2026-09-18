@@ -5,13 +5,12 @@ import {
   stripRepeatedArticleHeading,
 } from "./view-model.js"
 import { caseTypeOf, caseViewOf, CASE_STATUS_LABELS } from "./case-view-model.js"
-import { formatReference, statuteViewOf, LOOKUP_STATUS_LABELS } from "./statute-view-model.js"
+import { formatReference, statuteViewOf } from "./statute-view-model.js"
 import { buildResultCards } from "./result-models.js"
 
 export {
   BADGE_TEXT,
   CASE_STATUS_LABELS,
-  LOOKUP_STATUS_LABELS,
   caseTypeOf,
   formatReference,
   orderChecksByCitation,
@@ -25,6 +24,12 @@ const REFERENCE_ROLE_LABELS = { nested: "内部转引", carry_forward: "承前�
 
 function viewOf(check, options = {}) {
   return check.check_kind === "case" ? caseViewOf(check, options) : statuteViewOf(check, options)
+}
+
+export function stateMatchesFilter(state, filter) {
+  return filter === "all"
+    || state === filter
+    || (filter === "pending" && ["review", "bug"].includes(state))
 }
 
 export class CheckUi {
@@ -126,6 +131,7 @@ export class CheckUi {
         : [item]),
     ]
     const title = document.getElementById("results-title")
+    const pending = (summary.reviews || 0) + (summary.bugs || 0)
     title.replaceChildren(
       element("span", "title-main", "核查完成！发现引用句"),
       element("em", "title-count", String(summary.card_total)),
@@ -136,9 +142,7 @@ export class CheckUi {
       element("span", "title-main", "处已通过，"),
       element("em", "title-count", String(summary.issues)),
       element("span", "title-main", "处未通过，"),
-      element("em", "title-count", String(summary.reviews || 0)),
-      element("span", "title-main", "处待核查，"),
-      element("em", "title-count", String(summary.bugs)),
+      element("em", "title-count", String(pending)),
       element("span", "title-main", "处待核实")
     )
     document.getElementById("results-subtitle").textContent = options.snapshotAt
@@ -154,11 +158,11 @@ export class CheckUi {
 
   renderStatusFilter(summary) {
     const container = document.getElementById("status-filter")
+    const pending = (summary.reviews || 0) + (summary.bugs || 0)
     const options = [
       ["all", "全部", summary.total],
       ["issue", "未通过", summary.issues],
-      ["review", "待核查", summary.reviews || 0],
-      ["bug", "待核实", summary.bugs],
+      ["pending", "待核实", pending],
       ["pass", "已通过", summary.passed],
     ]
     container.replaceChildren()
@@ -211,7 +215,7 @@ export class CheckUi {
     list.replaceChildren()
     const visible = this.cards.filter(item => {
       const checks = item.check_kind === "statute-group" ? item.references : [item]
-      if (this.statusFilter !== "all" && !checks.some(check => check.outcome === this.statusFilter)) return false
+      if (!checks.some(check => stateMatchesFilter(check.outcome, this.statusFilter))) return false
       if (!this.typeFilter) return true
       return checks.some(check => viewOf(check).typeTags.includes(this.typeFilter) ||
         (check.check_kind === "case" && caseTypeOf(check) === this.typeFilter))
@@ -263,12 +267,10 @@ export class CheckUi {
     const primaryViews = views.filter(view => view.raw.reference_role !== "nested")
     const nestedCount = views.length - primaryViews.length
     const issueCount = primaryViews.filter(view => view.state === "issue").length
-    const reviewCount = primaryViews.filter(view => view.state === "review").length
-    const bugCount = primaryViews.filter(view => view.state === "bug").length
+    const pendingCount = primaryViews.filter(view => ["review", "bug"].includes(view.state)).length
     const passCount = primaryViews.filter(view => view.state === "pass").length
     if (issueCount) counts.append(element("span", "count-issue", `${issueCount} 未通过`))
-    if (reviewCount) counts.append(element("span", "count-review", `${reviewCount} 待核查`))
-    if (bugCount) counts.append(element("span", "count-bug", `${bugCount} 待核实`))
+    if (pendingCount) counts.append(element("span", "count-review", `${pendingCount} 待核实`))
     if (passCount) counts.append(element("span", "count-pass", `${passCount} 通过`))
     if (nestedCount) counts.append(element("span", "count-nested", `${nestedCount} 内部转引`))
     top.append(counts)

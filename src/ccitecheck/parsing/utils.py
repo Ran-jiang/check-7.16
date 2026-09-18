@@ -117,6 +117,11 @@ def estimate_tokens(text: str) -> int:
 # ---- 编号解析工具 ----
 
 
+ARTICLE_START_PATTERN = re.compile(
+    r"^第[一二三四五六七八九十百千零〇\d]+条"
+)
+
+
 def is_article_start(text: str) -> bool:
     """
     检测段落是否为"第X条"起始。
@@ -129,8 +134,7 @@ def is_article_start(text: str) -> bool:
     Returns:
         True 如果文本匹配第X条格式
     """
-    pattern = r"^第[一二三四五六七八九十百千零〇\d]+条"
-    return bool(re.match(pattern, text))
+    return bool(ARTICLE_START_PATTERN.match(text))
 
 
 def detect_chinese_list_item(text: str) -> bool:

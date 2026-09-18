@@ -1,15 +1,15 @@
 // 结果页共享视觉工具；不解释法规或案例业务状态。
 
-export const BADGE_TEXT = { pass: "通过", issue: "未通过", review: "待核查", bug: "待核实" }
+export const BADGE_TEXT = { pass: "通过", issue: "未通过", review: "待核实", bug: "待核实" }
 
 export function sourceUrlOf(check) {
-  const raw = check.evidence?.data_source?.source_url || check.evidence?.url || ""
+  const raw = check.evidence?.data_source?.source_url || check.evidence?.url || check.evidence?.related_articles?.find(item => item.source_url)?.source_url || check.correction_evidence?.data_source?.source_url || ""
   const match = String(raw).match(/\((https?:\/\/[^)]+)\)/)
   const url = match ? match[1] : String(raw).startsWith("http") ? String(raw) : ""
   try {
     const parsed = new URL(url)
     const legacy = parsed.pathname.startsWith("/lar/") && parsed.searchParams.get("way") === "mcp"
-    const trusted = /(^|\.)pkulaw\.com$/i.test(parsed.hostname) || /(^|\.)europa\.eu$/i.test(parsed.hostname)
+    const trusted = /(^|\.)pkulaw\.com$/i.test(parsed.hostname) || /(^|\.)europa\.eu$/i.test(parsed.hostname) || /(^|\.)lawinfochina\.com$/i.test(parsed.hostname) || /\.gov\.cn$/i.test(parsed.hostname)
     return trusted && !legacy ? url : ""
   } catch {
     return ""

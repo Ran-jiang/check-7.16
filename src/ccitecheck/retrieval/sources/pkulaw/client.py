@@ -8,18 +8,18 @@ from __future__ import annotations
 import json
 import os
 import re
-import socket
-import ssl
 import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Optional
 
+import httpx
+
 from ....domain.legal_numbers import int_to_chinese_number
+from ....infrastructure.database import normalize_article_key
 
 from ....infrastructure.config import load_project_env
 from ....infrastructure.http import default_ssl_context
+from ....infrastructure.debug_timing import measure
 from ....query_construction.strategies.common import build_article_semantic_fallback_query
 from .models import (
     PkulawArticle,
@@ -28,12 +28,15 @@ from .models import (
     PkulawMcpError,
     PkulawNotConfiguredError,
     PkulawNotFoundError,
+    PkulawRecognizedLaw,
 )
 from .parsing import (
     parse_article_records as _parse_article_search_response,
     parse_case_records as _parse_case_list_response,
+    parse_semantic_case_text as _parse_semantic_case_text,
     parse_exact_article as _parse_get_article_response,
     parse_law_records as _parse_law_list_response,
+    parse_recognized_laws as _parse_law_recognition_response,
 )
 
 
@@ -41,9 +44,34 @@ DEFAULT_GATEWAY = "https://apim-gateway.pkulaw.com"
 MCP_ENDPOINTS = {
     "law_keyword": "/mcp-law",
     "law_semantic": "/mcp-law-search-service",
+    "law_item": "/mcp-fatiao",
+    "law_recognition": "/law_recognition",
     "case_keyword": "/mcp-case",
     "case_semantic": "/mcp-case-search-service",
 }
+
+_PKULAW_HTTP_CLIENT: httpx.Client | None = None
+_PKULAW_HTTP_CLIENT_LOCK = threading.Lock()
+
+
+def pkulaw_http_client() -> httpx.Client:
+    """北大法宝专用直连连接池，不与 LLM 连接或 macOS 显式代理混用。"""
+    global _PKULAW_HTTP_CLIENT
+    if _PKULAW_HTTP_CLIENT is None:
+        with _PKULAW_HTTP_CLIENT_LOCK:
+            if _PKULAW_HTTP_CLIENT is None:
+                _PKULAW_HTTP_CLIENT = httpx.Client(
+                    verify=default_ssl_context(),
+                    trust_env=False,
+                    limits=httpx.Limits(
+                        # 本机 TUN/法宝网关在并发 TLS 握手时会间歇超时；
+                        # 单连接复用更稳定，且不会改变上层任务并行模型。
+                        max_connections=1,
+                        max_keepalive_connections=1,
+                        keepalive_expiry=60.0,
+                    ),
+                )
+    return _PKULAW_HTTP_CLIENT
 
 
 class PkulawMcpClient:
@@ -61,15 +89,23 @@ class PkulawMcpClient:
             gateway or os.getenv("PKULAW_MCP_GATEWAY") or DEFAULT_GATEWAY
         ).rstrip("/")
         self.timeout = timeout
+        self.connect_timeout = float(
+            os.getenv("PKULAW_CONNECT_TIMEOUT_SECONDS", "15")
+        )
+        self.read_timeout = float(
+            os.getenv("PKULAW_READ_TIMEOUT_SECONDS", str(max(timeout, 30)))
+        )
         self._initial_probe = True
         self._probe_lock = threading.Lock()
+        self._request_lock = threading.Lock()
         self._circuit_lock = threading.Lock()
         self._circuit_open_until = 0.0
         self._circuit_message = ""
 
     def get_article(self, title: str, article_no: str) -> PkulawArticle:
         normalized = normalize_article_no(article_no)
-        payload = self._call_tool(
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_semantic",
             endpoint=MCP_ENDPOINTS["law_semantic"],
             tool_name="get_article",
             arguments={"title": title, "number": normalized},
@@ -77,12 +113,25 @@ class PkulawMcpClient:
         data = _extract_payload_data(payload)
         return _parse_get_article_response(data, normalized)
 
+    def get_law_item_content(self, title: str, article_no: str) -> PkulawArticle:
+        number = normalize_article_key(article_no).replace("-", ".")
+        if not re.fullmatch(r"\d+(?:\.\d+)?", number):
+            raise PkulawMcpError(f"invalid article number: {article_no}")
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_law_item",
+            endpoint=MCP_ENDPOINTS["law_item"],
+            tool_name="get_law_item_content",
+            arguments={"title": title, "tiao_num": number},
+        )
+        return _parse_get_article_response(_extract_payload_data(payload), article_no)
+
     def get_law_list(
         self, title: str = "", fulltext: str = ""
     ) -> list[PkulawLawRecord]:
         if not title and not fulltext:
             raise PkulawMcpError("title or fulltext is required")
-        payload = self._call_tool(
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_keyword",
             endpoint=MCP_ENDPOINTS["law_keyword"],
             tool_name="get_law_list",
             arguments={"title": title, "fulltext": fulltext},
@@ -93,7 +142,8 @@ class PkulawMcpClient:
     def search_law_articles(self, text: str) -> list[PkulawArticle]:
         if not text.strip():
             raise PkulawMcpError("semantic law query is required")
-        payload = self._call_tool(
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_semantic",
             endpoint=MCP_ENDPOINTS["law_semantic"],
             tool_name="search_article",
             arguments={"text": text},
@@ -108,12 +158,24 @@ class PkulawMcpClient:
             build_article_semantic_fallback_query(title, article_no)
         )
 
+    def recognize_laws(self, text: str) -> list[PkulawRecognizedLaw]:
+        if not text.strip():
+            raise PkulawMcpError("law recognition text is required")
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_recognition",
+            endpoint=MCP_ENDPOINTS["law_recognition"],
+            tool_name="law_recognition",
+            arguments={"text": text},
+        )
+        return _parse_law_recognition_response(_extract_payload_data(payload))
+
     def get_case_list(
         self, title: str = "", fulltext: str = ""
     ) -> list[PkulawCaseRecord]:
         if not title and not fulltext:
             raise PkulawMcpError("case title or fulltext is required")
-        payload = self._call_tool(
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_keyword",
             endpoint=MCP_ENDPOINTS["case_keyword"],
             tool_name="get_case_list",
             # 网关的 schema 是扁平且全小写的 title/fulltext。包成 ``caseInput``
@@ -127,13 +189,28 @@ class PkulawMcpClient:
     def search_cases(self, text: str) -> list[PkulawCaseRecord]:
         if not text.strip():
             raise PkulawMcpError("semantic case query is required")
-        payload = self._call_tool(
+        payload = self._timed_call_tool(
+            "retrieval.pkulaw_semantic",
             endpoint=MCP_ENDPOINTS["case_semantic"],
             tool_name="search_case",
             arguments={"text": text},
         )
-        data = _extract_payload_data(payload)
-        return _parse_case_list_response(data)
+        data = _extract_payload_data(payload, allow_text=True)
+        return (
+            _parse_semantic_case_text(data)
+            if isinstance(data, str)
+            else _parse_case_list_response(data)
+        )
+
+    def _timed_call_tool(
+        self,
+        timing_name: str,
+        endpoint: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        with measure(timing_name):
+            return self._call_tool(endpoint, tool_name, arguments)
 
     def _call_tool(
         self, endpoint: str, tool_name: str, arguments: dict[str, Any]
@@ -148,11 +225,23 @@ class PkulawMcpClient:
                 self._raise_if_circuit_open()
                 if self._initial_probe:
                     try:
-                        return self._perform_tool_call(endpoint, tool_name, arguments)
+                        return self._serialized_tool_call(endpoint, tool_name, arguments)
                     finally:
                         self._initial_probe = False
         self._raise_if_circuit_open()
-        return self._perform_tool_call(endpoint, tool_name, arguments)
+        return self._serialized_tool_call(endpoint, tool_name, arguments)
+
+    def _serialized_tool_call(
+        self, endpoint: str, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
+        """串行复用一条 TLS 连接，避免并发握手触发网关超时。"""
+        with measure("retrieval.pkulaw_queue_wait"):
+            self._request_lock.acquire()
+        try:
+            self._raise_if_circuit_open()
+            return self._perform_tool_call(endpoint, tool_name, arguments)
+        finally:
+            self._request_lock.release()
 
     def _perform_tool_call(
         self, endpoint: str, tool_name: str, arguments: dict[str, Any]
@@ -167,42 +256,54 @@ class PkulawMcpClient:
                 "arguments": arguments,
             },
         }
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.access_token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2025-06-18",
-            },
-            method="POST",
-        )
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-06-18",
+        }
         # 网络抖动/网关 5xx 退避重试；"未找到数据"是成功响应，不会走到这里。
         # 重试耗尽后抛 PkulawMcpError → 上游只报"无法判断"，绝不误判"法源不存在"。
         last_error: Exception | None = None
+        last_failure_was_service_error = False
         for attempt in range(3):
             if attempt:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
             try:
-                with urllib.request.urlopen(
-                    request, timeout=self.timeout, context=default_ssl_context()
-                ) as response:
-                    raw = response.read().decode("utf-8")
-                return _parse_mcp_response(raw)
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                last_error = PkulawMcpError(_http_error_message(exc.code, detail))
-                if exc.code < 500:  # 4xx 是配置/鉴权问题，重试无意义
-                    if exc.code in {401, 403, 429}:
-                        self._open_circuit(last_error, 300 if exc.code in {401, 403} else 60)
-                    raise last_error from exc
-            except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError) as exc:
-                reason = getattr(exc, "reason", exc)
-                last_error = PkulawMcpError(f"北大法宝网络请求失败：{reason}")
+                response = pkulaw_http_client().post(
+                    url,
+                    content=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+                    headers=headers,
+                    timeout=httpx.Timeout(
+                        connect=self.connect_timeout,
+                        read=self.read_timeout,
+                        write=min(float(self.timeout), 15.0),
+                        pool=min(float(self.timeout), 10.0),
+                    ),
+                )
+                if response.status_code >= 400:
+                    last_error = PkulawMcpError(
+                        _http_error_message(response.status_code, response.text)
+                    )
+                    if response.status_code < 500:  # 4xx 是配置/鉴权问题，重试无意义
+                        if response.status_code in {401, 403, 429}:
+                            self._open_circuit(
+                                last_error,
+                                300 if response.status_code in {401, 403} else 60,
+                            )
+                        raise last_error
+                    last_failure_was_service_error = True
+                    continue
+                return _parse_mcp_response(response.text)
+            except httpx.HTTPError as exc:
+                last_failure_was_service_error = False
+                last_error = PkulawMcpError(f"北大法宝网络请求失败：{exc}")
         if last_error is None:  # pragma: no cover - 循环固定至少执行一次
             last_error = PkulawMcpError("北大法宝数据源调用失败")
-        self._open_circuit(last_error, 30)
+        # 连接/TLS 抖动只影响当前请求，不得连带阻断本次文档其余法规与案例。
+        # 只有已确认的网关 5xx 才做短时熔断；鉴权与额度已在上面单独处理。
+        if last_failure_was_service_error:
+            self._open_circuit(last_error, 30)
         raise last_error
 
     def _raise_if_circuit_open(self) -> None:
@@ -252,7 +353,7 @@ def _parse_mcp_response(raw: str) -> Any:
     return json.loads(text)
 
 
-def _extract_payload_data(payload: Any) -> Any:
+def _extract_payload_data(payload: Any, *, allow_text: bool = False) -> Any:
     if isinstance(payload, dict) and "error" in payload:
         raise PkulawMcpError(str(payload["error"]))
     result = payload.get("result") if isinstance(payload, dict) else payload
@@ -272,6 +373,8 @@ def _extract_payload_data(payload: Any) -> Any:
                 # pydantic 校验错误），归类为"检索完成但未找到"
                 if is_error and ("input_value=None" in text or "未找到" in text):
                     raise PkulawNotFoundError("未找到数据") from None
+                if allow_text:
+                    return text
                 raise PkulawMcpError(text[:300]) from None
     if is_error:
         raise PkulawMcpError("Pkulaw tool returned an error without detail")

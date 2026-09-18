@@ -89,6 +89,20 @@ class TestPseudoHeading:
         level, source = result
         assert level == 2
 
+    def test_compact_numbered_heading(self):
+        assert is_pseudo_heading("1.概述")[0] == 1
+
+    def test_chinese_numbered_heading(self):
+        assert is_pseudo_heading("一、概述")[0] == 1
+        assert is_pseudo_heading("一、劳动者严重违纪")[0] == 1
+
+    def test_punctuated_chinese_item_is_not_heading(self):
+        assert is_pseudo_heading("一、劳动者严重违纪；") is None
+
+    def test_explicit_unnumbered_headings(self):
+        for text in ("概述", "前言", "引言", "总结", "结语", "附录"):
+            assert is_pseudo_heading(text)[0] == 1
+
     def test_long_text_not_heading(self):
         """超过40字的段落不识别为伪标题。"""
         long_text = "第X章 " + "很" * 50

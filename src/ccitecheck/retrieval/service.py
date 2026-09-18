@@ -34,9 +34,11 @@ from .sources.pkulaw.models import PkulawNotFoundError
 from .sources.pkulaw.statutes import PkulawFallbackSource
 
 try:
-    DEFAULT_LOOKUP_WORKERS = max(1, int(os.getenv("PKULAW_LOOKUP_WORKERS", "8") or "8"))
+    DEFAULT_LOOKUP_WORKERS = max(
+        1, min(4, int(os.getenv("PKULAW_LOOKUP_WORKERS", "4") or "4"))
+    )
 except ValueError:
-    DEFAULT_LOOKUP_WORKERS = 8
+    DEFAULT_LOOKUP_WORKERS = 4
 
 
 def build_default_sources(
@@ -53,10 +55,46 @@ def build_default_sources(
 
 
 def build_eu_sources() -> list[StatuteSource]:
-    """创建欧盟法规溯源链：只走 EUR-Lex，不进中国法链白查。"""
+    """创建欧盟法规溯源链：EUR-Lex 为主，Ansvar 作补充检索/复核。"""
+    from .sources.ansvar import AnsvarSource
     from .sources.eurlex import EurLexSource
 
-    return [EurLexSource()]
+    return [EurLexSource(), AnsvarSource()]
+
+
+def build_ansvar_sources() -> list[StatuteSource]:
+    """具体涉外法域（DE/FR/JP/GB/US-CA…）溯源链：走 Ansvar。"""
+    from .sources.ansvar import AnsvarSource
+
+    return [AnsvarSource()]
+
+
+def sources_for_jurisdiction(
+    jurisdiction: str,
+    *,
+    cn_chain: list[StatuteSource] | None = None,
+) -> list[StatuteSource]:
+    """按法域返回对应来源链，保证首次检索与修复重试用同一链。
+
+    - CN → 本地库 + 北大法宝（cn_chain，由 Scheduler 注入含本地库路径）
+    - EU → EUR-Lex + Ansvar 补充
+    - 具体涉外法域 → Ansvar
+    - UNKNOWN → 空链（不自动检索，保留人工核查入口）
+    """
+    if jurisdiction == "EU":
+        return build_eu_sources()
+    if jurisdiction == "CN":
+        return cn_chain or build_default_sources(_default_db_path())
+    if jurisdiction in {"UNKNOWN", "FOREIGN"}:
+        return []
+    return build_ansvar_sources()
+
+
+def _default_db_path() -> str:
+    # ponytail: 延迟取默认库路径，避免模块加载期硬编码
+    from ..infrastructure.paths import PROJECT_ROOT
+
+    return str(PROJECT_ROOT / "data" / "laws.db")
 
 
 def execute_source(source: StatuteSource, request: LookupRequest) -> LookupResult:
@@ -95,11 +133,14 @@ def execute(
 ) -> RetrievalEvidence:
     """按指定 hypothesis 和 source 执行一次可追溯检索。"""
     source = task.source or (registry.get(source_id) if registry else None)
-    identity = task.identity_title or next(
+    query_plan = hypothesis.query_plan
+    identity = task.identity_title or (query_plan.target_name if query_plan else None) or next(
         (item.title for item in hypothesis.identity_candidates), ""
     )
     locator = hypothesis.normalized_locator
-    article_no = locator.article_raw if locator else None
+    article_no = (
+        query_plan.article_no if query_plan else None
+    ) or (locator.article_raw if locator else None)
     submitted = (
         {
             "case_number": task.case_number,
@@ -112,6 +153,13 @@ def execute(
             "law_title": identity,
             "article_no": article_no,
             "context_text": task.context_text,
+            "query_text": query_plan.query_text if query_plan else None,
+            "version_hint": query_plan.version_hint if query_plan else None,
+            "existence_only": bool(
+                query_plan
+                and query_plan.route == "statute_related"
+                and query_plan.query_text is None
+            ),
         }
     )
     if source is None:
@@ -151,7 +199,7 @@ def execute(
         candidates.extend(EvidenceCandidate(
             kind="statute",
             title=evidence.law_title,
-            locator=item.article_no,
+            locator=item.locator or item.article_no,
             text=item.article_text,
             source_url=result.trace.source_url,
             metadata={"relevance_score": item.relevance_score},
@@ -260,8 +308,10 @@ def _execute_case(
 
 __all__ = [
     "RetrievalTask",
+    "build_ansvar_sources",
     "build_default_sources",
     "build_eu_sources",
     "execute",
     "execute_source",
+    "sources_for_jurisdiction",
 ]

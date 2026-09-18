@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+import re
 from typing import Optional, Protocol
 
 from ....domain.evidence import (
@@ -13,6 +14,7 @@ from ....domain.evidence import (
     SourceTier,
     SourceTrace,
 )
+from ....domain.law_titles import cn_title_shape_key, cn_title_shape_variants
 from ....query_construction.strategies.common import (
     build_article_exact_title,
     build_law_semantic_query,
@@ -30,8 +32,10 @@ from .client import (
     PkulawNotFoundError,
     normalize_article_no,
 )
-from ....query_construction.matching import match_law_record
+from .corpus import ParsedCorpus, split_recognized_fulltext
+from ....query_construction.matching import equivalent_law_titles, match_law_record
 from ....infrastructure.database import normalize_title, strip_version_annotation
+from ....infrastructure.debug_timing import bind_current_timer, measure
 
 
 class PkulawFallbackSource:
@@ -39,20 +43,21 @@ class PkulawFallbackSource:
         self.client = client
 
     def _recall_similar_titles(self, law_title: str) -> list[str]:
-        """精确法名未命中时，用递减前缀召回法宝中的近似法名（如文书漏字），
-        供上层相似度提示"疑似应为《…》"。最多两次前缀查询。"""
-        core = strip_version_annotation(normalize_title(law_title)).replace(
-            "中华人民共和国", "", 1
-        )
+        """精确法名未命中时，用两段递减前缀和一段后缀召回近似法名。"""
+        core = cn_title_shape_key(strip_version_annotation(normalize_title(law_title)))
         if len(core) < 6:
             return []
         titles: list[str] = []
         seen: set[str] = set()
-        for length in (len(core) * 2 // 3, len(core) // 2):
-            if length < 4:
-                continue
+        queries = [
+            core[:length]
+            for length in (len(core) * 2 // 3, len(core) // 2)
+            if length >= 4
+        ]
+        queries.append(core[-4:])
+        for query in dict.fromkeys(queries):
             try:
-                records = self._client().get_law_list(title=core[:length])
+                records = self._client().get_law_list(title=query)
             except (PkulawNotFoundError, PkulawMcpError):
                 continue
             for record in records:
@@ -98,8 +103,42 @@ class PkulawFallbackSource:
             if match_law_record(request.law_title, [article]) is not None
         ]
         attempt.update(status="completed", candidate_count=len(filtered))
-        if not filtered and request.article_no:
-            filtered = self._scan_nearby_articles(request, trace)
+        cited = normalize_article_no(request.article_no or "")
+        if request.article_no and (
+            not filtered
+            or all(
+                not article.article_no
+                or normalize_article_no(article.article_no) == cited
+                for article in filtered
+            )
+        ):
+            filtered.extend(self._scan_nearby_articles(request, trace))
+        filtered = _top_articles(request.context_text, filtered, limit=3)
+        law_item = getattr(self._client(), "get_law_item_content", None)
+        if callable(law_item):
+            enriched = []
+            for article in filtered:
+                item_attempt = {
+                    "service": "law_item",
+                    "purpose": "candidate_version_enrichment",
+                    "article_no": article.article_no,
+                    "status": "started",
+                }
+                trace.metadata["route_attempts"].append(item_attempt)
+                try:
+                    item = law_item(article.title, article.article_no)
+                except PkulawNotFoundError:
+                    item_attempt["status"] = "not_found"
+                except PkulawMcpError as exc:
+                    item_attempt.update(status="error", message=str(exc))
+                else:
+                    if match_law_record(request.law_title, [item]) is not None:
+                        article = item
+                        item_attempt["status"] = "completed"
+                    else:
+                        item_attempt.update(status="mismatched", returned_title=item.title)
+                enriched.append(article)
+            filtered = enriched
         trace.status = (
             LookupStatus.RELEVANT_ARTICLES_FOUND
             if filtered
@@ -114,7 +153,6 @@ class PkulawFallbackSource:
     def _scan_nearby_articles(self, request: LookupRequest, trace: SourceTrace) -> list[PkulawArticle]:
         """语义服务无结果时，对引用条号附近做受限精确扫描。"""
         from ....domain.legal_numbers import chinese_number_to_int
-        import re
 
         match = re.fullmatch(r"第([一二三四五六七八九十百千万两零〇0-9]+)条", request.article_no or "")
         if not match:
@@ -124,26 +162,59 @@ class PkulawFallbackSource:
             cited = int(token) if token.isdigit() else chinese_number_to_int(token)
         except ValueError:
             return []
-        numbers = list(range(max(1, cited - 10), cited + 11))
-        title = build_article_exact_title(request.law_title)
+        titles = cn_title_shape_variants(normalize_title(request.law_title))
 
         def fetch(number: int):
-            try:
-                return self._client().get_article(title, f"第{number}条")
-            except (PkulawNotFoundError, PkulawMcpError):
-                return None
+            for title in titles:
+                try:
+                    return self._client().get_article(title, f"第{number}条")
+                except (PkulawNotFoundError, PkulawMcpError):
+                    continue
+            return None
 
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            articles = [article for article in pool.map(fetch, numbers) if article is not None]
-        matched = [article for article in articles if match_law_record(request.law_title, [article])]
+        def fetch_many(numbers: list[int]) -> list[PkulawArticle]:
+            with ThreadPoolExecutor(max_workers=min(6, len(numbers))) as pool:
+                return [
+                    article
+                    for article in pool.map(bind_current_timer(fetch), numbers)
+                    if article is not None
+                ]
+
+        narrow = list(range(max(1, cited - 2), cited + 3))
+        with measure("retrieval.pkulaw_nearby_scan"):
+            articles = fetch_many(narrow)
+            matched = [
+                article for article in articles
+                if match_law_record(request.law_title, [article])
+            ]
+            selected = _top_articles(request.context_text, matched, limit=3)
+            expanded = not selected
+            requested = list(narrow)
+            if expanded:
+                narrow_set = set(narrow)
+                remaining = [
+                    number
+                    for number in range(max(1, cited - 10), cited + 11)
+                    if number not in narrow_set
+                ]
+                requested.extend(remaining)
+                articles.extend(fetch_many(remaining))
+                matched = [
+                    article for article in articles
+                    if match_law_record(request.law_title, [article])
+                ]
+                selected = _top_articles(request.context_text, matched, limit=3)
         trace.metadata["route_attempts"].append({
             "service": "law_exact_nearby_scan",
             "purpose": "citation_location",
             "status": "completed",
-            "range": [numbers[0], numbers[-1]],
-            "candidate_count": len(matched),
+            "range": [min(requested), max(requested)],
+            "expanded": expanded,
+            "requested_count": len(requested),
+            "matched_count": len(matched),
+            "candidate_count": len(selected),
         })
-        return matched
+        return selected
 
     def locate_successor_candidates(self, request: LookupRequest) -> LocationCandidateResult:
         """检索废止规则在现行法规中的继受条文；这里只召回，不作结论。"""
@@ -190,6 +261,37 @@ class PkulawFallbackSource:
             trace,
         )
 
+    def locate_repeal_basis(
+        self, request: LookupRequest, successor_title: str
+    ) -> LocationCandidateResult:
+        """在已经确认的继受法中查找明确废止旧法的条文。"""
+        trace = self._trace()
+        query = f"检索《{successor_title}》中明确废止《{request.law_title}》的条文"
+        try:
+            articles = self._client().search_law_articles(query)
+        except PkulawNotFoundError:
+            articles = []
+        except PkulawMcpError as exc:
+            trace.status = _pkulaw_error_status(exc)
+            trace.message = str(exc)
+            return LocationCandidateResult([], trace)
+        old_title = _plain_law_title(request.law_title)
+        matched = [
+            article for article in articles
+            if match_law_record(successor_title, [article]) is not None
+            and "废止" in article.article_text
+            and old_title in _plain_law_title(article.article_text)
+        ]
+        trace.status = (
+            LookupStatus.RELEVANT_ARTICLES_FOUND if matched else LookupStatus.LAW_NOT_FOUND
+        )
+        trace.message = "继受法废止依据检索完成"
+        trace.metadata.update(purpose="repeal_basis", query=query)
+        return LocationCandidateResult(
+            [self._candidate_evidence(request, trace, article) for article in matched[:3]],
+            trace,
+        )
+
     def _trace(self) -> SourceTrace:
         return SourceTrace(
             tier=SourceTier.PKULAW_FALLBACK,
@@ -201,21 +303,72 @@ class PkulawFallbackSource:
     def _lookup_article(self, request: LookupRequest) -> LookupResult:
         trace = self._trace()
         attempts = trace.metadata["route_attempts"]
-        title = build_article_exact_title(request.law_title)
-        attempts.append({"service": "law_search_get_article", "status": "started"})
-        try:
-            article = self._client().get_article(title, request.article_no or "")
-        except PkulawNotFoundError:
-            attempts[-1]["status"] = "not_found"
-        except PkulawMcpError as exc:
-            attempts[-1].update(status="error", message=str(exc))
-            return self._error(trace, exc)
-        else:
+        query_titles = _versioned_query_titles(request.law_title, request.version_hint)
+        title = query_titles[0]
+        client = self._client()
+        exact_absent = True
+        for query_title in query_titles:
+            attempt = {
+                "service": "law_search_get_article",
+                "title_shape": query_title,
+                "status": "started",
+            }
+            attempts.append(attempt)
+            try:
+                article = client.get_article(query_title, request.article_no or "")
+            except PkulawNotFoundError:
+                attempt["status"] = "not_found"
+                continue
+            except PkulawMcpError as exc:
+                attempt.update(status="error", message=str(exc))
+                return self._error(trace, exc)
+            exact_absent = False
             if match_law_record(request.law_title, [article]) is not None:
-                attempts[-1]["status"] = "completed"
-                article = self._enrich_timeliness(article, title, attempts)
+                attempt["status"] = "completed"
+                article = self._enrich_timeliness(article, query_title, attempts)
                 return self._article_result(request, trace, article)
-            attempts[-1].update(status="mismatched", returned_title=article.title)
+            attempt.update(status="mismatched", returned_title=article.title)
+
+        recognize = getattr(client, "recognize_laws", None)
+        if exact_absent and callable(recognize):
+            attempts.append({"service": "law_recognition", "status": "started"})
+            try:
+                recognized_laws = recognize(title)
+                recognized = match_law_record(request.law_title, recognized_laws)
+                attempts[-1].update(
+                    status="completed" if recognized else "not_found",
+                    candidate_count=len(recognized_laws),
+                )
+                if (
+                    recognized is not None
+                    and normalize_title(recognized.canonical_title)
+                    not in {normalize_title(item) for item in query_titles}
+                ):
+                    title = recognized.canonical_title
+                    attempts.append({
+                        "service": "law_search_get_article",
+                        "purpose": "canonical_title_retry",
+                        "status": "started",
+                    })
+                    try:
+                        article = client.get_article(title, request.article_no or "")
+                    except PkulawNotFoundError:
+                        attempts[-1]["status"] = "not_found"
+                    except PkulawMcpError as exc:
+                        attempts[-1].update(status="error", message=str(exc))
+                        return self._error(trace, exc)
+                    else:
+                        if match_law_record(request.law_title, [article]) is not None:
+                            attempts[-1]["status"] = "completed"
+                            article = self._enrich_timeliness(article, title, attempts)
+                            return self._article_result(request, trace, article)
+                        attempts[-1].update(
+                            status="mismatched", returned_title=article.title
+                        )
+            except PkulawNotFoundError:
+                attempts[-1]["status"] = "not_found"
+            except PkulawMcpError as exc:
+                attempts[-1].update(status="error", message=str(exc))
 
         attempts.append({"service": "law_semantic_exact", "status": "started"})
         semantic_error: PkulawMcpError | None = None
@@ -243,7 +396,7 @@ class PkulawFallbackSource:
             exact = self._enrich_timeliness(exact, title, attempts)
             return self._article_result(request, trace, exact)
         related = _rank_articles(request.context_text, filtered)
-        if related:
+        if related and not exact_absent:
             return self._related_result(
                 request,
                 trace,
@@ -252,17 +405,30 @@ class PkulawFallbackSource:
                 "精确查询未命中，以下为该法规内语义召回的相关条款",
             )
 
-        attempts.append({"service": "law_keyword", "status": "started"})
-        try:
-            records = self._client().get_law_list(title=title)
-            attempts[-1].update(status="completed", candidate_count=len(records))
-        except PkulawNotFoundError:
-            records = []
-            attempts[-1]["status"] = "not_found"
-        except PkulawMcpError as exc:
-            attempts[-1].update(status="error", message=str(exc))
-            return self._error(trace, exc)
-        matched = match_law_record(request.law_title, records)
+        records = []
+        for query_title in query_titles:
+            attempt = {
+                "service": "law_keyword",
+                "title_shape": query_title,
+                "status": "started",
+            }
+            attempts.append(attempt)
+            try:
+                records = self._client().get_law_list(title=query_title)
+                attempt.update(
+                    status="completed" if records else "not_found",
+                    candidate_count=len(records),
+                )
+                if records:
+                    title = query_title
+                    if _match_requested_record(query_title, records) is not None:
+                        break
+            except PkulawNotFoundError:
+                attempt["status"] = "not_found"
+            except PkulawMcpError as exc:
+                attempt.update(status="error", message=str(exc))
+                return self._error(trace, exc)
+        matched = _match_requested_record(title, records)
         if semantic_error is not None:
             return self._error(trace, semantic_error)
         if matched is None:
@@ -278,35 +444,133 @@ class PkulawFallbackSource:
         trace.message = f"北大法宝已收录该法规，但未返回{request.article_no}"
         trace.source_url = matched.url
         trace.metadata.update(search_completed=True, **_law_record_metadata(matched))
-        return LookupResult(
-            trace.status, self._metadata_evidence(request, trace, matched), trace
-        )
+        if exact_absent:
+            confirmation = "single_signal"
+            law_item = getattr(self._client(), "get_law_item_content", None)
+            if callable(law_item):
+                item_attempt = {
+                    "service": "law_item",
+                    "purpose": "article_absence_confirmation",
+                    "status": "started",
+                }
+                attempts.append(item_attempt)
+                try:
+                    law_item(title, request.article_no or "")
+                except PkulawNotFoundError:
+                    confirmation = "double_signal"
+                    item_attempt["status"] = "not_found"
+                except PkulawMcpError as exc:
+                    item_attempt.update(status="error", message=str(exc))
+                else:
+                    confirmation = "conflict"
+                    item_attempt["status"] = "article_found"
+            trace.metadata["article_absence_confirmation"] = confirmation
+            trace.metadata["article_absent_confirmed"] = confirmation != "conflict"
+        evidence = self._metadata_evidence(request, trace, matched)
+        if related:
+            evidence = evidence.model_copy(update={"related_articles": related})
+        return LookupResult(trace.status, evidence, trace)
 
     def _lookup_without_article(self, request: LookupRequest) -> LookupResult:
         trace = self._trace()
         attempts = trace.metadata["route_attempts"]
-        title = build_article_exact_title(request.law_title)
-        attempts.append({"service": "law_keyword", "status": "started"})
-        try:
-            records = self._client().get_law_list(title=title)
-            attempts[-1].update(status="completed", candidate_count=len(records))
-        except PkulawNotFoundError:
-            records = []
-            attempts[-1]["status"] = "not_found"
-        except PkulawMcpError as exc:
-            attempts[-1].update(status="error", message=str(exc))
-            return self._error(trace, exc)
-        matched = match_law_record(request.law_title, records)
-        if matched is not None and not has_substantive_content(
-            request.context_text, request.law_title
+        client = self._client()
+        query_titles = _versioned_query_titles(request.law_title, request.version_hint)
+        title = query_titles[0]
+        recognized = None
+        recognize = getattr(client, "recognize_laws", None)
+        if callable(recognize):
+            for query_title in query_titles:
+                attempt = {
+                    "service": "law_recognition",
+                    "title_shape": query_title,
+                    "status": "started",
+                }
+                attempts.append(attempt)
+                try:
+                    recognized_laws = recognize(query_title)
+                    recognized = match_law_record(request.law_title, recognized_laws)
+                    attempt.update(
+                        status="completed" if recognized else "not_found",
+                        candidate_count=len(recognized_laws),
+                    )
+                    if recognized:
+                        break
+                except PkulawNotFoundError:
+                    attempt["status"] = "not_found"
+                except PkulawMcpError as exc:
+                    attempt.update(status="error", message=str(exc))
+
+        canonical_title = recognized.canonical_title if recognized else title
+        law_titles = cn_title_shape_variants(canonical_title)
+        records = []
+        for query_title in law_titles:
+            attempt = {
+                "service": "law_keyword",
+                "title_shape": query_title,
+                "status": "started",
+            }
+            attempts.append(attempt)
+            try:
+                records = client.get_law_list(title=query_title)
+                attempt.update(
+                    status="completed" if records else "not_found",
+                    candidate_count=len(records),
+                )
+                if records:
+                    canonical_title = query_title
+                    if _match_requested_record(query_title, records) is not None:
+                        break
+            except PkulawNotFoundError:
+                attempt["status"] = "not_found"
+            except PkulawMcpError as exc:
+                attempt.update(status="error", message=str(exc))
+                return self._error(trace, exc)
+        matched = _match_requested_record(canonical_title, records)
+        query_text = request.query_text or request.context_text
+        if matched is not None and (
+            request.existence_only
+            or (
+                request.query_text is None
+                and not has_substantive_content(query_text, request.law_title)
+            )
         ):
             return self._law_text_unavailable(request, trace, matched, records)
+
+        if matched is not None and recognized is not None:
+            corpus = split_recognized_fulltext(recognized.fulltext)
+            attempts.append({
+                "service": "law_recognition_fulltext",
+                "status": "completed" if corpus.structurally_valid else "invalid",
+                "structure": corpus.structure,
+                "chunk_count": len(corpus.chunks),
+                "warnings": list(corpus.warnings),
+            })
+            if corpus.structurally_valid:
+                related = retrieve_relevant_articles(
+                    query_text,
+                    [
+                        {
+                            "article_key": chunk.sequence,
+                            "article_no": chunk.article_no,
+                            "locator": chunk.locator,
+                            "locator_type": chunk.locator_type,
+                            "text": chunk.text,
+                        }
+                        for chunk in corpus.chunks
+                    ],
+                    limit=8,
+                )
+                if related:
+                    return self._recognized_corpus_result(
+                        trace, matched, records, recognized, corpus, related
+                    )
 
         attempts.append({"service": "law_semantic", "status": "started"})
         semantic_error: PkulawMcpError | None = None
         try:
-            articles = self._client().search_law_articles(
-                build_law_semantic_query(request.context_text, request.law_title)
+            articles = client.search_law_articles(
+                build_law_semantic_query(query_text, canonical_title)
             )
             attempts[-1].update(status="completed", candidate_count=len(articles))
         except PkulawNotFoundError:
@@ -317,9 +581,9 @@ class PkulawFallbackSource:
             semantic_error = exc
             attempts[-1].update(status="error", message=str(exc))
         filtered = [
-            a for a in articles if match_law_record(request.law_title, [a]) is not None
+            a for a in articles if match_law_record(canonical_title, [a]) is not None
         ]
-        related = _rank_articles(request.context_text, filtered)
+        related = _rank_articles(query_text, filtered, limit=8)
         if related:
             return self._related_result(
                 request, trace, filtered[0], related, "已通过法规语义检索召回相关条款"
@@ -339,6 +603,45 @@ class PkulawFallbackSource:
         )
         return LookupResult(trace.status, None, trace)
 
+    def _recognized_corpus_result(
+        self, trace, matched, records, recognized, corpus: ParsedCorpus, related
+    ):
+        trace.status = LookupStatus.RELEVANT_ARTICLES_FOUND
+        trace.message = (
+            "已在北大法宝返回的目标法规条文内召回相关法条"
+            if corpus.structure == "article"
+            else "已在北大法宝返回的目标规范性文件内召回相关段落"
+        )
+        trace.source_url = recognized.url or matched.url
+        trace.metadata.update(
+            **_law_record_metadata(matched),
+            retrieval_method=(
+                "pkulaw_recognition_article_bm25"
+                if corpus.structure == "article"
+                else "pkulaw_recognition_paragraph_bm25"
+            ),
+            identity_confirmed_by="law_recognition+law_keyword",
+            recognized_surface_title=recognized.mentioned_title,
+            recognized_canonical_title=recognized.canonical_title,
+            corpus_structure=corpus.structure,
+            corpus_chunk_count=len(corpus.chunks),
+            corpus_completeness="provider_returned_text_unverified",
+            corpus_warnings=list(corpus.warnings),
+            candidates=[_law_record_metadata(record) for record in records],
+        )
+        evidence = ArticleEvidence(
+            law_title=recognized.canonical_title,
+            source_type=_evidence_source_type(matched),
+            article_text="\n\n".join(_format_excerpt(item) for item in related),
+            version_label=_first(matched.timeliness),
+            version_status=_first(matched.timeliness),
+            effective_from=matched.implement_date,
+            source_metadata=trace.metadata,
+            related_articles=related,
+            data_source=trace,
+        )
+        return LookupResult(trace.status, evidence, trace)
+
     def _enrich_timeliness(self, article, title, attempts):
         attempt = {
             "service": "law_keyword",
@@ -348,8 +651,22 @@ class PkulawFallbackSource:
         attempts.append(attempt)
         try:
             records = self._client().get_law_list(title=title)
-            matched = match_law_record(title, records)
-            attempt.update(status="completed", candidate_count=len(records))
+            matched = _match_requested_record(title, records)
+            attempt.update(
+                status="completed",
+                candidate_count=len(records),
+                candidates=[_law_record_metadata(record) for record in records],
+            )
+            current = next((
+                record for record in records
+                if equivalent_law_titles(record.title, title)
+                and any("现行有效" in value for value in record.timeliness)
+            ), None)
+            if current is not None:
+                attempt.update(
+                    current_title=current.title,
+                    current_implement_date=current.implement_date,
+                )
             if matched:
                 return replace(
                     article,
@@ -386,6 +703,7 @@ class PkulawFallbackSource:
         trace.status = LookupStatus.RELEVANT_ARTICLES_FOUND
         trace.message = message
         trace.source_url = top.url
+        trace.metadata.update(_article_metadata(top))
         trace.metadata["retrieval_method"] = "pkulaw_law_semantic"
         evidence = ArticleEvidence(
             law_title=top.title,
@@ -463,19 +781,79 @@ class StatuteLookupClient(Protocol):
         self, title: str, article_no: str
     ) -> list[PkulawArticle]: ...
 
+    def get_law_item_content(
+        self, title: str, article_no: str
+    ) -> PkulawArticle: ...
+
+    def recognize_laws(self, text: str): ...
+
 
 def _rank_articles(
-    context_text: str, articles: list[PkulawArticle]
+    context_text: str, articles: list[PkulawArticle], limit: int = 3
 ) -> list[ArticleExcerpt]:
     rows = [
-        {"text": a.article_text, "article_no": a.article_no, "article_key": i}
+        {"text": a.article_text, "article_no": a.article_no, "article_key": i,
+         "title": a.title, "version_key": a.implement_date, "source_url": a.url}
         for i, a in enumerate(articles)
     ]
-    return retrieve_relevant_articles(context_text, rows, limit=3)
+    return retrieve_relevant_articles(context_text, rows, limit=limit)
+
+
+def _versioned_query_title(title: str, hint: str | None) -> str:
+    normalized = build_article_exact_title(title)
+    if not hint or re.search(r"[（(].*(?:修正|修订|修改).*[）)]$", normalized):
+        return normalized
+    version = re.search(r"((?:19|20)\d{2})\s*年?\s*(修正|修订|修改)", hint)
+    versioned = (
+        f"{normalized}（{version.group(1)}{version.group(2)}）"
+        if version else normalized
+    )
+    return cn_title_shape_variants(versioned)[0]
+
+
+def _versioned_query_titles(title: str, hint: str | None) -> tuple[str, ...]:
+    return cn_title_shape_variants(_versioned_query_title(title, hint))
+
+
+def _plain_law_title(value: str) -> str:
+    plain = re.sub(
+        r"[^0-9A-Za-z\u4e00-\u9fff]", "", strip_version_annotation(value)
+    )
+    return cn_title_shape_key(plain)
+
+
+def _match_requested_record(title: str, records):
+    exact = next(
+        (record for record in records if normalize_title(record.title) == normalize_title(title)),
+        None,
+    )
+    return exact or match_law_record(title, records)
+
+
+def _top_articles(
+    context_text: str, articles: list[PkulawArticle], limit: int = 3
+) -> list[PkulawArticle]:
+    """保留与引文最相关的少量原始候选，避免逐候选远程富化。"""
+    remaining = list(articles)
+    selected = []
+    for excerpt in _rank_articles(context_text, articles, limit=limit):
+        match = next((
+            (index, article)
+            for index, article in enumerate(remaining)
+            if article.title == excerpt.law_title
+            and article.article_no == excerpt.article_no
+            and article.article_text == excerpt.article_text
+        ), None)
+        if match is not None:
+            index, article = match
+            selected.append(article)
+            remaining.pop(index)
+    return selected
 
 
 def _format_excerpt(excerpt: ArticleExcerpt) -> str:
-    prefix = f"{excerpt.article_no}　" if excerpt.article_no else ""
+    locator = excerpt.locator or excerpt.article_no
+    prefix = f"{locator}　" if locator else ""
     return f"{prefix}{excerpt.article_text}"
 
 
@@ -500,6 +878,8 @@ def _law_record_metadata(record: PkulawLawRecord) -> dict:
         "issue_department": record.issue_department,
         "issue_date": record.issue_date,
         "implement_date": record.implement_date,
+        "version_key": record.implement_date,
+        "version_confirmed": bool(record.implement_date and "现行有效" in record.timeliness),
         "timeliness": record.timeliness,
         "effectiveness": record.effectiveness,
     }

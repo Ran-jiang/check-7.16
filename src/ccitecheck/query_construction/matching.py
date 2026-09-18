@@ -6,6 +6,7 @@ import re
 from typing import Protocol, TypeVar
 
 from ..infrastructure.database import normalize_title, strip_version_annotation
+from ..domain.law_titles import cn_title_shape_key, cn_title_shape_variants
 
 
 class TitledRecord(Protocol):
@@ -15,21 +16,51 @@ class TitledRecord(Protocol):
 RecordT = TypeVar("RecordT", bound=TitledRecord)
 
 _ISSUING_AUTHORITY_PREFIXES = (
+    "中华人民共和国最高人民法院、中华人民共和国最高人民检察院",
+    "中华人民共和国最高人民法院中华人民共和国最高人民检察院",
+    "最高人民法院、最高人民检察院、公安部",
+    "最高人民法院最高人民检察院公安部",
     "最高人民法院、最高人民检察院",
     "最高人民法院最高人民检察院",
+    "中华人民共和国最高人民法院",
+    "中华人民共和国最高人民检察院",
     "最高人民法院",
     "最高人民检察院",
 )
 
 # 法宝用纯年份后缀区分同名法的不同版本（如"…国家安全法(2015)"），
 # strip_version_annotation 只认"修正/修订/修改"，此处补齐纯年份形态。
-_BARE_VERSION = re.compile(r"[（(](?:\d{4}年?(?:修正|修订|修改)?|修正|修订|修改)[）)]$")
+_BARE_VERSION = re.compile(
+    r"[（(](?:\d{4}年?(?:第[一二三四五六七八九十0-9]+次)?(?:修正|修订|修改)?|修正|修订|修改)[）)]$"
+)
 _CURRENT_MARKER = "现行有效"
 _REPEALED_MARKERS = ("废止", "失效")
 
 
 def _base_title(title: str) -> str:
     return _BARE_VERSION.sub("", normalize_title(title or ""))
+
+
+def normalize_law_title_for_comparison(title: str) -> str:
+    """统一法名格式并剥离司法发布机关前缀，供身份比较使用。"""
+    normalized = _normalized_title(title)
+    return next(
+        (
+            normalized.removeprefix(prefix)
+            for prefix in _ISSUING_AUTHORITY_PREFIXES
+            if normalized.startswith(prefix)
+        ),
+        normalized,
+    )
+
+
+def equivalent_law_titles(left: str, right: str) -> bool:
+    """判断两个法名是否仅有格式、国家全称或发布机关前缀差异。"""
+    left_normalized = normalize_law_title_for_comparison(left)
+    right_normalized = normalize_law_title_for_comparison(right)
+    if left_normalized == right_normalized:
+        return True
+    return cn_title_shape_key(left_normalized) == cn_title_shape_key(right_normalized)
 
 
 def _is_current(record: TitledRecord) -> bool:
@@ -44,13 +75,10 @@ def match_law_record(law_title: str, records: list[RecordT]) -> RecordT | None:
     # 同一法名对应多个版本（旧版废止、新版现行）时，裸名引用指向现行版本，
     # 优先返回唯一的现行有效版本，避免把重新制定后仍在施行的法误判为废止。
     base_target = _base_title(law_title)
-    base_target_full = (
-        base_target if base_target.startswith("中华人民共和国")
-        else f"中华人民共和国{base_target}"
-    )
+    base_variants = set(cn_title_shape_variants(base_target))
     same_base = [
         record for record in records
-        if _base_title(record.title) in (base_target, base_target_full)
+        if _base_title(record.title) in base_variants
     ]
     if len(same_base) > 1:
         current = [record for record in same_base if _is_current(record)]
@@ -65,25 +93,12 @@ def match_law_record(law_title: str, records: list[RecordT]) -> RecordT | None:
     if len(exact_matches) == 1:
         return exact_matches[0]
 
-    target = _normalized_title(law_title)
-    target_full = (
-        target if target.startswith("中华人民共和国") else f"中华人民共和国{target}"
-    )
+    target = normalize_law_title_for_comparison(law_title)
+    target_variants = set(cn_title_shape_variants(target))
     matches: list[RecordT] = []
     for record in records:
-        candidate = _normalized_title(record.title)
-        candidate_without_issuer = next(
-            (
-                candidate.removeprefix(prefix)
-                for prefix in _ISSUING_AUTHORITY_PREFIXES
-                if candidate.startswith(prefix)
-            ),
-            candidate,
-        )
-        if candidate in (target, target_full) or candidate_without_issuer in (
-            target,
-            target_full,
-        ):
+        candidate = normalize_law_title_for_comparison(record.title)
+        if candidate in target_variants:
             matches.append(record)
     if len(matches) == 1:
         return matches[0]
@@ -108,4 +123,8 @@ def _normalized_exact_title(title: str) -> str:
     return normalize_title(title).translate(str.maketrans({"（": "(", "）": ")"}))
 
 
-__all__ = ["match_law_record"]
+__all__ = [
+    "equivalent_law_titles",
+    "match_law_record",
+    "normalize_law_title_for_comparison",
+]

@@ -6,6 +6,7 @@ import {
   formatReference,
   orderChecksByCitation,
   sourceUrlOf,
+  stateMatchesFilter,
   stripRepeatedArticleHeading,
 } from "../assets/ui.js"
 
@@ -45,6 +46,12 @@ test("cards follow citation order instead of verification state", () => {
     orderChecksByCitation(checks).map((item) => item.check_id),
     ["vc_1", "vc_2", "vc_3"],
   )
+})
+
+test("pending filter keeps review and bug as separate internal states", () => {
+  assert.equal(stateMatchesFilter("review", "pending"), true)
+  assert.equal(stateMatchesFilter("bug", "pending"), true)
+  assert.equal(stateMatchesFilter("issue", "pending"), false)
 })
 
 test("footnote cards sort by the body reference instead of the appended note block", () => {
@@ -90,18 +97,28 @@ test("unresolved bare law keeps raw text without invented book-title marks", () 
   }), "依照城市房地产管理法第38条")
 })
 
-import { STATUTE_ERROR_LABELS, statuteViewOf } from "../assets/statute-view-model.js"
+import { APPLICATION_ERROR_LABELS, STATUTE_ERROR_LABELS, statuteViewOf } from "../assets/statute-view-model.js"
 import { caseViewOf } from "../assets/case-view-model.js"
 
 test("citation error labels distinguish name, article and hierarchy", () => {
-  assert.equal(STATUTE_ERROR_LABELS.law_name_error, "法律名称错误")
-  assert.equal(STATUTE_ERROR_LABELS.article_not_found, "条文不存在")
-  assert.equal(STATUTE_ERROR_LABELS.article_number_error, "条号错误")
-  assert.equal(STATUTE_ERROR_LABELS.citation_hierarchy_error, "层级错误")
+  assert.equal(STATUTE_ERROR_LABELS.law_name_error, "法规名称错误")
+  assert.equal(STATUTE_ERROR_LABELS.article_not_found, "所引条文待核实")
+  assert.equal(STATUTE_ERROR_LABELS.article_number_error, "条文序号错误")
+  assert.equal(STATUTE_ERROR_LABELS.citation_hierarchy_error, "条款项层级错误")
+  assert.equal(STATUTE_ERROR_LABELS.source_repealed, "法源版本或效力错误")
+  assert.equal(STATUTE_ERROR_LABELS.source_amended, "法源版本或效力错误")
+  assert.equal(STATUTE_ERROR_LABELS.meaning_distorted, undefined)
+  assert.equal(STATUTE_ERROR_LABELS.source_name_ambiguous, undefined)
+  assert.deepEqual(APPLICATION_ERROR_LABELS, {
+    rule_fact_mismatch: "法条与事实关联性弱",
+    meaning_distorted: "引文不忠实于权威原文",
+    legal_alias_inconsistent: "全文法规引用简称不一致",
+    format_error: "格式错误",
+  })
 })
 
 test("badge text follows the result-state scheme", () => {
-  const issue = statuteViewOf({ outcome: "issue", findings: [{ code: "meaning_distorted", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
+  const issue = statuteViewOf({ outcome: "issue", findings: [{ code: "article_number_error", risk_level: "HIGH", suggestion: "改。" }], law_title: "著作权法" })
   assert.equal(issue.state, "issue")
   assert.equal(issue.badge.text, "未通过")
 
@@ -109,7 +126,7 @@ test("badge text follows the result-state scheme", () => {
   assert.equal(bug.state, "bug")
   assert.equal(bug.badge.text, "待核实")
 
-  const pass = statuteViewOf({ outcome: "pass", law_title: "民法典", lookup_status: "article_found", meaning_check: { verdict: "pass" } })
+  const pass = statuteViewOf({ outcome: "pass", law_title: "民法典", lookup_status: "article_found" })
   assert.equal(pass.badge.text, "通过")
   assert.equal(pass.typeLabel, "法律引用无问题")
 
@@ -123,7 +140,7 @@ test("badge text follows the result-state scheme", () => {
   assert.match(listing.evidence.summaryLabel, /^权威来源/)
 })
 
-test("legal application review is shown as pending review, never failed", () => {
+test("application labels are pure labels without a dimension prefix", () => {
   const view = statuteViewOf({
     outcome: "review",
     law_title: "民法典",
@@ -132,16 +149,17 @@ test("legal application review is shown as pending review, never failed", () => 
     application_check: {
       verdict: "review",
       reviews: [{
-        error_type: "application_logic_error",
+        error_type: "meaning_distorted",
         review_level: "待核查",
         summary: "所引条文不能直接推出该结论。",
         suggestion: "请核查结论的独立法律依据。",
       }],
     },
   })
-  assert.equal(view.badge.text, "待核查")
-  assert.match(view.typeLabel, /法律适用待核查/)
-  assert.equal(view.verdict.riskText, "待核查")
+  assert.equal(view.badge.text, "待核实")
+  assert.equal(view.typeLabel, "引文不忠实于权威原文")
+  assert.doesNotMatch(view.typeLabel, /法律适用待核查/)
+  assert.equal(view.verdict.riskText, "待核实")
   assert.doesNotMatch(view.badge.text, /未通过/)
 })
 
@@ -162,7 +180,28 @@ test("document typo is shown as a format error pending review", () => {
     },
   })
   assert.match(view.typeLabel, /格式错误/)
-  assert.equal(view.verdict.riskText, "待核查")
+  assert.equal(view.verdict.riskText, "待核实")
+})
+
+test("application suggestions use one separator without stacked punctuation", () => {
+  const check = {
+    outcome: "review",
+    law_title: "民法典",
+    lookup_status: "article_found",
+    findings: [],
+    application_check: {
+      verdict: "review",
+      reviews: [
+        { error_type: "rule_fact_mismatch", suggestion: "请核对事实。" },
+        { error_type: "format_error", suggestion: "请删除重复字；" },
+      ],
+    },
+  }
+  assert.equal(statuteViewOf(check).verdict.suggestion, "请核对事实；请删除重复字。")
+
+  check.outcome = "issue"
+  check.findings = [{ code: "article_number_error", risk_level: "HIGH", suggestion: "条号引用错误。" }]
+  assert.doesNotMatch(statuteViewOf(check).verdict.suggestion, /。；/)
 })
 
 test("out-of-scope statutes surface the boundary message", () => {
@@ -184,9 +223,35 @@ test("statute source failures surface the actionable provider message", () => {
     outcome: "bug",
     lookup_status: "source_error",
     message: "北大法宝鉴权失败（HTTP 401），请检查访问令牌、账户状态或剩余点数",
+    source_attempts: [{ status: "source_error", source_name: "北大法宝 MCP" }],
   })
-  assert.equal(view.typeLabel, "数据源调用失败")
+  assert.equal(view.typeLabel, "北大法宝 MCP不可用")
   assert.match(view.verdict.suggestion, /剩余点数/)
+})
+
+test("source-not-found labels use the actual MCP", () => {
+  const view = statuteViewOf({
+    law_title: "虚构条例",
+    jurisdiction: "EU",
+    outcome: "issue",
+    lookup_status: "law_not_found",
+    source_attempts: [{ status: "law_not_found", source_name: "EUR-Lex MCP" }],
+    findings: [{ code: "source_not_found", risk_level: "HIGH", suggestion: "请核对。" }],
+  })
+  assert.equal(view.typeLabel, "EUR-Lex MCP未检索到所引法源")
+})
+
+test("foreign source fallback names Ansvar", () => {
+  const view = statuteViewOf({
+    law_title: "Urheberrechtsgesetz",
+    article_no: "§ 2",
+    jurisdiction: "DE",
+    outcome: "bug",
+    lookup_status: "source_error",
+    source_attempts: [],
+    findings: [],
+  })
+  assert.equal(view.typeLabel, "Ansvar Gateway MCP不可用")
 })
 
 test("EU statutes verified by EUR-Lex read as existence-only pass", () => {
@@ -232,7 +297,7 @@ test("finding card renders the self-contained suggestion without audit summary",
     outcome: "issue",
     law_title: "著作权司法解释",
     findings: [{
-      code: "meaning_distorted",
+      code: "article_number_error",
       risk_level: "HIGH",
       summary: "第二十条规定的是出版者责任。",
       suggestion: "建议改引第十五条。",
@@ -256,7 +321,7 @@ test("case candidates come from the explicit domain field", () => {
 
 test("compact sub-references drop the quote and jump affordance", () => {
   const view = statuteViewOf(
-    { outcome: "pass", law_title: "刑法", article_no: "第二百九十一条", claim_text: "整段引文", lookup_status: "article_found", meaning_check: { verdict: "pass" } },
+    { outcome: "pass", law_title: "刑法", article_no: "第二百九十一条", claim_text: "整段引文", lookup_status: "article_found" },
     { compact: true },
   )
   assert.equal(view.quote, null)
@@ -271,13 +336,34 @@ test("recalled related articles keep the evidence section even without full text
     lookup_status: "relevant_articles_found",
     evidence: {
       law_title: "中华人民共和国著作权法",
+      article_text: "第三条　本法所称的作品……",
       related_articles: [{ article_no: "第三条", article_text: "本法所称的作品……" }],
       data_source: {},
     },
   })
   assert.notEqual(view.evidence, null)
+  assert.equal(view.evidence.articleText, "")
   assert.equal(view.evidence.related.length, 1)
   assert.match(view.evidence.summaryLabel, /召回的相关条款/)
+})
+
+test("normative paragraphs show their locator without inventing an article number", () => {
+  const view = statuteViewOf({
+    law_title: "某工作指导意见",
+    outcome: "pass",
+    lookup_status: "relevant_articles_found",
+    evidence: {
+      law_title: "某工作指导意见",
+      related_articles: [{
+        article_no: "",
+        locator: "二、风险处置 · 段落2",
+        locator_type: "paragraph",
+        article_text: "建立重大风险报告机制。",
+      }],
+      data_source: {},
+    },
+  })
+  assert.equal(view.evidence.related[0].heading, "二、风险处置 · 段落2")
 })
 
 test("EU evidence headings use the Article convention with a separator", () => {
@@ -287,7 +373,7 @@ test("EU evidence headings use the Article convention with a separator", () => {
     jurisdiction: "EU",
     outcome: "pass",
     lookup_status: "article_found",
-    meaning_check: { verdict: "pass" },
+    application_check: { execution_status: "completed", verdict: "pass", reviews: [] },
     evidence: {
       law_title: "General Data Protection Regulation 2016/679",
       article_no: "Article 17",
@@ -321,11 +407,15 @@ test("structure citations label distinctly from nested references", () => {
     outcome: "bug",
     article_no: "第四章",
     lookup_status: "relevant_articles_found",
-    meaning_check: { execution_status: "skipped", skipped_reason: "structure_ambiguous" },
+    findings: [{
+      code: "citation_hierarchy_error",
+      risk_level: "MEDIUM",
+      suggestion: "存在多个候选章节，请补充上级编号。",
+    }],
     evidence: { law_title: "中华人民共和国民法典", structure_path: "候选：……", data_source: {} },
   })
   assert.equal(ambiguous.state, "bug")
-  assert.equal(ambiguous.typeLabel, "章节引用存在多个候选，请人工确认")
+  assert.equal(ambiguous.typeLabel, "条款项层级错误")
 
   const nested = statuteViewOf({
     outcome: "pass",
@@ -335,4 +425,26 @@ test("structure citations label distinctly from nested references", () => {
     lookup_status: "article_found",
   })
   assert.equal(nested.typeLabel, "内部转引：与主法条援引的规则一致")
+})
+
+test("missing article copy depends on completeness verdict", () => {
+  const base = { law_title: "示例法", outcome: "review", findings: [{ code: "article_not_found", risk_level: "MEDIUM" }] }
+  assert.equal(statuteViewOf(base).typeLabel, "所引条文待核实")
+  assert.equal(statuteViewOf({ ...base, findings: [{ code: "article_not_found", risk_level: "HIGH" }] }).typeLabel, "该版本中不存在所引条号")
+  assert.equal(STATUTE_ERROR_LABELS.format_error, "引用编号格式错误")
+})
+
+test("correction evidence is shown alongside original evidence", () => {
+  const view = statuteViewOf({ law_title: "示例法", outcome: "issue",
+    evidence: { article_no: "第一条", article_text: "原始条文" },
+    correction_evidence: { article_no: "第二条", article_text: "候选条文", data_source: { source_url: "https://pkulaw.com/chl/test.html" } },
+  })
+  assert.deepEqual(view.evidence.related.map(item => item.text), ["原始条文", "候选条文"])
+  assert.equal(view.evidence.url, "https://pkulaw.com/chl/test.html")
+})
+
+
+test("verified lawinfochina criminal-law version link is visible", () => {
+  const url = "https://www.lawinfochina.com/display.aspx?id=34470&lib=law"
+  assert.equal(sourceUrlOf({ evidence: { data_source: { source_url: url } } }), url)
 })

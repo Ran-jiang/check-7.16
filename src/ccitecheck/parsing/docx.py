@@ -26,6 +26,7 @@ from .headings import (
     detect_heading,
     scan_chapter_types,
 )
+from ..domain.legal_numbers import int_to_chinese_number
 from ..domain.document import (
     Anchor,
     Block,
@@ -63,6 +64,28 @@ TAG_ENDNOTE_REFERENCE = qn("w:endnoteReference")
 # 需要从 w:p 的 w:r 子元素中提取文本，并将 w:br 替换为空格、w:tab 替换为空格
 
 
+def _extract_paragraph_content(para_element) -> tuple[str, list[NoteReference]]:
+    """一次遍历提取段落文本和脚注/尾注引用点。"""
+    parts: list[str] = []
+    references: list[NoteReference] = []
+    for child in para_element.iter():
+        if child.tag in {TAG_BR, TAG_TAB}:
+            parts.append(" ")
+        elif child.tag == qn("w:t") and child.text:
+            parts.append(child.text)
+        elif child.tag in {TAG_FOOTNOTE_REFERENCE, TAG_ENDNOTE_REFERENCE}:
+            note_id = child.get(qn("w:id"), "")
+            if note_id:
+                references.append(NoteReference(
+                    note_type=(
+                        "footnote" if child.tag == TAG_FOOTNOTE_REFERENCE else "endnote"
+                    ),
+                    note_id=note_id,
+                    char_offset=len(normalize_whitespace("".join(parts))),
+                ))
+    return "".join(parts), references
+
+
 def extract_paragraph_text(para_element) -> str:
     """
     从 w:p XML 元素中提取文本。
@@ -78,43 +101,7 @@ def extract_paragraph_text(para_element) -> str:
     Returns:
         提取后的文本（尚未归一化）
     """
-    parts: list[str] = []
-    # 遍历所有子元素
-    for child in para_element.iter():
-        if child.tag == TAG_BR:
-            # 软换行 → 半角空格
-            parts.append(" ")
-        elif child.tag == TAG_TAB:
-            # 制表符 → 半角空格
-            parts.append(" ")
-        elif child.tag == qn("w:t"):
-            # 文本内容
-            if child.text:
-                parts.append(child.text)
-    return "".join(parts)
-
-
-def extract_paragraph_note_references(para_element) -> list[NoteReference]:
-    """提取正文段落中的脚注/尾注引用点，不把标记字符混入正文。"""
-    parts: list[str] = []
-    references: list[NoteReference] = []
-    for child in para_element.iter():
-        if child.tag in {TAG_BR, TAG_TAB}:
-            parts.append(" ")
-        elif child.tag == qn("w:t") and child.text:
-            parts.append(child.text)
-        elif child.tag in {TAG_FOOTNOTE_REFERENCE, TAG_ENDNOTE_REFERENCE}:
-            note_id = child.get(qn("w:id"), "")
-            if not note_id:
-                continue
-            references.append(NoteReference(
-                note_type=(
-                    "footnote" if child.tag == TAG_FOOTNOTE_REFERENCE else "endnote"
-                ),
-                note_id=note_id,
-                char_offset=len(normalize_whitespace("".join(parts))),
-            ))
-    return references
+    return _extract_paragraph_content(para_element)[0]
 
 
 def extract_cell_text(cell) -> str:
@@ -130,30 +117,25 @@ def extract_cell_text(cell) -> str:
     Returns:
         提取并归一化后的文本
     """
-    para_texts: list[str] = []
-    for para in cell.paragraphs:
-        # 通过 para._element 获取底层 XML 以正确处理软换行
-        raw_text = extract_paragraph_text(para._element)
-        text = normalize_whitespace(raw_text)
-        if text:
-            para_texts.append(text)
-    return " ".join(para_texts)
+    return _extract_cell_content(cell)[0]
 
 
-def extract_cell_note_references(cell) -> list[NoteReference]:
-    """将单元格段落中的注释引用点换算到合并后的单元格坐标。"""
+def _extract_cell_content(cell) -> tuple[str, list[NoteReference]]:
+    """一次处理单元格各段落，返回合并文本和注释坐标。"""
+    texts: list[str] = []
     references: list[NoteReference] = []
     offset = 0
     for para in cell.paragraphs:
-        text = normalize_whitespace(extract_paragraph_text(para._element))
+        raw_text, para_references = _extract_paragraph_content(para._element)
+        text = normalize_whitespace(raw_text)
         if not text:
             continue
-        for reference in extract_paragraph_note_references(para._element):
-            references.append(reference.model_copy(update={
-                "char_offset": offset + reference.char_offset,
-            }))
+        references.extend(reference.model_copy(update={
+            "char_offset": offset + reference.char_offset,
+        }) for reference in para_references)
+        texts.append(text)
         offset += len(text) + 1
-    return references
+    return " ".join(texts), references
 
 
 # ---- 自动编号处理 ----
@@ -246,34 +228,13 @@ def _format_number(value: int, number_format: str) -> Optional[str]:
                 rest -= amount
         return result if number_format == "upperRoman" else result.lower()
     if number_format in {"chineseCounting", "chineseCountingThousand", "ideographTraditional"}:
-        return _int_to_chinese(value)
+        try:
+            return int_to_chinese_number(value)
+        except ValueError:
+            return None
     if number_format == "bullet":
         return "•"
     return None
-
-
-def _int_to_chinese(value: int) -> str:
-    if not 0 < value < 10000:
-        return str(value)
-    digits = "零一二三四五六七八九"
-    units = ((1000, "千"), (100, "百"), (10, "十"))
-    result, rest, zero_pending = "", value, False
-    for amount, label in units:
-        digit, rest = divmod(rest, amount)
-        if digit:
-            if zero_pending and result:
-                result += "零"
-            if not (amount == 10 and digit == 1 and not result):
-                result += digits[digit]
-            result += label
-            zero_pending = False
-        elif result and rest:
-            zero_pending = True
-    if rest:
-        if zero_pending:
-            result += "零"
-        result += digits[rest]
-    return result
 
 
 def _paragraph_num_pr(para_element, docx: DocxDocument):
@@ -395,9 +356,8 @@ def parse_docx(file_path: str) -> ParsedDocument:
     for child in body:
         if child.tag == TAG_P:
             # ---- 处理段落 ----
-            raw_text = extract_paragraph_text(child)
+            raw_text, note_references = _extract_paragraph_content(child)
             text = normalize_whitespace(raw_text)
-            note_references = extract_paragraph_note_references(child)
 
             if is_empty_text(text):
                 para_counter += 1  # 空段落不重排 para_index，但计数仍增加
@@ -549,7 +509,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
                     row_end = max(item[0] for item in positions)
                     col_start = min(item[1] for item in positions)
                     col_end = max(item[1] for item in positions)
-                    cell_text = extract_cell_text(cell)
+                    cell_text, note_references = _extract_cell_content(cell)
                     if is_empty_text(cell_text):
                         continue
 
@@ -565,7 +525,7 @@ def parse_docx(file_path: str) -> ParsedDocument:
                         body_order=tbl_body_order,  # 共享表格的 body_order
                         block_order=block_order,
                         para_index=None,  # table_cell 无 para_index
-                        note_references=extract_cell_note_references(cell),
+                        note_references=note_references,
                         table_index=table_index,
                         row_index=row_idx,
                         cell_index=cell_idx,

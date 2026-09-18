@@ -1,8 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
-import ssl
-import urllib.error
 
+import httpx
 import pytest
 
 from ccitecheck.retrieval.sources.pkulaw.client import (
@@ -15,19 +13,18 @@ from ccitecheck.retrieval.sources.pkulaw.client import (
 def test_ssl_error_is_retried(monkeypatch):
     calls = 0
 
-    class Response:
-        def __enter__(self): return self
-        def __exit__(self, *args): return None
-        def read(self): return b'{"result": {}}'
-
-    def urlopen(*args, **kwargs):
+    def handler(request):
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise ssl.SSLError("unexpected eof")
-        return Response()
+            raise httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING]", request=request)
+        return httpx.Response(200, json={"result": {}})
 
-    monkeypatch.setattr("ccitecheck.retrieval.sources.pkulaw.client.urllib.request.urlopen", urlopen)
+    client_http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
+        lambda: client_http,
+    )
     monkeypatch.setattr("ccitecheck.retrieval.sources.pkulaw.client.time.sleep", lambda _: None)
     client = PkulawMcpClient(access_token="test")
     assert client._call_tool("/test", "test", {}) == {"result": {}}
@@ -37,7 +34,7 @@ def test_ssl_error_is_retried(monkeypatch):
 def test_missing_token_fails_before_network(monkeypatch):
     monkeypatch.setenv("PKULAW_ACCESS_TOKEN", "")
     monkeypatch.setattr(
-        "ccitecheck.retrieval.sources.pkulaw.client.urllib.request.urlopen",
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
         lambda *args, **kwargs: pytest.fail("network should not be called"),
     )
 
@@ -58,15 +55,15 @@ def test_account_failures_open_circuit_without_repeated_calls(
 ):
     calls = 0
 
-    def urlopen(*args, **kwargs):
+    def handler(request):
         nonlocal calls
         calls += 1
-        raise urllib.error.HTTPError(
-            "https://example.test", status, "error", {}, BytesIO(b'{"error":"detail"}')
-        )
+        return httpx.Response(status, json={"error": "detail"})
 
+    client_http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(
-        "ccitecheck.retrieval.sources.pkulaw.client.urllib.request.urlopen", urlopen
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
+        lambda: client_http,
     )
     client = PkulawMcpClient(access_token="test")
 
@@ -81,15 +78,15 @@ def test_account_failures_open_circuit_without_repeated_calls(
 def test_concurrent_auth_failures_only_probe_upstream_once(monkeypatch):
     calls = 0
 
-    def urlopen(*args, **kwargs):
+    def handler(request):
         nonlocal calls
         calls += 1
-        raise urllib.error.HTTPError(
-            "https://example.test", 401, "unauthorized", {}, BytesIO(b"unauthorized")
-        )
+        return httpx.Response(401, text="unauthorized")
 
+    client_http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(
-        "ccitecheck.retrieval.sources.pkulaw.client.urllib.request.urlopen", urlopen
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
+        lambda: client_http,
     )
     client = PkulawMcpClient(access_token="test")
 
@@ -106,15 +103,15 @@ def test_concurrent_auth_failures_only_probe_upstream_once(monkeypatch):
 def test_exhausted_service_failures_open_short_circuit(monkeypatch):
     calls = 0
 
-    def urlopen(*args, **kwargs):
+    def handler(request):
         nonlocal calls
         calls += 1
-        raise urllib.error.HTTPError(
-            "https://example.test", 503, "unavailable", {}, BytesIO(b"unavailable")
-        )
+        return httpx.Response(503, text="unavailable")
 
+    client_http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(
-        "ccitecheck.retrieval.sources.pkulaw.client.urllib.request.urlopen", urlopen
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
+        lambda: client_http,
     )
     monkeypatch.setattr(
         "ccitecheck.retrieval.sources.pkulaw.client.time.sleep", lambda _: None
@@ -127,3 +124,30 @@ def test_exhausted_service_failures_open_short_circuit(monkeypatch):
         client._call_tool("/test", "test", {})
 
     assert calls == 3
+
+
+def test_exhausted_network_failure_does_not_block_later_requests(monkeypatch):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectTimeout("TLS handshake timed out", request=request)
+
+    client_http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        "ccitecheck.retrieval.sources.pkulaw.client.pkulaw_http_client",
+        lambda: client_http,
+    )
+    monkeypatch.setattr(
+        "ccitecheck.retrieval.sources.pkulaw.client.time.sleep", lambda _: None
+    )
+    client = PkulawMcpClient(access_token="test")
+
+    with pytest.raises(PkulawMcpError, match="handshake"):
+        client._call_tool("/test", "test", {})
+    with pytest.raises(PkulawMcpError, match="handshake") as second:
+        client._call_tool("/test", "test", {})
+
+    assert "暂停重复请求" not in str(second.value)
+    assert calls == 6

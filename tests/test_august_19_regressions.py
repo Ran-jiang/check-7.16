@@ -239,7 +239,7 @@ def test_bare_law_identity_is_kept_as_raw_candidate():
     source = claims[0].entities.legal_sources[0]
     assert source.title == "星河数据治理法"
     assert source.raw_title_candidate == "星河数据治理法"
-    assert source.canonical_title is None
+    assert source.canonical_title == "中华人民共和国星河数据治理法"
     assert source.articles[0].article == "第十条"
 
 

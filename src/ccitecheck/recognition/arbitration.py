@@ -22,7 +22,6 @@ import logging
 
 from ..domain.document import Anchor, BlockRelationType, ParsedDocument
 
-from .filters import is_out_of_scope_text
 from .anchor_text import parse_anchor_number, rebuild_anchor_text
 from ..domain.citation import (
     Claim,
@@ -277,14 +276,13 @@ def arbitrate_claim_candidates(
 
     处理顺序（严格按设计规范 §8）：
       1. 硬校验：claim_type 合法、anchor_ids 非空、全部存在于 parsed_doc、编号连续
-      2. out-of-scope 过滤
-      3. 从 anchors 重建 claim.text
-      4. 实体子串校验
-      5. 去重合并：(claim_type, tuple(anchor_ids)) 相同 → 合并
-      6. 完整性裁决：子集候选 → 保留更长的
-      7. 不同位置不合并
-      8. 排序与编号
-      9. 派生原文与承前法源定位
+      2. 从 anchors 重建 claim.text
+      3. 实体子串校验
+      4. 去重合并：(claim_type, tuple(anchor_ids)) 相同 → 合并
+      5. 完整性裁决：子集候选 → 保留更长的
+      6. 不同位置不合并
+      7. 排序与编号
+      8. 派生原文与承前法源定位
 
     Args:
         candidates: 所有规则候选
@@ -328,30 +326,11 @@ def arbitrate_claim_candidates(
     if not passed:
         return []
 
-    # ---- 第2步：out-of-scope 过滤 ----
-    # 重建文本用于过滤判断
-    filtered: list[ClaimCandidate] = []
-    for cand in passed:
-        text = _rebuild_text(cand.anchor_ids, anchor_map)
-        # 含法源的候选绝不过滤（设计决策 2.3）
-        has_legal_source = (
-            hasattr(cand.entities, "legal_sources") and cand.entities.legal_sources
-        )
-        if has_legal_source:
-            filtered.append(cand)
-        elif not is_out_of_scope_text(text):
-            filtered.append(cand)
-        else:
-            logger.debug("候选被 out-of-scope 过滤: %s", cand.anchor_ids)
-
-    if not filtered:
-        return []
-
-    # ---- 第3步：去重合并 ----
+    # ---- 第2步：去重合并 ----
     # key = (claim_type, tuple(anchor_ids))
     merged: dict[tuple, ClaimCandidate] = {}
 
-    for cand in filtered:
+    for cand in passed:
         key = (cand.claim_type, tuple(cand.anchor_ids))
 
         if key in merged:

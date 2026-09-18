@@ -8,8 +8,7 @@ from ccitecheck.application import (
     verify_document_claims,
 )
 from ccitecheck.domain.citation import ClaimDocument
-from ccitecheck.domain.checks import CheckVerdict
-from ccitecheck.domain.statute_results import StatuteMeaningCheck
+from ccitecheck.domain.statute_results import LegalApplicationCheck
 from ccitecheck.infrastructure.database import connect, init_db, upsert_article, upsert_law
 
 
@@ -95,7 +94,7 @@ def test_surface_title_citation_uses_canonical_title_for_lookup(tmp_path):
     assert verified.statute_results[0].evidence.law_title == "中华人民共和国民法典"
 
 
-def test_semantic_comparison_receives_complete_claim_text(tmp_path):
+def test_application_comparison_receives_complete_claim_text(tmp_path):
     law_db = tmp_path / "laws.sqlite"
     init_db(law_db)
     with connect(law_db) as connection:
@@ -118,9 +117,9 @@ def test_semantic_comparison_receives_complete_claim_text(tmp_path):
         def __init__(self):
             self.claim_text = None
 
-        def compare(self, claim_text, cited_source, evidence):
-            self.claim_text = claim_text
-            return StatuteMeaningCheck(verdict=CheckVerdict.PASS)
+        def compare_application(self, original_text, authorities):
+            self.claim_text = original_text
+            return LegalApplicationCheck(verdict="pass")
 
     checker = CaptureChecker()
     recognized = extract_document_claims(parse_and_validate_document(document_path))
@@ -132,4 +131,5 @@ def test_semantic_comparison_receives_complete_claim_text(tmp_path):
 
     assert checker.claim_text == text
     assert verified.statute_results[0].claim_text == text
+    assert not hasattr(verified.statute_results[0], "meaning_check")
     assert "verification" not in recognized.model_dump_json()

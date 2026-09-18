@@ -14,6 +14,7 @@ from .citation import (
     NoteContext,
     SourceLocation,
 )
+from .citation_integrity import legal_source_alias_index
 
 
 class RawCitationLocator(BaseModel):
@@ -34,7 +35,8 @@ class RawLegalMention(BaseModel):
     mention_id: str
     raw_title: str | None = None
     raw_title_candidate: str | None = None
-    raw_year: str | None = None
+    raw_time: str | None = None
+    jurisdiction: str | None = None
     article_raw: str | None = None
     paragraphs_raw: list[str] = Field(default_factory=list)
     items_raw: list[str] = Field(default_factory=list)
@@ -92,26 +94,50 @@ def from_legacy_claim(claim: Claim) -> RawClaim:
     legal_mentions: list[RawLegalMention] = []
     case_mentions: list[RawCaseMention] = []
     entities = claim.entities
-    for source_index, source in enumerate(getattr(entities, "legal_sources", []), 1):
+    sources = list(getattr(entities, "legal_sources", []))
+    citations = list(getattr(entities, "citations", []))
+    source_by_title = legal_source_alias_index(sources)
+    cited_source_ids: set[int] = set()
+    for citation_index, citation in enumerate(citations, 1):
+        source = source_by_title.get(citation.law_title)
+        if source is None:
+            continue
+        cited_source_ids.add(id(source))
+        legal_mentions.append(RawLegalMention(
+            mention_id=citation.mention_id or f"{claim.claim_id}:law:{citation_index}",
+            raw_title=source.title or None,
+            raw_title_candidate=source.raw_title_candidate,
+            raw_time=source.raw_time,
+            jurisdiction=source.jurisdiction,
+            article_raw=citation.locator.article,
+            paragraphs_raw=(
+                [citation.locator.paragraph] if citation.locator.paragraph else []
+            ),
+            items_raw=[citation.locator.item] if citation.locator.item else [],
+            recognition_form=source.recognition.form,
+            mention_span=source.recognition.mention_span,
+            citation_span=citation.citation_span,
+            inherited_from=_inherited_from(source),
+            role=citation.role,
+        ))
+    for source_index, source in enumerate(sources, 1):
+        if id(source) in cited_source_ids:
+            continue
         articles = source.articles or [None]
         for article_index, article in enumerate(articles, 1):
             legal_mentions.append(RawLegalMention(
                 mention_id=f"{claim.claim_id}:law:{source_index}:{article_index}",
                 raw_title=source.title or None,
                 raw_title_candidate=source.raw_title_candidate,
+                raw_time=source.raw_time,
+                jurisdiction=source.jurisdiction,
                 article_raw=article.article if article else None,
                 paragraphs_raw=list(article.paragraphs) if article else [],
                 items_raw=list(article.items) if article else [],
                 structures_raw=[item.label for item in source.structures],
                 recognition_form=source.recognition.form,
                 mention_span=source.recognition.mention_span,
-                inherited_from=(
-                    InheritedFrom(
-                        anchor_id=source.recognition.inherited_from.anchor_id,
-                        source_location=source.recognition.inherited_from.source_location,
-                    )
-                    if source.recognition.inherited_from else None
-                ),
+                inherited_from=_inherited_from(source),
             ))
     for unresolved_index, mention in enumerate(
         getattr(entities, "unresolved_legal_mentions", []), 1
@@ -150,6 +176,16 @@ def from_legacy_claim(claim: Claim) -> RawClaim:
             ClaimRelation.model_validate(item)
             for item in getattr(entities, "structural_relations", [])
         ],
+    )
+
+
+def _inherited_from(source) -> InheritedFrom | None:
+    inherited = source.recognition.inherited_from
+    if inherited is None:
+        return None
+    return InheritedFrom(
+        anchor_id=inherited.anchor_id,
+        source_location=inherited.source_location,
     )
 
 

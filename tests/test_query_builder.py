@@ -13,13 +13,20 @@ def test_law_queries_strip_version_and_separate_fulltext_terms():
         "并采取必要的安全措施。"
     )
 
-    assert build_law_title_query("《网络安全法（2025修正）》") == "网络安全法"
+    assert build_law_title_query("《网络安全法（2025修正）》") == "中华人民共和国网络安全法"
     assert build_law_fulltext_query(context, "网络安全法") == (
         "网络运营者应当保护用户信息 并采取必要的安全措施"
     )
     semantic = build_law_semantic_query(context, "网络安全法（2025修正）")
-    assert semantic.startswith("在《网络安全法》中检索")
+    assert semantic.startswith("在《中华人民共和国网络安全法》中检索")
     assert "第十二条" not in semantic
+
+
+def test_law_title_matching_accepts_ordinal_revision_annotation():
+    from ccitecheck.query_construction.matching import equivalent_law_titles
+
+    title = "最高人民法院关于审理民间借贷案件适用法律若干问题的规定"
+    assert equivalent_law_titles(title, title + "(2020第二次修正)")
 
 
 def test_case_queries_keep_case_name_and_remove_empty_connectors():

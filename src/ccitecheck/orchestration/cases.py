@@ -18,6 +18,7 @@ from ..domain.case_results import (
 )
 from ..domain.checks import ExecutionStatus
 from ..domain.revisions import RevisionProposal
+from ..infrastructure.debug_timing import bind_current_timer, measure
 from ..query_construction.strategies.common import build_case_keyword_query, build_case_semantic_query
 from ..retrieval.sources.pkulaw.cases import CaseSearcher
 from ..retrieval.sources.pkulaw.client import (
@@ -38,7 +39,7 @@ from ..verification.cases.identity import (
     same_court as _same_court,
 )
 
-_CASE_LOOKUP_WORKERS = 6
+_CASE_LOOKUP_WORKERS = 4
 @dataclass(frozen=True)
 class _RouteOutcome:
     records: list[PkulawCaseRecord]
@@ -58,7 +59,11 @@ def verify_case_claims(
     with ThreadPoolExecutor(max_workers=_CASE_LOOKUP_WORKERS) as pool:
         outcomes = list(
             pool.map(
-                lambda pair: _verify_case_reference(searcher, pair[0], pair[1]),
+                bind_current_timer(
+                    lambda pair: _verify_case_reference(
+                        searcher, pair[0], pair[1]
+                    )
+                ),
                 refs,
             )
         )
@@ -286,6 +291,16 @@ def _match_case_record(case_number, case_name, court, records, document_type=Non
                 return matches[0], "exact_title_and_court", None
         if len(matches) == 1:
             return matches[0], "exact_case_title", None
+        contains = [
+            record for record in records
+            if (
+                target_title
+                and "典型案例" in record.title
+                and target_title in _normalize_case_name(record.title)
+            )
+        ]
+        if len(contains) == 1:
+            return contains[0], "contained_case_title", None
         guiding_id = _guiding_case_id(target_title)
         if guiding_id:
             matches = [record for record in records if _guiding_case_id(_normalize_case_name(record.title)) == guiding_id]
@@ -509,7 +524,8 @@ def _check_holding(claim, evidence, semantic_checker):
             skipped_reason="semantic_disabled",
         )
     try:
-        return compare(claim.text, evidence.holding, evidence.title)
+        with measure("comparison.llm"):
+            return compare(claim.text, evidence.holding, evidence.title)
     except Exception as exc:
         from ..verification.semantic import SemanticCheckError
         if not isinstance(exc, SemanticCheckError):

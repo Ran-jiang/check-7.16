@@ -9,20 +9,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .citation import NoteContext, SourceLocation
 from .evidence import ArticleEvidence, LookupStatus, SourceTrace
-from .checks import CheckVerdict, ExecutionStatus
+from .checks import ExecutionStatus
 from .revisions import RevisionProposal
 
 
 class StatuteErrorCode(str, Enum):
+    FORMAT_ERROR = "format_error"
     SOURCE_NOT_FOUND = "source_not_found"
-    SOURCE_NAME_AMBIGUOUS = "source_name_ambiguous"
     LAW_NAME_ERROR = "law_name_error"
     ARTICLE_NOT_FOUND = "article_not_found"
     ARTICLE_NUMBER_ERROR = "article_number_error"
     CITATION_HIERARCHY_ERROR = "citation_hierarchy_error"
     SOURCE_REPEALED = "source_repealed"
     SOURCE_AMENDED = "source_amended"
-    MEANING_DISTORTED = "meaning_distorted"
 
 
 class StatuteLocator(BaseModel):
@@ -50,6 +49,7 @@ class StructuredParagraph(BaseModel):
     paragraph_no: str
     text: str
     items: list[StructuredItem] = Field(default_factory=list)
+    introduction: str = ""
 
 
 class StructuredArticle(BaseModel):
@@ -63,18 +63,16 @@ class StatuteLocationCandidate(BaseModel):
     locator: StatuteLocator
     text: str
     source_url: str | None = None
+    confirmed_level: Literal["article", "paragraph", "item"] | None = None
+    evidence_spans: list[tuple[int, int]] = Field(default_factory=list)
+    coverage: float = Field(default=0, ge=0, le=1)
+    supported: bool = False
 
 
 class StatuteLocationResolution(BaseModel):
     status: Literal["resolved", "candidates_pending", "not_found"]
     candidates: list[StatuteLocationCandidate] = Field(default_factory=list)
     source_trace: SourceTrace | None = None
-
-
-class NestedReferenceMatch(BaseModel):
-    verdict: Literal["match", "not_nested", "locator_mismatch", "insufficient"]
-    matched_locator: str | None = None
-    reason: str = ""
 
 
 class StatuteFinding(BaseModel):
@@ -85,23 +83,7 @@ class StatuteFinding(BaseModel):
     cited_locator: StatuteLocator | None = None
     resolved_locator: StatuteLocator | None = None
     historical_version: StatuteVersion | None = None
-    location_recheck_required: bool = False
-    candidate_article_no: str | None = Field(
-        default=None,
-        description="LLM 提出的疑似实际对应条号（'第X条'），仅作二次核查的首轮线索，逐轮验证后才采用",
-    )
     revision: RevisionProposal | None = None
-
-
-class StatuteMeaningCheck(BaseModel):
-    execution_status: ExecutionStatus = ExecutionStatus.COMPLETED
-    verdict: CheckVerdict | None = None
-    findings: list[StatuteFinding] = Field(default_factory=list)
-    notes: str = ""
-    error_code: str | None = None
-    retryable: bool = False
-    skipped_reason: str | None = None
-    job_id: str | None = None
 
 
 class LegalApplicationReview(BaseModel):
@@ -109,8 +91,7 @@ class LegalApplicationReview(BaseModel):
 
     error_type: Literal[
         "rule_fact_mismatch",
-        "direct_quote_unfaithful",
-        "application_logic_error",
+        "meaning_distorted",
         "legal_alias_inconsistent",
         "format_error",
     ]
@@ -140,15 +121,18 @@ class StatuteVerificationResult(BaseModel):
     law_title: str
     recognition_form: Literal["explicit", "bare", "inherited"] = "explicit"
     law_identity_resolved: bool = True
-    law_identity_resolver: Literal["direct", "lexicon", "context", "pkulaw"] | None = None
+    law_identity_resolver: Literal[
+        "direct", "structure", "lexicon", "context", "pkulaw"
+    ] | None = None
     jurisdiction: str = "CN"
     cited_locators: list[StatuteLocator] = Field(default_factory=list)
     lookup_status: LookupStatus
     evidence: ArticleEvidence | None = None
+    correction_evidence: ArticleEvidence | None = None
+    location_resolution: StatuteLocationResolution | None = None
     findings: list[StatuteFinding] = Field(default_factory=list)
     outcome: Literal["pass", "issue", "review", "bug"]
     message: str = ""
-    meaning_check: StatuteMeaningCheck | None = None
     application_check: LegalApplicationCheck | None = None
     reference_role: Literal["direct", "nested", "carry_forward"] = "direct"
     parent_check_id: str | None = None
@@ -169,10 +153,8 @@ __all__ = [
     "StatuteLocator",
     "StatuteLocationCandidate",
     "StatuteLocationResolution",
-    "NestedReferenceMatch",
     "LegalApplicationCheck",
     "LegalApplicationReview",
-    "StatuteMeaningCheck",
     "StatuteVersion",
     "StructuredArticle",
     "StructuredItem",

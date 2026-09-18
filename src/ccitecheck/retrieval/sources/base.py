@@ -19,6 +19,10 @@ class LookupRequest:
     law_title: str
     article_no: Optional[str] = None
     context_text: str = ""
+    query_text: Optional[str] = None
+    existence_only: bool = False
+    version_hint: Optional[str] = None
+    jurisdiction: Optional[str] = None
 
 @dataclass
 class LookupResult:

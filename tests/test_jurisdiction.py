@@ -18,15 +18,18 @@ from ccitecheck.domain.evidence import CaseLookupStatus, LookupStatus
 from ccitecheck.infrastructure.database import init_db
 from ccitecheck.orchestration.cases import verify_case_claims
 from ccitecheck.recognition.cases import extract_case_refs
-from ccitecheck.query_construction.jurisdiction import detect_jurisdiction
+from ccitecheck.query_construction.jurisdiction import (
+    detect_jurisdiction,
+    detect_jurisdiction_with_basis,
+)
 from ccitecheck.recognition.statutes import extract_legal_sources
 
 
 # ---------- 法域检测 ----------
 
 def test_detect_jurisdiction_by_adjacent_prefix():
-    assert detect_jurisdiction("著作权法", "大陆法系国家多规定，德国") == "FOREIGN"
-    assert detect_jurisdiction("著作权法", "……参见法国") == "FOREIGN"
+    assert detect_jurisdiction("著作权法", "大陆法系国家多规定，德国") == "DE"
+    assert detect_jurisdiction("著作权法", "……参见法国") == "FR"
     assert detect_jurisdiction("人工智能统一规则", "2021年4月，欧盟") == "EU"
     assert detect_jurisdiction("著作权法", "依据我国") == "CN"
     assert detect_jurisdiction("著作权法", "") == "CN"
@@ -39,8 +42,17 @@ def test_detect_jurisdiction_generic_mentions_do_not_trigger():
 
 def test_detect_jurisdiction_by_alias_table():
     assert detect_jurisdiction("通用数据保护条例", "") == "EU"
-    assert detect_jurisdiction("知识产权法典", "") == "FOREIGN"
+    assert detect_jurisdiction("知识产权法典", "") == "FR"
     assert detect_jurisdiction("GDPR", "") == "EU"
+
+
+def test_detect_jurisdiction_inside_title_and_reject_conflicts():
+    assert detect_jurisdiction("德国著作权法", "") == "DE"
+    assert detect_jurisdiction("欧盟人工智能统一规则", "") == "EU"
+    assert detect_jurisdiction("中国数据安全法", "") == "CN"
+    assert detect_jurisdiction_with_basis(
+        "德国著作权法", "法国"
+    ) == ("UNKNOWN", "conflicting_explicit_signals")
 
 
 def test_recognition_does_not_carry_jurisdiction():
@@ -50,7 +62,7 @@ def test_recognition_does_not_carry_jurisdiction():
     )
     assert all(source.jurisdiction is None for source in sources)
 
-    assert detect_jurisdiction("著作权法", "德国") == "FOREIGN"
+    assert detect_jurisdiction("著作权法", "德国") == "DE"
     assert detect_jurisdiction("著作权法", "依据我国") == "CN"
     assert detect_jurisdiction("通用数据保护条例", "欧盟") == "EU"
 
@@ -61,7 +73,7 @@ def test_extract_case_refs_flags_foreign_citations():
     refs = extract_case_refs(
         "美国联邦最高法院在 Roe v. Wade 案及 347 U.S. 483 判例中确立了相关规则。"
     )
-    foreign = [r for r in refs if r.jurisdiction == "FOREIGN"]
+    foreign = [r for r in refs if r.jurisdiction == "UNKNOWN"]
     assert any("Roe" in (r.case_name or "") for r in foreign)
     assert any("U.S." in (r.case_name or "") for r in foreign)
 
@@ -113,7 +125,7 @@ def test_foreign_statute_is_intercepted_without_lookup(tmp_path: Path):
     assert not check.findings
     assert check.outcome == "bug"
     assert check.source_attempts[0].source_name == "CCiteCheck 法域分类"
-    assert "超出本产品核查边界" in check.source_attempts[0].message
+    assert "当前未覆盖自动核查" in check.source_attempts[0].message
 
 
 def test_eu_statute_without_gateway_reports_not_configured(
@@ -121,6 +133,7 @@ def test_eu_statute_without_gateway_reports_not_configured(
 ):
     # 置空而非删除：本机 .env 配置了真实网关，空串可挡住 load_project_env 的 setdefault
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "")
+    monkeypatch.setenv("ANSVAR_MCP_GATEWAY", "")
     db_path = tmp_path / "laws.sqlite"
     init_db(db_path)
     frontend_doc = verify_claim_document(

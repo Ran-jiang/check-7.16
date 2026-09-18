@@ -20,7 +20,6 @@ from .statutes import (
     extract_alias_declarations,
     extract_articles_only,
     extract_legal_sources,
-    extract_unresolved_legal_mentions,
     extract_partial_refs,
     has_article_reference,
 )
@@ -35,6 +34,8 @@ _RELATION_PRIORITY = {
 
 _QUOTED_ANCHOR = re.compile(r"^[“‘\"].+[”’\"]\s*$")
 _CITATION_AFTER_QUOTE = re.compile(r"^\s*(?:[-—–]+\s*)?《")
+_CASE_FOLLOWUP = re.compile(r"^(?:涉案|案涉|法院|该案|本案|因此|裁判)")
+_CASE_HOLDING_FOLLOWUP = re.compile(r"(?:法院认为|裁判(?:认为|规则|要旨)|该案.*(?:认为|指出|明确|确立|规则)|充分依据)")
 
 
 def extract_rule_candidates(
@@ -51,11 +52,6 @@ def extract_rule_candidates(
         anchor.anchor: extract_legal_sources(anchor.text) if include_statutes else []
         for anchor in parsed_doc.anchors
     }
-    anchor_unresolved = {
-        anchor.anchor: extract_unresolved_legal_mentions(anchor.text)
-        if include_statutes else []
-        for anchor in parsed_doc.anchors
-    }
     records: dict[str, list[tuple[str, list]]] = {}
     previous_anchor = None
     for anchor in parsed_doc.anchors:
@@ -70,16 +66,17 @@ def extract_rule_candidates(
         text = anchor.text
         current_block = block_map.get(anchor.block_id)
         legal_sources = anchor_sources[anchor.anchor]
-        unresolved_mentions = anchor_unresolved[anchor.anchor]
 
-        if legal_sources or unresolved_mentions:
+        if legal_sources:
             candidate = _make_legal_candidate(
                 anchor.anchor,
                 legal_sources,
-                unresolved_mentions,
                 extract_alias_declarations(text),
             )
             if candidate:
+                candidate.anchor_ids = _legal_claim_anchor_ids(
+                    anchor, current_block, parsed_doc, anchor_sources
+                )
                 if (
                     previous_anchor is not None
                     and _QUOTED_ANCHOR.fullmatch(previous_anchor.text)
@@ -108,7 +105,6 @@ def extract_rule_candidates(
 
         if (
             not legal_sources
-            and not unresolved_mentions
             and current_block
             and has_article_reference(text)
         ):
@@ -137,10 +133,13 @@ def extract_rule_candidates(
 
         case_refs = extract_case_refs(text) if include_cases else []
         if case_refs:
-            if has_holding_trigger(text, case_refs):
+            case_anchor_ids = _case_holding_anchor_ids(
+                anchor, current_block, parsed_doc, anchor_sources
+            )
+            if len(case_anchor_ids) > 1 or has_holding_trigger(text, case_refs):
                 candidates.append(ClaimCandidate(
                     claim_type=ClaimType.CASE_HOLDING_PARAPHRASE,
-                    anchor_ids=[anchor.anchor],
+                    anchor_ids=case_anchor_ids,
                     entities=CaseHoldingParaphraseEntities(
                         case_refs=case_refs,
                     ),
@@ -159,6 +158,48 @@ def extract_rule_candidates(
         if anchor_id not in consumed_table_sources
     )
     return candidates
+
+
+def _legal_claim_anchor_ids(anchor, block, parsed_doc, anchor_sources) -> list[str]:
+    """同一段内，法条后的解释和结论属于同一主张，直到出现下一处引用。"""
+    if block is None or anchor.anchor not in block.sentence_anchors:
+        return [anchor.anchor]
+    anchor_map = {item.anchor: item for item in parsed_doc.anchors}
+    start = block.sentence_anchors.index(anchor.anchor)
+    following: list[str] = []
+    for anchor_id in block.sentence_anchors[start + 1:]:
+        candidate = anchor_map.get(anchor_id)
+        if (
+            candidate is None
+            or anchor_sources.get(anchor_id)
+            or extract_case_refs(candidate.text)
+            or has_article_reference(candidate.text)
+        ):
+            break
+        following.append(anchor_id)
+    return [anchor.anchor, *following]
+
+
+def _case_holding_anchor_ids(anchor, block, parsed_doc, anchor_sources) -> list[str]:
+    """把同段紧随案例名的事实与裁判规则归入同一条案例主张。"""
+    if block is None or anchor.anchor not in block.sentence_anchors:
+        return [anchor.anchor]
+    anchor_map = {item.anchor: item for item in parsed_doc.anchors}
+    start = block.sentence_anchors.index(anchor.anchor)
+    following: list[str] = []
+    has_holding = False
+    for anchor_id in block.sentence_anchors[start + 1:start + 6]:
+        candidate = anchor_map.get(anchor_id)
+        if (
+            candidate is None
+            or anchor_sources.get(anchor_id)
+            or extract_case_refs(candidate.text)
+            or not _CASE_FOLLOWUP.match(candidate.text)
+        ):
+            break
+        following.append(anchor_id)
+        has_holding = has_holding or bool(_CASE_HOLDING_FOLLOWUP.search(candidate.text))
+    return [anchor.anchor, *following] if has_holding else [anchor.anchor]
 
 
 def _anchors_are_structurally_adjacent(previous, current, block_map: dict) -> bool:
@@ -274,7 +315,9 @@ def _build_inherited_sources(
         ]
         inherited.append(LegalSource(
             title=source.title,
+            canonical_title=source.canonical_title,
             raw_title_candidate=source.raw_title_candidate,
+            raw_time=source.raw_time,
             articles=copied_articles,
             recognition=LegalSourceRecognition(
                 form="inherited",
@@ -288,17 +331,15 @@ def _build_inherited_sources(
 def _make_legal_candidate(
     anchor_id: str,
     legal_sources: list,
-    unresolved_mentions: list | None = None,
     alias_declarations: list[AliasDeclaration] | None = None,
 ) -> ClaimCandidate | None:
-    if not legal_sources and not unresolved_mentions:
+    if not legal_sources:
         return None
     return ClaimCandidate(
         claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
         anchor_ids=[anchor_id],
         entities=LegalSourceClaimEntities(
             legal_sources=legal_sources,
-            unresolved_legal_mentions=unresolved_mentions or [],
             alias_declarations=alias_declarations or [],
         ),
     )

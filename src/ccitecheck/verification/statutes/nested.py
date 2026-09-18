@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from typing import Protocol
 
 from ...domain.citation import ArticleRef, Claim
 from ...domain.evidence import SourceTrace
-from ...domain.statute_results import (
-    NestedReferenceMatch,
-)
-from ...infrastructure.database import normalize_title
-from ..semantic import SemanticChecker, SemanticCheckError
+from ...infrastructure.database import normalize_article_key, normalize_title
 from ...recognition.relations import relation_candidates
+from ...recognition.statutes import ARTICLE_PATTERN
 
 
 class NestedItem(Protocol):
@@ -33,18 +29,11 @@ class NestedItem(Protocol):
     def lookup_key(self) -> tuple: ...
 
 
-_ARTICLE_MENTION = re.compile(
-    r"第[〇零一二三四五六七八九十百千万两0-9]+条"
-    r"(?:之[〇零一二三四五六七八九十百千万两0-9]+)?"
-)
-
-
 def resolve_nested_relations(
     items: list[NestedItem],
     lookup_results: dict[tuple, tuple[object, list[SourceTrace]]],
-    semantic_checker: SemanticChecker | None,
 ) -> None:
-    """以文本结构召回候选，以主法条和 child 现行原文确认关系。"""
+    """以主法条权威原文中明确出现的条号确认内部转引。"""
     candidates = relation_candidates(items)
     for child_index, parent_indices in candidates.items():
         child = items[child_index]
@@ -60,38 +49,27 @@ def resolve_nested_relations(
             if not parent_text:
                 unavailable_parent = parent_index
                 continue
-            child_lookup = lookup_results.get(child.lookup_key)
-            child_evidence = child_lookup[0].evidence if child_lookup else None
             if not _parent_could_reference_child(parent_text, parent, child):
                 continue
-            if child_evidence is None or not child_evidence.article_text:
-                insufficient = (parent_index, "主法条疑似存在该转引，但未取得所引条文原文")
-                continue
-            if semantic_checker is None:
-                insufficient = (parent_index, "内部转引语义核查服务不可用")
-                continue
-            try:
-                verdict = semantic_checker.compare_nested_reference(
-                    parent_source=_reference_label(parent),
-                    parent_text=parent_text,
-                    child_source=_reference_label(child),
-                    child_text=child_evidence.article_text,
+            mentions = {
+                normalize_article_key(match.group()): match.group()
+                for match in ARTICLE_PATTERN.finditer(parent_text)
+            }
+            cited = normalize_article_key(child.article_no or "")
+            if cited in mentions:
+                _confirm(
+                    child, parent, parent_index, parent_text, "confirmed",
+                    f"主法条原文明示转引{mentions[cited]}", mentions[cited],
                 )
-            except SemanticCheckError as exc:
-                verdict = NestedReferenceMatch(verdict="insufficient", reason=str(exc))
-            if verdict.verdict == "not_nested":
+                break
+            if len(mentions) != 1:
+                insufficient = (parent_index, "主法条原文包含多个转引条号，无法唯一对应")
                 continue
-            if verdict.verdict == "insufficient":
-                insufficient = (parent_index, verdict.reason)
-                continue
+            candidate = next(iter(mentions.values()))
             _confirm(
-                child,
-                parent,
-                parent_index,
-                parent_text,
-                "confirmed" if verdict.verdict == "match" else "locator_mismatch",
-                verdict.reason,
-                verdict.matched_locator,
+                child, parent, parent_index, parent_text, "locator_mismatch",
+                f"主法条原文明示转引{candidate}，与所引{child.article_no or '条号'}不一致",
+                candidate,
             )
             break
         else:
@@ -115,7 +93,7 @@ def resolve_nested_relations(
 def _parent_could_reference_child(
     parent_text: str, parent: NestedItem, child: NestedItem,
 ) -> bool:
-    if not _ARTICLE_MENTION.search(parent_text):
+    if not ARTICLE_PATTERN.search(parent_text):
         return False
     if normalize_title(parent.law_title) == normalize_title(child.law_title):
         return True
@@ -143,10 +121,6 @@ def _confirm(
     child.relation_candidate_article_no = candidate_article_no
     child.relation_parent_authoritative_text = parent_text
     child.reference_role = "nested"
-
-
-def _reference_label(item: NestedItem) -> str:
-    return f"《{item.law_title}》{item.article_no or ''}"
 
 
 __all__ = ["resolve_nested_relations"]

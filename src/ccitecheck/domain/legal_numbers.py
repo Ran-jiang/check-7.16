@@ -34,6 +34,8 @@ def chinese_number_to_int(value: str) -> int | None:
     units = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000}
     if not text or any(char not in digits and char not in units for char in text):
         return None
+    if all(char in digits for char in text):
+        return int("".join(str(digits[char]) for char in text))
     total = current = 0
     for char in text:
         if char in digits:

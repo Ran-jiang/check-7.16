@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .citation import Claim, ClaimType, LegalSource
+from .law_titles import cn_title_shape_variants
 
 
 class CitationIntegrityError(ValueError):
@@ -124,8 +125,10 @@ def legal_source_alias_index(sources: list[LegalSource]) -> dict[str, LegalSourc
 
 def _source_names(source: LegalSource) -> set[str]:
     return {
-        name for name in (source.title, source.canonical_title)
+        variant
+        for name in (source.title, source.canonical_title)
         if name
+        for variant in cn_title_shape_variants(name)
     }
 
 

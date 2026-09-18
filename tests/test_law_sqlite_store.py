@@ -49,15 +49,25 @@ def test_seed_common_laws_and_alias_lookup(tmp_path: Path):
         assert alias["law_id"] == law["id"]
 
         expected_aliases = {
-            "婚姻家庭编解释（一）": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（一）",
-            "婚姻家庭编解释（二）": "最高人民法院关于适用《中华人民共和国民法典》婚姻家庭编的解释（二）",
-            "民间借贷规定": "最高人民法院关于审理民间借贷案件适用法律若干问题的规定",
-            "民诉解释": "最高人民法院关于适用《中华人民共和国民事诉讼法》的解释",
+            "合同编通则解释": "最高人民法院关于适用《中华人民共和国民法典》合同编通则若干问题的解释",
+            "担保制度解释": "最高人民法院关于适用《中华人民共和国民法典》有关担保制度的解释",
+            "公司法解释四": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（四）",
         }
         for short_title, canonical_title in expected_aliases.items():
             matched = find_law(conn, short_title)
             assert matched is not None
             assert matched["title"] == canonical_title
+
+
+def test_find_law_toggles_national_prefix_without_stored_alias(tmp_path: Path):
+    db_path = tmp_path / "laws.sqlite"
+    init_db(db_path)
+    with connect(db_path) as conn:
+        upsert_law(conn, {"title": "星河数据治理法", "source_type": "law"})
+        matched = find_law(conn, "中华人民共和国星河数据治理法")
+
+    assert matched is not None
+    assert matched["title"] == "星河数据治理法"
 
 
 def test_import_bundle_and_find_current_article(tmp_path: Path):

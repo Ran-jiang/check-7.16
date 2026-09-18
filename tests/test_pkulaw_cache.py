@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -20,6 +21,7 @@ from ccitecheck.retrieval.sources.pkulaw.client import (
     PkulawNotFoundError,
     PkulawMcpError,
 )
+from ccitecheck.retrieval.sources.pkulaw.models import PkulawRecognizedLaw
 from ccitecheck.retrieval.sources.pkulaw.statutes import PkulawFallbackSource
 
 
@@ -31,6 +33,8 @@ class FakeClient:
         self.list_calls = 0
         self.timeliness = list(timeliness)
         self.semantic_calls = 0
+        self.recognition_calls = 0
+        self.law_item_calls = 0
 
     def get_article(self, title, article_no):
         self.article_calls += 1
@@ -54,6 +58,16 @@ class FakeClient:
             )
         ]
 
+    def get_law_item_content(self, title, article_no):
+        self.law_item_calls += 1
+        return PkulawArticle(
+            title=title,
+            article_no=article_no,
+            article_text="条文全文",
+            implement_date="2021-01-01",
+            timeliness=["现行有效"],
+        )
+
     def get_law_list(self, title="", fulltext=""):
         self.list_calls += 1
         if "不存在" in title:
@@ -61,6 +75,15 @@ class FakeClient:
         return [
             PkulawLawRecord(title=title, url="https://x", timeliness=self.timeliness)
         ]
+
+    def recognize_laws(self, text):
+        self.recognition_calls += 1
+        return [PkulawRecognizedLaw(
+            mentioned_title=text,
+            canonical_title=text,
+            fulltext="第一条　缓存的法规全文。",
+            url="https://pkulaw.com/chl/cached.html",
+        )]
 
 
 @pytest.fixture()
@@ -89,6 +112,34 @@ def test_article_semantic_results_are_cached(cache_db):
     second = cached.search_law_articles_for_article("中华人民共和国民法典", "第一条")
     assert fake.semantic_calls == 1
     assert second[0].article_text == first[0].article_text
+
+
+def test_location_semantic_and_law_item_results_are_cached_once(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        semantic = list(pool.map(cached.search_law_articles, ["合同解除"] * 4))
+        items = list(pool.map(
+            lambda _: cached.get_law_item_content("中华人民共和国民法典", "第一条"),
+            range(4),
+        ))
+
+    assert fake.semantic_calls == 1
+    assert fake.law_item_calls == 1
+    assert all(result[0].article_text == "缓存条文" for result in semantic)
+    assert all(item.article_text == "条文全文" for item in items)
+
+
+def test_law_recognition_fulltext_is_cached(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+
+    first = cached.recognize_laws("中华人民共和国民法典")
+    second = cached.recognize_laws("中华人民共和国民法典")
+
+    assert fake.recognition_calls == 1
+    assert second[0].fulltext == first[0].fulltext
 
 
 def test_empty_article_semantic_result_is_negative_cached(cache_db):
@@ -139,7 +190,7 @@ def test_repeating_same_lookup_uses_only_cached_pkulaw_results(cache_db):
     assert (fake.article_calls, fake.list_calls) == calls_after_first
 
 
-def test_repealed_law_list_stores_minimal_payload(cache_db):
+def test_repealed_law_list_stores_full_metadata(cache_db):
     fake = FakeClient(timeliness=("废止或失效",))
     cached = CachedPkulawClient(fake, cache_db)
     cached.get_law_list(title="中华人民共和国合同法")
@@ -148,9 +199,32 @@ def test_repealed_law_list_stores_minimal_payload(cache_db):
     with connect_cache(cache_db) as conn:
         row = conn.execute("SELECT status, payload FROM cache_entries").fetchone()
     assert row["status"] == "repealed"
-    # 按约定：废止条目只存法名+时效，不存链接等完整元数据
-    assert "url" not in row["payload"]
+    assert "url" in row["payload"]
     assert "废止或失效" in row["payload"]
+
+
+def test_old_minimal_repealed_law_cache_is_refetched(cache_db):
+    fake = FakeClient(timeliness=("废止或失效",))
+    with connect_cache(cache_db) as conn:
+        conn.execute(
+            "INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "law",
+                "中华人民共和国合同法",
+                "repealed",
+                '[{"title":"中华人民共和国合同法","timeliness":["废止或失效"]}]',
+                1,
+                9999999999,
+            ),
+        )
+        conn.commit()
+
+    records = CachedPkulawClient(fake, cache_db).get_law_list(
+        title="中华人民共和国合同法"
+    )
+
+    assert fake.list_calls == 1
+    assert records[0].url == "https://x"
 
 
 def test_law_cache_uses_matching_record_not_first_candidate(cache_db):

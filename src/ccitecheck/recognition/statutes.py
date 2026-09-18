@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
-from ..domain.legal_numbers import chinese_number_to_int
+from ..domain.legal_numbers import chinese_number_to_int, int_to_chinese_number
 from ..domain.citation import (
     AliasDeclaration,
     ArticleRef,
@@ -24,8 +24,8 @@ from ..domain.citation import (
     LegalSourceRecognition,
     StructureRef,
     StructureUnit,
-    UnresolvedLegalMention,
 )
+from ..domain.law_titles import canonical_cn_title_shape, cn_title_shape_key
 
 
 # ============================================================
@@ -37,12 +37,50 @@ from ..domain.citation import (
 # 注意：书名号内文本可能包含空格、标点、数字等
 LEGAL_SOURCE_PATTERN = re.compile(r"《([^》]+)》")
 
-_SHORT_NAME_BRIDGE = re.compile(
-    r"\s*[（(]\s*"
-    r"(?:(?!以下简称|下称|简称为|简称)[^（）()《》]{1,80}[，,；;]\s*)?"
-    r"(?:以下简称|下称|简称为|简称)\s*"
+_RAW_TIME_PATTERN = re.compile(
+    r"现行|(?<!\d)\d{4}\s*年(?:\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?)?"
 )
-_SHORT_NAME_CLOSE = re.compile(r"\s*[）)]")
+_VERSION_TIME_PATTERN = re.compile(
+    r"^[（(]\s*((?:19|20)\d{2})\s*年?\s*(修正|修订|修改)\s*[）)]"
+)
+_BIBLIOGRAPHIC_PAGE = re.compile(
+    r"第\s*[一二三四五六七八九十百千零两〇0-9]+\s*页"
+)
+_BIBLIOGRAPHIC_PUBLISHER = re.compile(
+    r"[\u4e00-\u9fffA-Za-z0-9·]{2,30}出版社"
+    r"(?=\s*(?:[，,。；;：:]|(?:19|20)\d{2}\s*年|第[^，,。；;]{1,10}版|$))"
+)
+_BIBLIOGRAPHIC_EDITION = re.compile(
+    r"(?:19|20)\d{2}\s*年\s*(?:第\s*[一二三四五六七八九十百千零两〇0-9]+\s*版|版)"
+)
+_BIBLIOGRAPHIC_EDITOR = re.compile(
+    r"[\u4e00-\u9fff·]{2,20}(?:\s*[、,，]\s*[\u4e00-\u9fff·]{2,20})*"
+    r"\s*主编\s*[：:]\s*《"
+)
+_BIBLIOGRAPHIC_JOURNAL_ISSUE = re.compile(
+    r"《[^》\n]{2,80}》\s*(?:19|20)\d{2}\s*年\s*"
+    r"第\s*[一二三四五六七八九十百千零两〇0-9]+\s*期"
+)
+_BIBLIOGRAPHIC_VOLUME_ISSUE = re.compile(
+    r"第\s*[一二三四五六七八九十百千零两〇0-9]+\s*卷\s*"
+    r"第\s*[一二三四五六七八九十百千零两〇0-9]+\s*期"
+)
+_BIBLIOGRAPHIC_DOI = re.compile(
+    r"(?<![A-Za-z0-9])DOI\s*[:：]?\s*10\.\d{4,9}/[-._;()/:A-Z0-9]+",
+    re.IGNORECASE,
+)
+_BIBLIOGRAPHIC_ISSN = re.compile(
+    r"(?<![A-Za-z0-9])ISSN\s*[:：]?\s*\d{4}-\d{3}[\dX]",
+    re.IGNORECASE,
+)
+
+_ALIAS_DECLARATION_PATTERN = re.compile(
+    r"《(?P<full>[^》]+)》\s*[（(]\s*"
+    r"(?:(?!以下简称|下称|简称为|简称).){0,100}?"
+    r"(?:以下简称|下称|简称为|简称)\s*"
+    r"[“\"'‘]?\s*(?:《(?P<book_alias>[^》]+)》|(?P<plain_alias>[^”\"'’）)]{1,40}))"
+    r"\s*[”\"'’]?\s*[）)]"
+)
 
 # 国家标准/行业标准模式：GB/T XXXXX-XXXX 等（无书名号）
 # 例：GB/T 35273-2020 / GB/T 45674-2025 / GB 12345-2020
@@ -56,8 +94,13 @@ STANDARD_PATTERN = re.compile(
 # 条款号正则
 # 条：第X条 或 第X条之Y
 # 支持中文数字（一～十百千）和阿拉伯数字（0-9）
-_CN_NUM = r"[一二三四五六七八九十百千零\d]+"
-_CN_NUM_EXTRA = r"[一二三四五六七八九十]+"  # "之"后面的数字通常较小
+_CN_NUM = r"[一二三四五六七八九十百千零〇两\d]+"
+_CN_NUM_EXTRA = _CN_NUM  # "之"后面的数字通常较小
+
+_FOREIGN_BARE_ACT_PATTERN = re.compile(
+    rf"(?<![A-Za-z0-9])(?P<title>[A-Za-z][A-Za-z0-9 .'-]{{1,60}}?\s+Act)"
+    rf"(?P<locator>第{_CN_NUM}条(?:第{_CN_NUM}款)?(?:第[（(]?{_CN_NUM}[）)]?项)?)"
+)
 
 ARTICLE_PATTERN = re.compile(
     rf"第({_CN_NUM})条(?:之({_CN_NUM_EXTRA}))?"
@@ -65,7 +108,7 @@ ARTICLE_PATTERN = re.compile(
 
 # 条号范围：第X条至第Y条
 ARTICLE_RANGE_PATTERN = re.compile(
-    rf"第({_CN_NUM})条至第({_CN_NUM})条"
+    rf"第({_CN_NUM})条(?:至|到)第?({_CN_NUM})条"
 )
 
 # 省略“第”的阿拉伯数字范围，如“58-69条”“58—69条”。范围仅在已经
@@ -77,6 +120,9 @@ COMPACT_ARTICLE_RANGE_PATTERN = re.compile(
 # 款：第X款
 PARAGRAPH_PATTERN = re.compile(
     rf"第({_CN_NUM})款"
+)
+STANDALONE_PARAGRAPH_PATTERN = re.compile(
+    rf"^\s*(第({_CN_NUM})款)(?=\s*(?:规定|明确|指出|载明|要求|所称|[，,:：]))"
 )
 
 # 项：第（X）项 / 第(X)项 / 第X项
@@ -111,12 +157,12 @@ class PartialArticleRef:
 #   - 《规章制定程序条例》
 #   - 《党政机关公文处理工作条例》
 #
-# 排序注意：长后缀排在前面，避免"办法"被"法"误匹配。
-# 如"实施办法"必须优先于"办法"检查。
-
 LEGAL_TITLE_SUFFIXES = [
     # Law 级
     "法典",
+
+    # 外文法规标题，如 TAKE IT DOWN Act。法域在 Query Construction 判定。
+    "Act",
 
     # 暂行办法/规定/规则 等（须优先于"法"匹配）
     "暂行实施办法",
@@ -168,9 +214,20 @@ LEGAL_TITLE_SUFFIXES = [
     "通告",
     "公告",
 
-    # Law 级 — "法" 放在最后，避免误匹配"办法"
+    # Law 级；伪法名后缀由 _NON_LEGAL_LAW_SUFFIXES 单独排除。
     "法",
 ]
+
+_PRECISE_LEGAL_TITLE_SUFFIX = re.compile(
+    r"(?:的决议|的命令|的复函|的函|的答复|条令)$"
+)
+
+# 只在标题需要依靠通用“法”后缀时排除；不能包含“司法”，否则会误伤“公司法”。
+_NON_LEGAL_LAW_SUFFIXES = (
+    "方法", "做法", "手法", "历法", "语法", "书法", "笔法", "技法",
+    "用法", "玩法", "疗法", "说法", "看法", "想法", "算法", "写法",
+    "读法", "乘法", "除法", "加法", "减法",
+)
 
 # 非法律规范关键词——白名单外的标题若有这些词，明确排除
 # 注意：此列表只对不在白名单内的标题生效。
@@ -185,25 +242,9 @@ NON_LEGAL_KEYWORDS = [
     # 平台或企业发布的非法律文件。
     "手册", "公约", "服务协议", "合作政策",
     "运营手册", "运营规范", "入驻协议",
-    "回复函", "答复函", "函",
+    "回复函", "答复函",
     "账号管理", "用户协议",
 ]
-
-def _is_law_suffix(title: str) -> bool:
-    """
-    判断标题是否以"法"结尾且不属于规章后缀。
-
-    "办法""实施办法""暂行办法""试行办法"等尽管以"法"结尾但不是法律。
-    """
-    # 先剥离括号注解
-    title = _strip_parenthetical(title)
-    if not title.endswith("法"):
-        return False
-    # 排除以"办法"结尾的（已在 LEGAL_TITLE_SUFFIXES 中列为独立项）
-    if title.endswith("办法"):
-        return False
-    return True
-
 
 # ============================================================
 # 法源和条款识别
@@ -228,21 +269,17 @@ def _has_legal_title_suffix(title: str) -> bool:
     Returns:
         True 如果标题后缀在白名单内
     """
-    # 先检查原始标题
-    for suffix in LEGAL_TITLE_SUFFIXES:
-        if title.endswith(suffix):
-            return True
-
-    # 剥离括号注解后重试
-    # 例："反不正当竞争法（2019年修正）" → "反不正当竞争法"
-    # 例："商标法（修订）" → "商标法"
     stripped = _strip_parenthetical(title)
-    if stripped != title:
-        for suffix in LEGAL_TITLE_SUFFIXES:
-            if stripped.endswith(suffix):
-                return True
+    if _PRECISE_LEGAL_TITLE_SUFFIX.search(stripped):
+        return True
 
-    return False
+    # 明确的长后缀优先；通用“法”最后单独裁定。
+    for suffix in LEGAL_TITLE_SUFFIXES:
+        if suffix != "法" and stripped.endswith(suffix):
+            return True
+    if any(stripped.endswith(suffix) for suffix in _NON_LEGAL_LAW_SUFFIXES):
+        return False
+    return stripped.endswith("法")
 
 
 def _strip_parenthetical(title: str) -> str:
@@ -260,8 +297,8 @@ def _strip_parenthetical(title: str) -> str:
     Returns:
         剥离后的标题
     """
-    # 匹配末尾的括号注解：（...）或（...）
-    return re.sub(r'[（(][^）)]*[）)]$', '', title).strip()
+    # 连续剥离末尾注解，如“某法（2026年修订）（试行）”。
+    return re.sub(r'(?:[（(][^（）()]*[）)]\s*)+$', '', title).strip()
 
 
 def _is_legal_source(title: str) -> bool:
@@ -356,69 +393,28 @@ def _extract_articles_from_text(text: str) -> list[ArticleRef]:
             items=items,
         ))
 
-    # “58-69条”本身不会被 ARTICLE_PATTERN 命中，直接按范围展开。
-    existing = {a.article for a in articles}
-    for rm in compact_ranges:
-        start = int(rm.group(1))
-        end = int(rm.group(2))
-        if not (0 < start <= end and end - start <= 50):
-            continue
-        for number in range(start, end + 1):
-            article_text = f"第{number}条"
-            if article_text not in existing:
-                existing.add(article_text)
-                articles.append(ArticleRef(article=article_text))
-
-    # "第X条至第Y条"范围展开：补全被跳过的中间条号
-    # （ARTICLE_PATTERN 只命中范围的两端，如"第四十三条至第四十五条"
-    #   会漏掉第四十四条）
-    existing = {a.article for a in articles}
-    for rm in ARTICLE_RANGE_PATTERN.finditer(text):
-        start = chinese_number_to_int(rm.group(1))
-        end = chinese_number_to_int(rm.group(2))
-        if start is None or end is None or not (0 < start < end and end - start <= 50):
-            continue
-        start_text = f"第{rm.group(1)}条"
-        insert_at = next(
-            (index + 1 for index, article in enumerate(articles) if article.article == start_text),
-            len(articles),
-        )
-        for number in range(start + 1, end):
-            article_text = f"第{_int_to_cn_num(number)}条"
-            if article_text not in existing:
-                existing.add(article_text)
-                articles.insert(insert_at, ArticleRef(article=article_text))
-                insert_at += 1
+    from ..infrastructure.database import normalize_article_key
+    original_refs = {normalize_article_key(ref.article): ref for ref in articles}
+    events = [(match.start(), [article]) for match, article in zip(article_matches, articles)]
+    for pattern in (ARTICLE_RANGE_PATTERN, COMPACT_ARTICLE_RANGE_PATTERN):
+        for rm in pattern.finditer(text):
+            start = chinese_number_to_int(rm.group(1))
+            end = chinese_number_to_int(rm.group(2))
+            if start is None or end is None or not (0 < start <= end and end - start <= 50):
+                continue
+            events = [(position, refs) for position, refs in events if not rm.start() <= position < rm.end()]
+            events.append((rm.start(), [original_refs.get(str(number), ArticleRef(article=f"第{number}条")).model_copy(update={"article": f"第{str(number) if rm.group(1).isdigit() else int_to_chinese_number(number)}条"})
+                                       for number in range(start, end + 1)]))
+    articles = []
+    seen = set()
+    for _, refs in sorted(events, key=lambda event: event[0]):
+        for ref in refs:
+            key = (normalize_article_key(ref.article), tuple(ref.paragraphs), tuple(ref.items))
+            if key not in seen:
+                articles.append(ref)
+                seen.add(key)
 
     return articles
-
-
-def _int_to_cn_num(value: int) -> str:
-    """将整数转换为中文数字，支持法条常用的 1 至 9999。"""
-    if value <= 0 or value > 9999:
-        return str(value)
-    digits = "零一二三四五六七八九"
-    parts = []
-    thousands, rest = divmod(value, 1000)
-    hundreds, rest = divmod(rest, 100)
-    tens, ones = divmod(rest, 10)
-    if thousands:
-        parts.append(digits[thousands] + "千")
-    if hundreds:
-        parts.append(digits[hundreds] + "百")
-    elif thousands and (tens or ones):
-        parts.append("零")
-    if tens:
-        # "一十X" 习惯写作 "十X"（仅当没有更高位时）
-        if tens == 1 and not thousands and not hundreds:
-            parts.append("十")
-        else:
-            parts.append(digits[tens] + "十")
-    elif (thousands or hundreds) and ones:
-        parts.append("零")
-    if ones:
-        parts.append(digits[ones])
-    return "".join(parts)
 
 
 def extract_legal_sources(
@@ -452,6 +448,8 @@ def extract_legal_sources(
             title = m.group(1).strip()
             if not title or not _is_legal_source(title):
                 continue
+            if _is_bibliographic_reference(text, m):
+                continue
 
             # 确定条款号搜索范围：从当前法源结束位置到下一个法源开始位置
             search_start = m.end()
@@ -470,9 +468,16 @@ def extract_legal_sources(
 
             # 从该区间提取条款号
             articles = _extract_articles_from_text(segment)
+            if not articles and (paragraph := STANDALONE_PARAGRAPH_PATTERN.search(segment)):
+                articles = [ArticleRef(
+                    article=f"第{paragraph.group(2)}条",
+                    raw_locator=paragraph.group(1),
+                )]
 
             source = LegalSource(
                 title=title,
+                canonical_title=canonical_cn_title_shape(title),
+                raw_time=_raw_time_for_mention(text, m, title),
                 recognition={"form": "explicit", "mention_span": m.span(1)},
                 articles=articles,
                 # 章节引用只在无条款引用时抽取（有条号时章节仅是定位前缀）
@@ -480,7 +485,7 @@ def extract_legal_sources(
                     _extract_structure_refs(segment) if not articles else []
                 ),
             )
-            key = title
+            key = cn_title_shape_key(title)
             existing = explicit_by_key.get(key)
             if existing is None:
                 legal_sources.append(source)
@@ -497,7 +502,10 @@ def extract_legal_sources(
     # 这里只记录原文字面法名候选；标准法名由 Query Construction 解释。
     for source in _extract_bare_law_citations(bare_matches):
         existing = next(
-            (candidate for candidate in legal_sources if candidate.title == source.title),
+            (
+                candidate for candidate in legal_sources
+                if cn_title_shape_key(candidate.title) == cn_title_shape_key(source.title)
+            ),
             None,
         )
         if existing is None:
@@ -512,32 +520,94 @@ def extract_legal_sources(
     standard_sources = _extract_standard_citations(text, seen_titles)
     legal_sources.extend(standard_sources)
 
+    # ---- 补充：外文裸法规简称（无书名号）----
+    # 例：EU AI Act第50条第4款。文内简称声明由后续查询构造层解释。
+    for source in _extract_foreign_bare_act_citations(text):
+        existing = next((item for item in legal_sources if item.title == source.title), None)
+        if existing is None:
+            legal_sources.append(source)
+        else:
+            _merge_articles(existing.articles, source.articles)
+
     return legal_sources
 
 
 def extract_alias_declarations(text: str) -> list[AliasDeclaration]:
     """记录文内简称声明；不在 Recognition 阶段解释后续简称。"""
-    matches = list(LEGAL_SOURCE_PATTERN.finditer(text))
     declarations: list[AliasDeclaration] = []
-    for index in range(1, len(matches)):
-        full_match = matches[index - 1]
-        short_match = matches[index]
-        bridge = text[full_match.end():short_match.start()]
-        if not _SHORT_NAME_BRIDGE.fullmatch(bridge):
-            continue
-        close = _SHORT_NAME_CLOSE.match(text[short_match.end():])
-        if close is None:
-            continue
-        full_title = full_match.group(1).strip()
-        short_title = short_match.group(1).strip()
-        if not _is_legal_source(full_title) or not _is_legal_source(short_title):
+    for match in _ALIAS_DECLARATION_PATTERN.finditer(text):
+        full_title = match.group("full").strip()
+        short_title = (match.group("book_alias") or match.group("plain_alias") or "").strip()
+        if not _is_legal_source(full_title) or not short_title:
             continue
         declarations.append(AliasDeclaration(
             full_name_raw=full_title,
             alias_raw=short_title,
-            declaration_span=(full_match.start(), short_match.end() + close.end()),
+            declaration_span=match.span(),
         ))
     return declarations
+
+
+def _extract_foreign_bare_act_citations(text: str) -> list[LegalSource]:
+    results: list[LegalSource] = []
+    for match in _FOREIGN_BARE_ACT_PATTERN.finditer(text):
+        title = match.group("title").strip()
+        results.append(LegalSource(
+            title=title,
+            canonical_title=title,
+            raw_title_candidate=title,
+            recognition=LegalSourceRecognition(
+                form="bare",
+                mention_span=match.span("title"),
+                resolver="structure",
+            ),
+            articles=_extract_articles_from_text(match.group("locator")),
+        ))
+    return results
+
+
+def _raw_time_for_mention(text: str, match: re.Match, title: str) -> str | None:
+    """只抄录与法名相邻的时间表达，不把它解释为适用版本。"""
+    suffix = text[match.end():match.end() + 30].lstrip()
+    if version := _VERSION_TIME_PATTERN.match(suffix):
+        return f"{version.group(1)}年{version.group(2)}"
+    prefix = text[max(0, match.start() - 100):match.start()]
+    candidates = list(_RAW_TIME_PATTERN.finditer(prefix))
+    if candidates:
+        candidate = candidates[-1]
+        tail = prefix[candidate.end():]
+        if len(tail) <= 50 and not re.search(r"[。！？；\n]", tail):
+            return candidate.group(0)
+    inside = _RAW_TIME_PATTERN.search(title)
+    return inside.group(0) if inside else None
+
+
+def _is_bibliographic_reference(text: str, match: re.Match) -> bool:
+    """识别并排除二手文献；不因“主编”“期刊”等孤立词误判。"""
+    sentence_start = max(
+        [0, *(item.end() for item in re.finditer(r"[。！？；\n]", text[:match.start()]))]
+    )
+    boundary = re.search(r"[。！？；\n]", text[match.end():])
+    sentence_end = match.end() + boundary.start() if boundary else len(text)
+    context = text[sentence_start:sentence_end]
+    publisher = bool(_BIBLIOGRAPHIC_PUBLISHER.search(context))
+    page = bool(_BIBLIOGRAPHIC_PAGE.search(context))
+    editor = bool(_BIBLIOGRAPHIC_EDITOR.search(context))
+    journal_issue = bool(_BIBLIOGRAPHIC_JOURNAL_ISSUE.search(context))
+    volume_issue = bool(_BIBLIOGRAPHIC_VOLUME_ISSUE.search(context))
+    doi = bool(_BIBLIOGRAPHIC_DOI.search(context))
+    issn = bool(_BIBLIOGRAPHIC_ISSN.search(context))
+
+    # DOI、ISSN、完整期刊年期/卷期和“姓名主编：《书名》”本身足够确定；
+    # 出版社或页码则须与版次/其他出版字段组合，不能凭单个字眼过滤。
+    return (
+        doi
+        or issn
+        or journal_issue
+        or volume_issue
+        or editor
+        or (publisher and (page or bool(_BIBLIOGRAPHIC_EDITION.search(context))))
+    )
 
 
 # 章节引用链：紧跟在《法名》之后的 第X编/分编/章/节 连写（无条号时）
@@ -572,9 +642,9 @@ def _extract_structure_refs(segment: str) -> list[StructureRef]:
 # 裸法条引用（无《》书名号）
 # ============================================================
 
-# 右锚点只定位“法/法典 + 首个条款号”；法名左边界由词典后缀匹配裁定。
+# 右锚点定位较窄的规范后缀 + 首个条款号；法名左边界另行裁定。
 BARE_ARTICLE_ANCHOR = re.compile(
-    r'(?P<law_suffix>法典|法)'
+    r'(?P<law_suffix>法典|条例|办法|的规定|的规则|细则|法)'
     r'(?P<article>'
     r'第[一二三四五六七八九十百千零\d]+条'
     r'(?:之[一二三四五六七八九十]+)?'
@@ -592,17 +662,24 @@ _BARE_FOLLOWING_ARTICLE = re.compile(
     rf"(?:第[（(]?{_CN_NUM}[）)]?项)?"
 )
 
-# 伪法名后缀：以"法"结尾但不是法律名的词
+# 伪法名后缀：以“法”结尾但不是法律名的词。
+# “司法”不能列入：公司法以“司法”结尾；“办法”现已是合法裸引用后缀。
 BARE_LAW_EXCLUDE_SUFFIXES = [
-    "办法", "方法", "做法", "手法", "司法", "历法", "语法",
+    "方法", "做法", "手法", "历法", "语法",
     "书法", "笔法", "技法", "用法", "玩法", "疗法",
     "说法", "看法", "想法", "算法", "写法", "读法",
     "乘法", "除法", "加法", "减法",
-    # 指代词（代指前文提到的法律，不是独立的法律名）
-    "本法", "该法", "此法", "前法", "上述法律",
-    # 非特指法律的通用词
-    "现行法", "相关法", "有关法", "其他法",
 ]
+
+# 指代词不作为独立法名，但其条款号仍会进入 rules.py 的承前继承。
+BARE_LAW_ANAPHORS = {
+    "本法", "该法", "此法", "前法", "上述法律",
+    "本法典", "该法典", "本条例", "该条例", "本办法", "该办法",
+    "本规定", "该规定", "本规则", "该规则", "本细则", "该细则",
+    "现行法", "相关法", "有关法", "其他法",
+}
+
+_BARE_SUFFIX_ONLY = {"法", "法典", "条例", "办法", "规定", "规则", "细则"}
 
 
 @dataclass(frozen=True)
@@ -612,13 +689,17 @@ class BareCitationMatch:
     title_end: int
     citation_end: int
     article_text: str
+    raw_time: str | None = None
 
 
 _BARE_WINDOW_BOUNDARY = re.compile(r"[，。！？；：、\n]")
 _BARE_LEADING_CONTEXT = re.compile(
-    r"^.*(?:依据|根据|依照|按照|参照|适用|请求|认定为|属于|违反了?|以|按|依)"
+    r"^.*(?:依据|根据|依照|按照|参照|适用|请求|认定为|属于|违反了?|为|以|按|依)"
 )
 _BARE_TITLE_MODIFIER = re.compile(r"^(?:现行|我国|中国的?|相关|有关|及|和|或)+")
+_BARE_YEAR_PREFIX = re.compile(
+    r"^(?P<time>(?:\d{4})?年)(?P<title>.+(?:法典|条例|办法|的规定|的规则|细则|法))$"
+)
 
 
 def _find_bare_citations(text: str) -> list[BareCitationMatch]:
@@ -638,6 +719,13 @@ def _find_bare_citations(text: str) -> list[BareCitationMatch]:
         raw = window.strip()
         raw = _BARE_LEADING_CONTEXT.sub("", raw)
         raw = _BARE_TITLE_MODIFIER.sub("", raw).strip()
+        raw_time = None
+        if year_match := _BARE_YEAR_PREFIX.fullmatch(raw):
+            candidate = year_match.group("title")
+            if _is_valid_bare_law_name(candidate):
+                raw = candidate
+                time_text = year_match.group("time")
+                raw_time = time_text if time_text != "年" else None
         if not raw or not _is_valid_bare_law_name(raw):
             previous_end = anchor.end()
             continue
@@ -648,6 +736,7 @@ def _find_bare_citations(text: str) -> list[BareCitationMatch]:
             title_end=law_end,
             citation_end=citation_end,
             article_text=text[anchor.start("article"):citation_end],
+            raw_time=raw_time,
         ))
         previous_end = citation_end
     return results
@@ -665,7 +754,11 @@ def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalS
     results: list[LegalSource] = []
     for match in matches:
         source = next(
-            (item for item in results if item.title == match.raw_title_candidate),
+            (
+                item for item in results
+                if cn_title_shape_key(item.title)
+                == cn_title_shape_key(match.raw_title_candidate)
+            ),
             None,
         )
         articles = _extract_articles_from_text(match.article_text)
@@ -674,20 +767,17 @@ def _extract_bare_law_citations(matches: list[BareCitationMatch]) -> list[LegalS
             continue
         results.append(LegalSource(
             title=match.raw_title_candidate,
+            canonical_title=canonical_cn_title_shape(match.raw_title_candidate),
             raw_title_candidate=match.raw_title_candidate,
             recognition=LegalSourceRecognition(
                 form="bare",
                 mention_span=(match.title_start, match.title_end),
                 resolver="structure",
             ),
+            raw_time=match.raw_time,
             articles=articles,
         ))
     return results
-
-
-def extract_unresolved_legal_mentions(text: str) -> list[UnresolvedLegalMention]:
-    """裸法名候选已作为 Raw LegalSource 保存；保留旧 API。"""
-    return []
 
 
 def _merge_articles(target: list[ArticleRef], incoming: list[ArticleRef]) -> None:
@@ -717,8 +807,8 @@ def _is_valid_bare_law_name(title: str) -> bool:
     判断裸法名是否为有效法律名称。
 
     排除：
-      - 以伪法名后缀结尾的（办法、方法、做法等）
-      - 过短的（<3 字，如单独的"法"）
+      - 以伪法名后缀结尾的（方法、做法等）
+      - 纯后缀和承前指代词
 
     Args:
         title: 待检查的法名
@@ -726,7 +816,7 @@ def _is_valid_bare_law_name(title: str) -> bool:
     Returns:
         True 如果是有效法律名称
     """
-    if len(title) < 2:
+    if len(title) < 2 or title in _BARE_SUFFIX_ONLY or title in BARE_LAW_ANAPHORS:
         return False
     for exclude in BARE_LAW_EXCLUDE_SUFFIXES:
         if title.endswith(exclude):
@@ -792,24 +882,6 @@ def extract_partial_refs(text: str) -> PartialArticleRef | None:
     )
 
 
-def has_legal_basis_words(text: str) -> bool:
-    """
-    检测句子是否包含法源引导词。
-
-    引导词：依据、根据、依照、按照、参照、适用
-
-    Args:
-        text: 句子文本
-
-    Returns:
-        True 如果包含引导词
-    """
-    for word in LEGAL_BASIS_WORDS:
-        if word in text:
-            return True
-    return False
-
-
 # ============================================================
 # 国家标准/行业标准引用（无书名号）
 # ============================================================
@@ -852,3 +924,17 @@ def _extract_standard_citations(
         ))
 
     return results
+
+
+def invalid_number_tokens(raw: str) -> list[str]:
+    """保留原写法；仅标记能够确定为非规范写法的编号。"""
+    result = []
+    for match in re.finditer(r"(?:第[（(]?|之)([0-9零〇两一二三四五六七八九十百千]+)(?=条|款|[）)]?项|$)", raw):
+        token = match.group(1)
+        number = chinese_number_to_int(token)
+        valid = number is not None and 0 < number <= 9999 and (
+            (token.isascii() and token.isdigit() and str(number) == token)
+            or token == int_to_chinese_number(number))
+        if not valid:
+            result.append(token)
+    return result

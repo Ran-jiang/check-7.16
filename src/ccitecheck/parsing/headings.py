@@ -19,6 +19,7 @@ import re
 from typing import Optional
 
 from ..domain.document import HeadingSource
+from .utils import is_article_start
 
 
 # ---- 样式识别 ----
@@ -56,16 +57,17 @@ CHAPTER_PATTERN = re.compile(
     r"^第([一二三四五六七八九十百千零〇\d]+)([编章节])"
 )
 
-# 数字编号标题
-# 格式：1 xxx 或 1.1 xxx 或 1.1.1 xxx
+# 数字编号标题：1 xxx、1.概述、1.1 xxx、1.1.xxx
 NUMBERED_PATTERN = re.compile(
-    r"^(\d+(?:\.\d+)*)\s+"
+    r"^(\d+(?:\.\d+)*)(?:[.、]\s*|\s+)(?=\S)"
 )
 
-# 第X条 格式（不是标题）
-ARTICLE_PATTERN = re.compile(
-    r"^第[一二三四五六七八九十百千零〇\d]+条"
+CHINESE_NUMBERED_PATTERN = re.compile(
+    r"^[一二三四五六七八九十百千]+、\s*(?=\S)"
 )
+
+EXPLICIT_HEADING_TEXTS = {"概述", "前言", "引言", "总结", "结语", "附录"}
+HEADING_END_PUNCTUATION = "。！？；：，,;:!?"
 
 # 伪标题最大长度（字符数）
 MAX_PSEUDO_HEADING_LENGTH = 40
@@ -107,12 +109,16 @@ def detect_numbered_heading(text: str) -> Optional[int]:
     Returns:
         层级或 None
     """
+    if text.endswith(tuple(HEADING_END_PUNCTUATION)):
+        return None
     m = NUMBERED_PATTERN.match(text)
     if m:
         number_part = m.group(1)
         # 点号数量 + 1 = 层级
         level = number_part.count(".") + 1
         return level
+    if CHINESE_NUMBERED_PATTERN.match(text):
+        return 1
     return None
 
 
@@ -172,8 +178,11 @@ def is_pseudo_heading(text: str) -> Optional[tuple[int, HeadingSource]]:
     if len(text) > MAX_PSEUDO_HEADING_LENGTH:
         return None
     # "第X条" 不是 heading
-    if ARTICLE_PATTERN.match(text):
+    if is_article_start(text):
         return None
+
+    if text in EXPLICIT_HEADING_TEXTS:
+        return (1, HeadingSource.PATTERN)
 
     # 尝试中文章节标题
     chapter_result = detect_chapter_type(text)

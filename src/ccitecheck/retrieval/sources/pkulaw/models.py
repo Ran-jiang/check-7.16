@@ -26,6 +26,19 @@ class PkulawArticle(PkulawLawRecord):
 
 
 @dataclass(frozen=True)
+class PkulawRecognizedLaw:
+    mentioned_title: str
+    canonical_title: str
+    fulltext: str
+    url: Optional[str] = None
+
+    @property
+    def title(self) -> str:
+        """兼容现有的法规同名匹配协议。"""
+        return self.canonical_title
+
+
+@dataclass(frozen=True)
 class PkulawCaseRecord:
     title: str
     case_number: str = ""
@@ -56,4 +69,5 @@ __all__ = [
     "PkulawMcpError",
     "PkulawNotConfiguredError",
     "PkulawNotFoundError",
+    "PkulawRecognizedLaw",
 ]

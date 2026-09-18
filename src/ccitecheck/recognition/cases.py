@@ -91,7 +91,7 @@ _NAMED_CASE_SEPARATOR = re.compile(
 
 
 # 外国判例引用 — 英文案名（Roe v. Wade）与美式判例汇编引注（347 U.S. 483）。
-# 这类案例不在中文案例库核查范围内，识别后标记 jurisdiction=FOREIGN，
+    # 这类案例不在中文案例库核查范围内，识别后标记 jurisdiction=UNKNOWN，
 # 由判定层显式告知"超出核查边界"，避免静默丢弃。
 FOREIGN_CASE_NAME_PATTERN = re.compile(
     r"\b[A-Z][\w.&'’\-]*(?:\s+[A-Z][\w.&'’\-]*){0,4}"
@@ -293,6 +293,8 @@ def extract_case_refs(text: str) -> list[CaseRef]:
 
     # 3. 公报案例 / 典型案例
     for m in GAZETTE_TYPICAL_PATTERN.finditer(text):
+        if named_cases:
+            continue
         prefix = text[max(0, m.start() - 8):m.start()]
         # “附录二：典型案例”只是章节标题，不是可外部检索的具体案例。
         if re.search(r"附录[一二三四五六七八九十\d]*[：:]?\s*$", prefix):
@@ -350,7 +352,7 @@ def extract_case_refs(text: str) -> list[CaseRef]:
                 case_number=None,
                 case_name=clue,
                 court=None,
-                jurisdiction="FOREIGN",
+                jurisdiction="UNKNOWN",
             ))
 
     return case_refs
@@ -373,6 +375,7 @@ def _normalize_named_case_candidate(raw_text: str) -> str:
     if "：" in name or ":" in name:
         name = re.split(r"[：:]", name)[-1].strip()
     name = re.sub(r"^(?:可参见|参见|例如|譬如|如|案例)\s*", "", name)
+    name = re.sub(r"^(?:中?包括|其中包括|包括)\s*", "", name)
     name = name.lstrip("0123456789一二三四五六七八九十百号、：: ")
     return name.strip("“”‘’\"' ")
 

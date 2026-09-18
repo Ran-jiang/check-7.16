@@ -260,10 +260,20 @@ def test_bare_law_name_does_not_swallow_predicate_prefix():
         "原告请求依照反不正当竞争法第十七条处理": "反不正当竞争法",
         "该行为不属于反不正当竞争法第六条中的使用": "反不正当竞争法",
         "上述行为违反了反不正当竞争法第十二条规定": "反不正当竞争法",
+        "法院认定诉争商标为商标法第十五条规定的代理关系": "商标法",
+        "应当依照年商标法第十五条处理": "商标法",
+        "应当依照2001年商标法第十五条处理": "商标法",
     }
     for text, expected in examples.items():
         sources = extract_legal_sources(text)
         assert [source.title for source in sources] == [expected]
+
+
+def test_bare_law_year_prefix_is_recorded_separately():
+    source = extract_legal_sources("应当依照2001年商标法第十五条处理")[0]
+    assert source.title == "商标法"
+    assert source.raw_title_candidate == "商标法"
+    assert source.raw_time == "2001年"
 
 
 def test_case_patterns_are_bounded_and_support_guiding_case_without_di():

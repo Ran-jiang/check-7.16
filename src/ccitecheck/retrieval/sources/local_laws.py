@@ -7,12 +7,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
+from datetime import date
+import re
+import hashlib
+import json
 
 from ...infrastructure.database import (
     connect,
     find_current_article,
     find_law,
     get_structure_path_for_article,
+    list_article_versions,
     list_current_articles,
 )
 
@@ -26,6 +32,51 @@ class LocalSQLiteSource:
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
+        self._articles = {}
+        self._lock = Lock()
+        self._metadata = {}
+
+    def clear_cache(self) -> None:
+        with self._lock:
+            self._articles.clear()
+            self._metadata.clear()
+
+    def current_articles(self, title: str) -> list[dict]:
+        with self._lock:
+            if title not in self._articles:
+                with connect(self.db_path) as conn:
+                    self._articles[title] = [dict(row) for row in list_current_articles(conn, title)]
+            return self._articles[title]
+
+    def corpus_metadata(self, title: str, rows: list[dict]) -> dict:
+        if title in self._metadata:
+            return dict(self._metadata[title])
+        versions = {r["version_key"] for r in rows}
+        version = next(iter(versions)) if len(versions) == 1 else None
+        identified = bool(version and re.fullmatch(r"\d{4}(?:-\d{2}-\d{2})?", version))
+        metadata = {"local_article_count": len(rows), "version_key": version,
+                    "version_identified": identified,
+                    "version_confirmed": identified,
+                    "full_text_complete": False}
+        manifest_path = Path(__file__).resolve().parents[4] / "laws" / "verified_corpora.json"
+        records = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
+        metadata["other_version_source_urls"] = [r["source_url"] for r in records
+            if version and r["title"] == title and r["version_key"] != version and r.get("source_url")]
+        for record in records:
+            if record["title"] != title or record["version_key"] != version:
+                continue
+            applicable = record.get("effective_from", "9999") <= date.today().isoformat() < record.get("effective_to", "9999")
+            digest = corpus_digest(rows)
+            metadata.update(version_confirmed=applicable and record.get("sha256") == digest,
+                version_identified=record.get("sha256") == digest, full_text_complete=(
+                record.get("complete") is True and record.get("sha256") == digest),
+                completeness_source=record.get("verification_url"),
+                article_keys=[r["article_key"] for r in rows],
+                effective_to=record.get("effective_to"),
+                version_label=record.get("version_label"),
+                source_url=record.get("source_url"))
+        self._metadata[title] = metadata
+        return dict(metadata)
 
     def lookup(self, request: LookupRequest) -> LookupResult:
         trace = SourceTrace(
@@ -40,11 +91,41 @@ class LocalSQLiteSource:
 
         with connect(self.db_path) as conn:
             if request.article_no:
-                article = find_current_article(conn, request.law_title, request.article_no)
+                article = _versioned_article(conn, request)
                 if article:
+                    trace.metadata = (
+                        {
+                            "version_key": article["version_key"],
+                            "version_label": article["version_label"],
+                            "version_identified": True,
+                            "version_confirmed": True,
+                            "full_text_complete": False,
+                        }
+                        if request.version_hint and request.version_hint != "current"
+                        else self.corpus_metadata(
+                            article["title"], self.current_articles(request.law_title)
+                        )
+                    )
+                    if request.version_hint and request.version_hint != "current":
+                        current = find_current_article(
+                            conn, request.law_title, request.article_no or ""
+                        )
+                        if current and current["version_key"] != article["version_key"]:
+                            current_title = current["title"]
+                            current_label = current["version_label"] or ""
+                            if re.search(r"修正|修订|修改", current_label):
+                                current_title = f"{current_title}（{current_label}）"
+                            trace.metadata.update(
+                                current_title=current_title,
+                                current_implement_date=(
+                                    current["effective_from"] or current["effective_at"]
+                                ),
+                            )
                     trace.status = LookupStatus.ARTICLE_FOUND
                     trace.source_name = article["source_name"] or trace.source_name
-                    trace.source_url = article["source_url"]
+                    trace.source_url = article["source_url"] or trace.metadata.get("source_url") or find_law(conn, request.law_title)["source_url"]
+                    if trace.source_url in trace.metadata.get("other_version_source_urls", []):
+                        trace.source_url = None
                     trace.fetched_at = article["source_fetched_at"] or trace.fetched_at
                     evidence = ArticleEvidence(
                         law_title=article["title"],
@@ -72,12 +153,21 @@ class LocalSQLiteSource:
 
             law = find_law(conn, request.law_title)
             if law:
+                trace.source_url = law["source_url"]
                 if not request.article_no:
-                    related_articles = retrieve_relevant_articles(
-                        request.context_text,
-                        list_current_articles(conn, request.law_title),
+                    related_articles = (
+                        retrieve_relevant_articles(
+                            request.query_text or request.context_text,
+                            self.current_articles(request.law_title),
+                            limit=8,
+                        )
+                        if not request.existence_only else []
                     )
                     if related_articles:
+                        trace.metadata = self.corpus_metadata(law["title"], self.current_articles(request.law_title))
+                        trace.source_url = trace.source_url or trace.metadata.get("source_url")
+                        if trace.source_url in trace.metadata.get("other_version_source_urls", []):
+                            trace.source_url = None
                         trace.status = LookupStatus.RELEVANT_ARTICLES_FOUND
                         trace.message = "文书未注明条号，已从本地全文召回相关条款"
                         evidence = ArticleEvidence(
@@ -91,7 +181,7 @@ class LocalSQLiteSource:
                             source_metadata={
                                 "authority": law["authority"],
                                 "category": law["category"],
-                                "retrieval_method": "local_article_lexical_retrieval",
+                                "retrieval_method": "local_article_bm25",
                             },
                             related_articles=related_articles,
                             data_source=trace,
@@ -102,10 +192,10 @@ class LocalSQLiteSource:
                     if request.article_no
                     else LookupStatus.LAW_FOUND_TEXT_UNAVAILABLE
                 )
-                local_article_count = len(
-                    list_current_articles(conn, request.law_title)
-                )
-                trace.metadata = {"local_article_count": local_article_count}
+                trace.metadata = self.corpus_metadata(law["title"], self.current_articles(request.law_title))
+                trace.source_url = trace.source_url or trace.metadata.get("source_url")
+                if trace.source_url in trace.metadata.get("other_version_source_urls", []):
+                    trace.source_url = None
                 trace.message = (
                     "本地库已收录该法规，但无可用条文全文"
                     if not request.article_no
@@ -129,4 +219,27 @@ class LocalSQLiteSource:
         return LookupResult(trace.status, None, trace)
 
 
+def _versioned_article(conn, request: LookupRequest):
+    hint = request.version_hint or ""
+    if not hint or hint == "current":
+        return find_current_article(conn, request.law_title, request.article_no or "")
+    year = next(iter(re.findall(r"(?:19|20)\d{2}", hint)), None)
+    versions = list_article_versions(conn, request.law_title, request.article_no or "")
+    if year:
+        matched = [row for row in versions if year in "".join(str(row[key] or "") for key in (
+            "version_key", "version_label", "issued_at", "effective_from"
+        ))]
+        if matched:
+            return matched[0]
+        return find_current_article(
+            conn, request.law_title, request.article_no or "", as_of=f"{year}-12-31"
+        )
+    return None
+
+
 __all__ = ["LocalSQLiteSource"]
+
+
+def corpus_digest(rows) -> str:
+    payload = sorted((row["article_no"], row["text"]) for row in rows)
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode()).hexdigest()

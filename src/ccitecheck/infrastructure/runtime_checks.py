@@ -1,4 +1,4 @@
-"""检查本地法规库、千问和北大法宝配置是否可用。"""
+"""检查法规库、模型及外部数据源配置。"""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ def check_runtime(law_db: str | Path) -> list[CheckResult]:
         _check_qwen_key(),
         _check_pkulaw_token(),
         _check_eurlex_gateway(),
+        _check_ansvar_gateway(),
     ]
     return results
 
@@ -70,6 +71,21 @@ def _check_eurlex_gateway() -> CheckResult:
     return CheckResult(
         "eurlex", True, "optional EU source not configured (EU citations marked out of scope)"
     )
+
+
+def _check_ansvar_gateway() -> CheckResult:
+    if not os.getenv("ANSVAR_MCP_GATEWAY"):
+        return CheckResult("ansvar", True, "optional multi-jurisdiction source not configured")
+    has_auth = bool(
+        os.getenv("ANSVAR_ACCESS_TOKEN")
+        or (os.getenv("ANSVAR_CLIENT_ID") and os.getenv("ANSVAR_CLIENT_SECRET"))
+    )
+    message = (
+        "multi-jurisdiction MCP source configured"
+        if has_auth
+        else "gateway configured; interactive OAuth required on first use"
+    )
+    return CheckResult("ansvar", True, message)
 
 
 def _check_qwen_key() -> CheckResult:

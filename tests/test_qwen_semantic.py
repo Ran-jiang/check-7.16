@@ -9,32 +9,9 @@ from ccitecheck.infrastructure.http import (
     RetryPolicy,
     post_json_with_retry,
 )
-from ccitecheck.domain.evidence import (
-    ArticleEvidence,
-    LookupStatus,
-    SourceTier,
-    SourceTrace,
-)
 from ccitecheck.domain.checks import CheckVerdict
-from ccitecheck.verification.semantic import (
-    APPLICATION_PROMPT_PATH,
-    DEFAULT_BASE_URL,
-    PROMPT_PATH,
-    QwenSemanticChecker,
-    SemanticResponseError,
-)
+from ccitecheck.verification.semantic import QwenSemanticChecker
 from ccitecheck.verification.legal_application import ApplicationAuthority
-
-
-def test_prompt_scope_does_not_evaluate_legal_argument_or_conclusion():
-    prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    assert "文书的法律论证是否成立" in prompt
-    assert '"verdict": "bug"' not in prompt
-    assert "上述五种错误类型之一" not in prompt
-    assert "法律渊源不存在" not in prompt
-    assert "条款编号或引用定位错误" not in prompt
-    assert "引用内容与权威文本无实质对应" not in prompt
-    assert "结论是否必然成立" not in prompt
 
 
 def _install_mock_client(monkeypatch, handler):
@@ -49,64 +26,16 @@ def _qwen_response(text='{"verdict":"pass"}'):
     }
 
 
-def test_qwen_request_uses_beijing_responses_api_without_thinking(monkeypatch):
-    captured = {}
-
-    def handler(request):
-        captured["url"] = str(request.url)
-        captured["payload"] = json.loads(request.content)
-        return httpx.Response(200, json=_qwen_response())
-
-    _install_mock_client(monkeypatch, handler)
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="中华人民共和国民法典",
-        source_type="law",
-        article_no="第五百七十七条",
-        article_text="当事人一方不履行合同义务的，应当承担违约责任。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-    result = checker.compare(
-        "依据《民法典》第五百七十七条，被告应当承担违约责任。",
-        "《民法典》第五百七十七条",
-        evidence,
-    )
-
-    assert result.verdict == CheckVerdict.PASS
-    assert captured["url"] == f"{DEFAULT_BASE_URL}/responses"
-    assert captured["payload"]["model"] == "qwen3.7-plus"
-    assert captured["payload"]["enable_thinking"] is False
-    user_content = json.loads(captured["payload"]["input"][1]["content"])
-    assert user_content["claim_text"] == "依据《民法典》第五百七十七条，被告应当承担违约责任。"
-    assert "doc_quote" not in user_content
-    assert "quote_context" not in user_content
-
-
-def test_application_prompt_contains_guo_examples_and_only_allows_review():
-    prompt = APPLICATION_PROMPT_PATH.read_text(encoding="utf-8")
-    assert "1999年司法解释" in prompt
-    assert "2004年文件" in prompt
-    assert "另向支付不低于工资的百分之三百" in prompt
-    assert "教育法" in prompt
-    assert "请查找本篇文章是否存在多字、少字、重复字、错别字的情况" in prompt
-    assert '"verdict":"pass|review"' in prompt
-    assert "等级固定为“待核查”" in prompt
-
-
 def test_application_check_receives_all_statutes_once_and_normalizes_to_review(monkeypatch):
     captured = {}
     response = json.dumps({
-        "comparison": "法条不能直接推出合同无效",
+        "comparison": "引文将二倍改为三倍",
         "verdict": "issue",
         "reviews": [{
-            "error_type": "application_logic_error",
+            "error_type": "meaning_distorted",
             "review_level": "HIGH",
-            "summary": "原文由违约责任条款推出合同当然无效。",
-            "suggestion": "核查合同无效的独立法律依据。",
+            "summary": "原文写三倍，权威原文为二倍。",
+            "suggestion": "将三倍改为二倍。",
             "related_sources": ["《甲法》第一条"],
         }],
         "notes": "",
@@ -131,204 +60,8 @@ def test_application_check_receives_all_statutes_once_and_normalizes_to_review(m
         "《甲法》第一条", "《乙法》第二条",
     ]
     assert result.verdict == "review"
+    assert result.reviews[0].error_type == "meaning_distorted"
     assert result.reviews[0].review_level == "待核查"
-
-
-def test_qwen_diff_summary_is_preserved_for_display_layer(monkeypatch):
-    payload = {
-        "output": [{"content": [{"type": "output_text", "text": json.dumps({
-            "verdict": "issue",
-            "issues": [{
-                "error_type": "曲解权威文本原意",
-                "risk_level": "HIGH",
-                "diff_summary": "差" * 120,
-                "suggestion": "请按原文修改。",
-                "auto_fixable": False,
-            }],
-        }, ensure_ascii=False)}]}]
-    }
-
-    _install_mock_client(
-        monkeypatch, lambda request: httpx.Response(200, json=payload)
-    )
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="网络数据安全管理条例",
-        source_type="administrative_regulation",
-        article_no="第十八条",
-        article_text="不得干扰网络服务正常运行。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-    result = checker.compare("文书表述", "《网络数据安全管理条例》第十八条", evidence)
-    assert len(result.findings[0].summary) == 120
-
-
-def test_qwen_revision_requires_backend_approval_protocol(monkeypatch):
-    response = json.dumps({
-        "verdict": "issue",
-        "issues": [{
-            "error_type": "曲解权威文本原意",
-            "risk_level": "MEDIUM",
-            "diff_summary": "文书写了无条件义务，原文要求满足前提",
-            "suggestion": "补充适用前提。",
-            "revised_text": "满足前提时，应当履行义务。",
-        }],
-        "notes": "",
-    }, ensure_ascii=False)
-    _install_mock_client(
-        monkeypatch,
-        lambda request: httpx.Response(200, json=_qwen_response(response)),
-    )
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="示例法",
-        source_type="law",
-        article_no="第一条",
-        article_text="满足前提时，应当履行义务。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-
-    result = checker.compare("应当履行义务。", "《示例法》第一条", evidence)
-
-    revision = result.findings[0].revision
-    assert revision is not None
-    assert revision.strategy == "replace_exact_text"
-    assert revision.original_text == "应当履行义务。"
-    assert revision.machine_applicable is True
-
-
-def test_qwen_revision_cannot_change_deterministically_verified_citation(monkeypatch):
-    response = json.dumps({
-        "verdict": "issue",
-        "issues": [{
-            "error_type": "曲解权威文本原意",
-            "risk_level": "HIGH",
-            "diff_summary": "文书遗漏法定前提",
-            "suggestion": "补充前提。",
-            "revised_text": "依据《示例法》第二条，满足前提时应当履行义务。",
-        }],
-        "notes": "",
-    }, ensure_ascii=False)
-    _install_mock_client(monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)))
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="示例法", source_type="law", article_no="第一条",
-        article_text="满足前提时，应当履行义务。",
-        data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
-    )
-    result = checker.compare(
-        "依据《示例法》第一条，应当履行义务。", "《示例法》第一条", evidence
-    )
-    assert result.findings[0].revision is None
-
-
-def test_qwen_location_recheck_is_explicitly_structured(monkeypatch):
-    response = json.dumps({
-        "verdict": "issue",
-        "issues": [{
-            "error_type": "曲解权威文本原意",
-            "risk_level": "HIGH",
-            "diff_summary": "文书讨论独立著作权，原文规定出版者赔偿责任，两者主题完全无关",
-            "suggestion": "重新检索正确条款。",
-            "location_recheck_required": True,
-            "revised_text": None,
-        }],
-        "notes": "",
-    }, ensure_ascii=False)
-    _install_mock_client(monkeypatch, lambda request: httpx.Response(200, json=_qwen_response(response)))
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="示例解释", source_type="judicial_interpretation", article_no="第二十条",
-        article_text="出版者未尽合理注意义务的，应当承担赔偿责任。",
-        data_source=SourceTrace(tier=SourceTier.LOCAL_SQLITE, source_name="test", status=LookupStatus.ARTICLE_FOUND),
-    )
-    result = checker.compare("不同作者独立创作的作品各自享有著作权。", "《示例解释》第二十条", evidence)
-    assert result.findings[0].location_recheck_required is True
-
-
-def test_qwen_malformed_json_is_repaired_once(monkeypatch):
-    responses = iter([
-        '{"verdict":"issue","issues":[{"error_type":"曲解权威文本原意" "risk_level":"HIGH"}]}',
-        json.dumps({
-            "verdict": "issue",
-            "issues": [{
-                "error_type": "曲解权威文本原意",
-                "risk_level": "HIGH",
-                "diff_summary": "文书写了无条件义务，原文规定了适用前提",
-                "suggestion": "补充原文规定的适用前提。",
-                "auto_fixable": False,
-            }],
-            "notes": "",
-        }, ensure_ascii=False),
-    ])
-
-    calls = []
-    def handler(request):
-        calls.append(request)
-        return httpx.Response(200, json=_qwen_response(next(responses)))
-
-    _install_mock_client(monkeypatch, handler)
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="中华人民共和国网络安全法",
-        source_type="law",
-        article_no="第二十七条",
-        article_text="网络运营者应当制定网络安全事件应急预案。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-
-    result = checker.compare("任何个人不得非法侵入网络。", "《网络安全法》第二十七条", evidence)
-
-    assert result.verdict == CheckVerdict.ISSUE
-    assert len(calls) == 2
-
-
-@pytest.mark.parametrize("error_type", [
-    "条款编号或引用定位错误",
-    "引用内容与权威文本无实质对应",
-])
-def test_statute_llm_rejects_deterministic_error_types(monkeypatch, error_type):
-    response = json.dumps({
-        "verdict": "issue",
-        "issues": [{
-            "error_type": error_type,
-            "risk_level": "HIGH",
-            "diff_summary": "不应由模型判断",
-            "suggestion": "不应由模型建议定位。",
-        }],
-        "notes": "",
-    }, ensure_ascii=False)
-    _install_mock_client(
-        monkeypatch,
-        lambda request: httpx.Response(200, json=_qwen_response(response)),
-    )
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="某法",
-        source_type="law",
-        article_no="第一条",
-        article_text="权威文本。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-
-    with pytest.raises(SemanticResponseError, match="reserved for deterministic checks"):
-        checker.compare("文书表述", "《某法》第一条", evidence)
 
 
 _REASONING_TEXT = "公司章程可以限制股权转让。该约定系公司自治的体现。该约定不违反公司法的禁止性规定。"
@@ -551,38 +284,6 @@ def test_retry_budget_stops_attempts_without_exceeding_deadline(monkeypatch):
     assert now[0] <= 90.0
 
 
-def test_prompt_contains_paragraph_level_instructions():
-    prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    assert "确定性程序切分到准确的条、款或项" in prompt
-    assert "未指明款号时，只引条文的部分款、项不构成问题" in prompt
-
-
-def test_qwen_payload_omits_target_paragraph_when_not_cited(monkeypatch):
-    captured = {}
-
-    def handler(request):
-        captured["payload"] = json.loads(request.content)
-        return httpx.Response(200, json=_qwen_response())
-
-    _install_mock_client(monkeypatch, handler)
-    checker = QwenSemanticChecker(api_key="test-key")
-    evidence = ArticleEvidence(
-        law_title="中华人民共和国专利法",
-        source_type="law",
-        article_no="第九条",
-        article_text="同样的发明创造只能授予一项专利权。",
-        data_source=SourceTrace(
-            tier=SourceTier.LOCAL_SQLITE,
-            source_name="test",
-            status=LookupStatus.ARTICLE_FOUND,
-        ),
-    )
-    checker.compare("文书表述", "《专利法》第九条", evidence)
-
-    user_content = json.loads(captured["payload"]["input"][1]["content"])
-    assert "target_paragraph" not in user_content
-
-
 def test_model_selection_switches_provider_and_protocol(monkeypatch):
     """三个可选模型：千问走 DashScope /responses，DeepSeek 走 /chat/completions。"""
     from ccitecheck.verification.semantic import QwenSemanticChecker, resolve_model_option
@@ -622,4 +323,6 @@ def test_deepseek_uses_chat_completions_endpoint(monkeypatch):
 
     assert captured["url"].endswith("/chat/completions")
     assert "messages" in captured["body"] and "input" not in captured["body"]
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert captured["body"]["response_format"] == {"type": "json_object"}
     assert text == '{"verdict":"pass"}'

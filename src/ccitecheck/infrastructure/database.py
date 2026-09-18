@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from ..domain.legal_numbers import chinese_number_to_int
+from ..domain.law_titles import cn_title_shape_variants
 
 from .paths import PROJECT_ROOT
 
@@ -49,13 +50,13 @@ def seed_common_laws(db_path: str | Path, catalog_path: str | Path | None = None
 
 def find_law(conn: sqlite3.Connection, title: str) -> Optional[sqlite3.Row]:
     normalized = normalize_title(title)
-    row = _find_law_by_normalized(conn, normalized)
-    if row:
-        return row
-    # 文书常带版本注记，如《网络安全法（2025修正）》；剥离后重试
     stripped = strip_version_annotation(normalized)
-    if stripped != normalized:
-        return _find_law_by_normalized(conn, stripped)
+    for candidate in dict.fromkeys((
+        *cn_title_shape_variants(normalized),
+        *cn_title_shape_variants(stripped),
+    )):
+        if row := _find_law_by_normalized(conn, candidate):
+            return row
     return None
 
 
@@ -228,7 +229,7 @@ def list_article_versions(
     rows = conn.execute(
         """
         SELECT
-          l.title, l.source_type, l.status AS law_status,
+          a.id AS article_id, l.title, l.source_type, l.status AS law_status,
           a.article_no, a.article_key, a.text, a.version_key,
           a.version_label, a.version_status, a.source_name, a.source_url,
           a.source_fetched_at, a.timeliness, a.effectiveness, a.issued_at,
@@ -338,6 +339,18 @@ def upsert_article(conn: sqlite3.Connection, law_id: int, record: dict[str, Any]
     effective_from = record.get("effective_from")
     version_key = normalize_version_key(record.get("version_key") or effective_from or "current")
     text = record.get("text", "").strip()
+    # 已核实来源按版本保存；重建数据库不会丢失，也不沿用到其他版本。
+    if not record.get("source_url"):
+        title_row = conn.execute("SELECT title FROM laws WHERE id = ?", (law_id,)).fetchone()
+        manifest = PROJECT_ROOT / "laws" / "verified_corpora.json"
+        if title_row and manifest.exists():
+            key = normalize_version_key(record.get("version_key") or record.get("effective_from") or "current")
+            source = next((entry for entry in json.loads(manifest.read_text(encoding="utf-8"))
+                           if entry["title"] == title_row["title"] and entry["version_key"] == key), None)
+            if source:
+                record = {**record, "source_url": source.get("source_url")}
+                conn.execute("UPDATE laws SET source_url = ? WHERE id = ? AND (source_url IS NULL OR source_url = '')",
+                             (source.get("source_url"), law_id))
     now = _now()
     conn.execute(
         """
@@ -641,9 +654,23 @@ def list_law_titles(conn: sqlite3.Connection) -> list[str]:
     return titles
 
 
+_FOREIGN_ARTICLE_PREFIX = re.compile(
+    r"^(?:article|art\.?|§|section|sec\.?)\s*(\d+(?:[.\-]\d+)?)",
+    re.IGNORECASE,
+)
+
+
 def normalize_article_key(article_no: str) -> str:
-    """把中文/阿拉伯条号归一为同一键，如第一百二十七条与第127条均为127。"""
+    """把中文/外文条号归一为同一键。
+
+    第一百二十七条、第127条、Article 127、§ 4、Section 5 均归一为阿拉伯
+    数字串，使跨法域条号可比较。中文「之」后缀保留为 N-M 形式。
+    """
     compact = "".join(str(article_no).split())
+    # 外文条号（Article / Art. / § / Section / Sec. + 数字）→ 裸数字
+    foreign = _FOREIGN_ARTICLE_PREFIX.match(compact)
+    if foreign:
+        return foreign.group(1).replace("-", ".")
     compact = compact.removeprefix("第").replace("条", "")
     base, separator, suffix = compact.partition("之")
     base_number = chinese_number_to_int(base)
