@@ -40,11 +40,17 @@ from ..domain.claims import (
     from_legacy_claim,
     from_legacy_document,
 )
-from ..domain.evidence import TechnicalStatus
+from ..domain.evidence import RetrievalEvidence, TechnicalStatus
 from ..domain.law_titles import cn_title_shape_key
-from ..domain.queries import HypothesisFeedback, RepairPlan, SearchHypothesis
+from ..domain.queries import (
+    HypothesisFeedback,
+    IdentityCandidate,
+    RepairPlan,
+    SearchHypothesis,
+    SourcePlanItem,
+)
 from ..domain.runs import RunState, SourceAttempt, VerificationRun
-from ..domain.verification import VerificationStatus
+from ..domain.verification import VerificationResult, VerificationStatus
 from ..query_construction import (
     build_document_context,
     QueryResources,
@@ -217,6 +223,75 @@ class VerificationScheduler:
         with timing_session() as timer:
             return self._verify_claim(claim, timer)
 
+    def _retrieve_evidence(
+        self,
+        run: VerificationRun,
+        registry: SourceRegistry,
+        claim: RawClaim,
+        hypothesis: SearchHypothesis,
+        identity: IdentityCandidate,
+        planned: SourcePlanItem,
+        timer,
+    ) -> RetrievalEvidence:
+        """按假设计划对单个 (identity, source) 目标执行检索并记录尝试历史。"""
+        run.transition(RunState.RETRIEVING)
+        with timer.measure("retrieval.total"):
+            evidence, retrieval_attempts = run_with_technical_retries(
+                lambda: execute_retrieval(
+                    planned.source_id,
+                    hypothesis,
+                    RetrievalTask(
+                        kind=("case" if claim.case_mentions else "statute"),
+                        context_text=claim.context_text or claim.raw_text,
+                        identity_title=identity.title,
+                        case_number=(
+                            claim.case_mentions[0].raw_case_number
+                            if claim.case_mentions else None
+                        ),
+                        case_name=(
+                            claim.case_mentions[0].raw_case_name
+                            if claim.case_mentions else None
+                        ),
+                        court=(
+                            claim.case_mentions[0].raw_court
+                            if claim.case_mentions else None
+                        ),
+                    ),
+                    registry=registry,
+                ),
+                lambda item: item.technical_status
+                == TechnicalStatus.SOURCE_ERROR,
+                max_retries=run.max_technical_retries,
+            )
+        run.technical_retry_count += len(retrieval_attempts) - 1
+        for attempt in retrieval_attempts:
+            run.evidence_history.append(attempt.evidence_id)
+            run.source_attempts.append(SourceAttempt(
+                source_id=planned.source_id,
+                hypothesis_id=hypothesis.hypothesis_id,
+                evidence_id=attempt.evidence_id,
+                technical_status=attempt.technical_status.value,
+            ))
+        return evidence
+
+    def _verify_retrieved(
+        self,
+        run: VerificationRun,
+        claim: RawClaim,
+        evidence: RetrievalEvidence,
+        timer,
+    ) -> VerificationResult:
+        """对已有证据执行内容判定并记录校验历史。"""
+        run.transition(RunState.EVIDENCE_READY)
+        run.transition(RunState.VERIFYING)
+        with timer.measure("comparison.total"):
+            result = verify_evidence(
+                claim, evidence, self.context.verification_context
+            )
+        run.verification_history.append(result.verification_id)
+        run.transition(RunState.VERIFIED)
+        return result
+
     def _verify_claim(self, claim: RawClaim, timer) -> VerificationRun:
         run = VerificationRun(claim_id=claim.claim_id)
         resources = QueryResources(law_db=self.context.law_db)
@@ -246,46 +321,10 @@ class VerificationScheduler:
                     continue
                 attempted_targets.add(target_key)
                 for planned in sorted(hypothesis.source_plan, key=lambda item: item.priority):
-                    run.transition(RunState.RETRIEVING)
-                    with timer.measure("retrieval.total"):
-                        evidence, retrieval_attempts = run_with_technical_retries(
-                            lambda: execute_retrieval(
-                                planned.source_id,
-                                hypothesis,
-                                RetrievalTask(
-                                    kind=("case" if claim.case_mentions else "statute"),
-                                    context_text=claim.context_text or claim.raw_text,
-                                    identity_title=identity.title,
-                                    case_number=(
-                                        claim.case_mentions[0].raw_case_number
-                                        if claim.case_mentions else None
-                                    ),
-                                    case_name=(
-                                        claim.case_mentions[0].raw_case_name
-                                        if claim.case_mentions else None
-                                    ),
-                                    court=(
-                                        claim.case_mentions[0].raw_court
-                                        if claim.case_mentions else None
-                                    ),
-                                ),
-                                registry=registry,
-                            ),
-                            lambda item: item.technical_status
-                            == TechnicalStatus.SOURCE_ERROR,
-                            max_retries=run.max_technical_retries,
-                        )
-                    run.technical_retry_count += len(retrieval_attempts) - 1
-                    for attempt in retrieval_attempts:
-                        run.evidence_history.append(attempt.evidence_id)
-                        run.source_attempts.append(SourceAttempt(
-                            source_id=planned.source_id,
-                            hypothesis_id=hypothesis.hypothesis_id,
-                            evidence_id=attempt.evidence_id,
-                            technical_status=attempt.technical_status.value,
-                        ))
+                    evidence = self._retrieve_evidence(
+                        run, registry, claim, hypothesis, identity, planned, timer
+                    )
                     last_retrieval_status = evidence.retrieval_status.name
-
                     candidate_titles.extend(
                         str(title)
                         for title in evidence.provider_metadata.get("candidate_titles", [])
@@ -293,14 +332,7 @@ class VerificationScheduler:
                     )
                     if evidence.technical_status != TechnicalStatus.COMPLETED:
                         continue
-                    run.transition(RunState.EVIDENCE_READY)
-                    run.transition(RunState.VERIFYING)
-                    with timer.measure("comparison.total"):
-                        result = verify_evidence(
-                            claim, evidence, self.context.verification_context
-                        )
-                    run.verification_history.append(result.verification_id)
-                    run.transition(RunState.VERIFIED)
+                    result = self._verify_retrieved(run, claim, evidence, timer)
                     if result.overall_status != VerificationStatus.INSUFFICIENT_EVIDENCE:
                         run.transition(RunState.OUTPUT)
                         run.terminal_reason = "verification_complete"
