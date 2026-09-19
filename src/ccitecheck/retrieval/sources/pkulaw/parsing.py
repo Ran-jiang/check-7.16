@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from ....infrastructure.database import normalize_article_key
 from .models import (
     PkulawArticle,
     PkulawCaseRecord,
@@ -33,6 +34,15 @@ def parse_exact_article(data: Any, requested_article_no: str) -> PkulawArticle:
         raise PkulawNotFoundError("未找到数据")
     if not title or not text:
         raise PkulawMcpError("Pkulaw response is missing title or article text")
+    returned_article_no = article_heading(str(text))
+    if (
+        returned_article_no
+        and normalize_article_key(returned_article_no)
+        != normalize_article_key(requested_article_no)
+    ):
+        raise PkulawMcpError(
+            f"Pkulaw returned {returned_article_no} for {requested_article_no}"
+        )
     return article_from_record(parse_law_record(record), requested_article_no, str(text))
 
 

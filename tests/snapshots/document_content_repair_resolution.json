@@ -95,7 +95,7 @@
         "resolved_locator": {
           "article_no": "第二条",
           "item_no": null,
-          "paragraph_no": "第一款"
+          "paragraph_no": null
         },
         "revision": {
           "machine_applicable": true,
@@ -105,13 +105,13 @@
             "document_unchanged",
             "candidate_deterministically_verified"
           ],
-          "rationale": "将错误引用位置更正为第二条第一款",
-          "revised_text": "《示例法》第二条第一款规定处理个人信息应当遵循合法正当必要和诚信原则。",
+          "rationale": "将错误引用位置更正为第二条",
+          "revised_text": "《示例法》第二条规定处理个人信息应当遵循合法正当必要和诚信原则。",
           "strategy": "replace_exact_text"
         },
         "risk_level": "HIGH",
-        "suggestion": "条号引用错误，应为《示例法》第二条第一款。",
-        "summary": "引文内容对应第二条第一款"
+        "suggestion": "条号引用错误，应为《示例法》第二条。",
+        "summary": "引文内容对应第二条"
       }
     ],
     "jurisdiction": "CN",
@@ -121,7 +121,7 @@
     "location_resolution": {
       "candidates": [
         {
-          "confirmed_level": "paragraph",
+          "confirmed_level": "article",
           "coverage": 1.0,
           "evidence_spans": [
             [
@@ -132,7 +132,7 @@
           "locator": {
             "article_no": "第二条",
             "item_no": null,
-            "paragraph_no": "第一款"
+            "paragraph_no": null
           },
           "source_url": "https://example.test/law",
           "supported": true,

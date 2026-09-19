@@ -37,7 +37,7 @@ _STAGE_ORDER = (
     "retrieval.pkulaw_nearby_scan",
     "retrieval.pkulaw_queue_wait",
     "retrieval.reranker",
-    "location.verify_llm",
+    "location.triage_llm",
     "comparison.total",
     "comparison.llm",
     "case_verification.total",

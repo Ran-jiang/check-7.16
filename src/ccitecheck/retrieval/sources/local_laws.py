@@ -18,6 +18,7 @@ from ...infrastructure.database import (
     find_current_article,
     find_law,
     get_structure_path_for_article,
+    list_all_articles,
     list_article_versions,
     list_current_articles,
 )
@@ -47,6 +48,15 @@ class LocalSQLiteSource:
                 with connect(self.db_path) as conn:
                     self._articles[title] = [dict(row) for row in list_current_articles(conn, title)]
             return self._articles[title]
+
+    def all_articles(self, title: str) -> list[dict]:
+        """该法规全部条文、全部已存版本（纠错反推的全版本池）。"""
+        with self._lock:
+            key = f"{title}#all-versions"
+            if key not in self._articles:
+                with connect(self.db_path) as conn:
+                    self._articles[key] = [dict(row) for row in list_all_articles(conn, title)]
+            return self._articles[key]
 
     def corpus_metadata(self, title: str, rows: list[dict]) -> dict:
         if title in self._metadata:

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { applyTrackedRevision, revisionFor } from "../assets/word-revisions.js"
+import { applyTrackedRevision, revisionFor, undoTrackedRevision } from "../assets/word-revisions.js"
 
 test("revisionFor selects a machine-applicable issue", () => {
   assert.deepEqual(revisionFor({
@@ -61,4 +61,23 @@ test("applyTrackedRevision refuses ambiguous document text", async () => {
   await assert.rejects(() => applyTrackedRevision({ findings: [{ revision: {
     strategy: "replace_exact_text", original_text: "重复原文", revised_text: "修订原文", machine_applicable: true,
   } }] }), /原文存在多处相同内容/)
+})
+
+test("undoTrackedRevision restores the original text", async () => {
+  const calls = []
+  const document = {
+    changeTrackingMode: "Off", load() {},
+    body: { search(text) {
+      calls.push(["search", text])
+      return { items: [{ insertText(value) { calls.push(["replace", value]) } }], load() {} }
+    } },
+  }
+  globalThis.Office = { context: { requirements: { isSetSupported: () => true } } }
+  globalThis.window = { Word: { run: async callback => callback({ document, async sync() {} }) } }
+  globalThis.Word = globalThis.window.Word
+  const result = await undoTrackedRevision({ findings: [{ revision: {
+    strategy: "replace_exact_text", original_text: "原文", revised_text: "修订文", machine_applicable: true,
+  } }] })
+  assert.deepEqual(calls, [["search", "修订文"], ["replace", "原文"]])
+  assert.deepEqual(result, { method: "unique_text", restored_text: "原文" })
 })

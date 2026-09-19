@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-MANIFEST_URL="https://raw.githubusercontent.com/Ran-jiang/check-7.16/main/apps/word_addin/manifest.render.xml"
+MANIFEST_URL="https://cciteheck-api.onrender.com/manifest.xml"
+# 备用源:https://raw.githubusercontent.com/Ran-jiang/check-7.16/main/apps/word_addin/manifest.render.xml
 INSTALL_DIR="$HOME/Library/Containers/com.microsoft.Word/Data/Documents/wef"
 MANIFEST_PATH="$INSTALL_DIR/manifest.render.xml"
 EXPECTED_ID="b01e1d79-81a3-4162-9c0a-c80fa9b1203b"

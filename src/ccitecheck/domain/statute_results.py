@@ -92,8 +92,6 @@ class LegalApplicationReview(BaseModel):
     error_type: Literal[
         "rule_fact_mismatch",
         "meaning_distorted",
-        "legal_alias_inconsistent",
-        "format_error",
     ]
     review_level: Literal["待核查"] = "待核查"
     summary: str = Field(max_length=300)

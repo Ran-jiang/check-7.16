@@ -247,6 +247,31 @@ def list_article_versions(
     ]
 
 
+def list_all_articles(
+    conn: sqlite3.Connection,
+    title: str,
+) -> list[sqlite3.Row]:
+    """返回指定法规的全部条文、全部已存版本（纠错反推的本地全版本池）。"""
+    law = find_law(conn, title)
+    if not law:
+        return []
+    return conn.execute(
+        """
+        SELECT
+          a.id AS article_id, l.title, l.source_type, l.status AS law_status,
+          a.article_no, a.article_key, a.text, a.version_key,
+          a.version_label, a.version_status, a.source_name, a.source_url,
+          a.source_fetched_at, a.timeliness, a.effectiveness, a.issued_at,
+          a.effective_from, a.effective_to, a.effective_at
+        FROM articles a
+        JOIN laws l ON l.id = a.law_id
+        WHERE a.law_id = ?
+        ORDER BY a.effective_from DESC, a.id DESC
+        """,
+        (law["id"],),
+    ).fetchall()
+
+
 def list_historical_article_versions(
     conn: sqlite3.Connection,
     title: str,

@@ -137,8 +137,29 @@ def test_law_item_uses_fatiao_and_parses_fulltext_metadata():
     assert client.calls == [(
         MCP_ENDPOINTS["law_item"],
         "get_law_item_content",
-        {"title": "刑法", "tiao_num": "452"},
+        {"title": "刑法", "tiao_num": 452},
     )]
+
+
+def test_exact_article_rejects_silently_wrong_returned_number():
+    client = FakePkulawClient(_mcp_text_payload({
+        "Title": "中华人民共和国刑法(2023修正)",
+        "FullText": "第一百二十条　错误返回了本条而非之一。",
+    }))
+
+    with pytest.raises(PkulawMcpError, match="第一百二十条"):
+        client.get_article("刑法", "第一百二十条之一")
+
+
+def test_law_item_sends_article_suffix_as_number():
+    client = CapturingPkulawClient(_mcp_text_payload({
+        "Title": "中华人民共和国刑法(2023修正)",
+        "FullText": "第一百二十条之一　条文。",
+    }))
+
+    client.get_law_item_content("刑法", "第一百二十条之一")
+
+    assert client.calls[0][2]["tiao_num"] == 120.1
 
 
 @pytest.mark.parametrize(
@@ -480,6 +501,32 @@ def test_numbered_exact_hit_enriches_timeliness_and_records_route_order():
     )
 
 
+def test_numbered_bare_title_uses_returned_article_version_for_timeliness():
+    current = PkulawArticle(
+        title="中华人民共和国刑法(2023修正)",
+        article_no="第十七条",
+        article_text="已满十六周岁的人犯罪，应当负刑事责任。",
+    )
+    client = RoutingClient(exact=current, laws=[
+        PkulawLawRecord(
+            title="中华人民共和国刑法",
+            timeliness=["已被修改"],
+        ),
+        PkulawLawRecord(
+            title=current.title,
+            timeliness=["现行有效"],
+        ),
+    ])
+
+    result = PkulawFallbackSource(client).lookup(LookupRequest(
+        law_title="刑法",
+        article_no="第十七条",
+    ))
+
+    assert result.evidence.version_status == "现行有效"
+    assert ("law_list", current.title) in client.calls
+
+
 def test_numbered_explicit_revision_queries_that_version_and_reports_latest():
     historical = PkulawArticle(
         title="中华人民共和国民事诉讼法（2017修正）",
@@ -498,7 +545,13 @@ def test_numbered_explicit_revision_queries_that_version_and_reports_latest():
             implement_date="2024.01.01",
         ),
     ]
-    client = RoutingClient(exact=historical, laws=laws)
+    current = historical.__class__(
+        title="中华人民共和国民事诉讼法（2023修正）",
+        article_no=historical.article_no,
+        article_text="人民法院审理第一审民事案件，由审判员组成合议庭。",
+        timeliness=["现行有效"],
+    )
+    client = LawItemRoutingClient(current, exact=historical, laws=laws)
 
     result = PkulawFallbackSource(client).lookup(LookupRequest(
         law_title="中华人民共和国民事诉讼法",
@@ -509,7 +562,12 @@ def test_numbered_explicit_revision_queries_that_version_and_reports_latest():
         "中华人民共和国民事诉讼法", "第四十条", result, [result.trace], []
     )[0]
 
-    assert client.calls[0][1] == "中华人民共和国民事诉讼法（2017修正）"
+    assert client.calls[0] == (
+        "law_item", "中华人民共和国民事诉讼法（2017修正）", "第四十条"
+    )
+    assert next(call for call in client.calls if call[0] == "get_article") == (
+        "get_article", "中华人民共和国民事诉讼法（2017修正）", "第四十条"
+    )
     assert finding.code == StatuteErrorCode.SOURCE_AMENDED
     assert "2023修正" in finding.suggestion
 
@@ -526,6 +584,29 @@ def test_location_candidate_query_returns_same_law_articles():
 
     assert [candidate.article_no for candidate in result.candidates] == ["第二条"]
     assert result.trace.metadata["route_attempts"][0]["purpose"] == "citation_location"
+
+
+def test_cross_law_location_candidate_gets_timeliness():
+    obsolete_law = PkulawLawRecord(
+        title="中华人民共和国合同法",
+        timeliness=["废止或失效"],
+        effectiveness=["法律"],
+    )
+    obsolete_article = PkulawArticle(
+        title=obsolete_law.title,
+        article_no="第六十条",
+        article_text="当事人应当按照约定全面履行自己的义务。",
+        effectiveness=["法律"],
+    )
+    result = PkulawFallbackSource(RoutingClient(
+        semantic=[obsolete_article], laws=[obsolete_law]
+    )).locate_candidates(LookupRequest(
+        law_title="刑法",
+        context_text="当事人应当按照约定全面履行自己的义务。",
+    ))
+
+    assert result.candidates[0].version_status == "废止或失效"
+    assert result.candidates[0].source_metadata["timeliness"] == ["废止或失效"]
 
 
 def test_location_candidates_are_enriched_by_law_item():
@@ -584,10 +665,11 @@ def test_nearby_scan_stops_after_two_articles_each_side():
 
         def get_law_item_content(self, title, article_no):
             self.calls.append(("law_item", title, article_no))
+            text = "正确的离婚条件。" if article_no == "第47条" else "无关内容。"
             return PkulawArticle(
                 title=LAW.title,
                 article_no=article_no,
-                article_text="正确的离婚条件。",
+                article_text=text,
                 implement_date="2021-01-01",
                 timeliness=["现行有效"],
             )
@@ -598,7 +680,8 @@ def test_nearby_scan_stops_after_two_articles_each_side():
     )
 
     assert [candidate.article_no for candidate in result.candidates] == ["第47条"]
-    assert len([call for call in client.calls if call[0] == "get_article"]) == 5
+    assert len([call for call in client.calls if call[0] == "law_item"]) == 5
+    assert not any(call[0] == "get_article" for call in client.calls)
     attempt = result.trace.metadata["route_attempts"][1]
     assert attempt["expanded"] is False
     assert attempt["requested_count"] == 5
@@ -752,14 +835,13 @@ def test_law_item_confirms_or_contradicts_missing_article():
     confirmed = PkulawFallbackSource(LawItemRoutingClient(
         PkulawNotFoundError("未找到数据"), laws=[LAW]
     )).lookup(_request())
-    conflict = PkulawFallbackSource(LawItemRoutingClient(
+    found = PkulawFallbackSource(LawItemRoutingClient(
         _article(), laws=[LAW]
     )).lookup(_request())
 
     assert confirmed.trace.metadata["article_absence_confirmation"] == "double_signal"
     assert confirmed.trace.metadata["article_absent_confirmed"] is True
-    assert conflict.trace.metadata["article_absence_confirmation"] == "conflict"
-    assert conflict.trace.metadata["article_absent_confirmed"] is False
+    assert found.status == LookupStatus.ARTICLE_FOUND
 
 
 def test_numbered_all_routes_miss_returns_candidates_and_completed_marker():
@@ -770,19 +852,19 @@ def test_numbered_all_routes_miss_returns_candidates_and_completed_marker():
     assert result.trace.metadata["candidate_titles"] == [candidate.title]
 
 
-def test_numbered_exact_network_error_does_not_degrade():
+def test_numbered_exact_network_error_falls_back_to_semantic():
     client = RoutingClient(
         exact=PkulawMcpError("network"), semantic=[_article()], laws=[LAW]
     )
     result = PkulawFallbackSource(client).lookup(_request())
-    assert result.status == LookupStatus.SOURCE_ERROR
-    assert [call[0] for call in client.calls] == ["get_article"]
+    assert result.status == LookupStatus.ARTICLE_FOUND
+    assert any(call[0] == "semantic_exact" for call in client.calls)
 
 
-def test_numbered_semantic_error_cannot_be_reported_as_missing():
+def test_numbered_semantic_error_keeps_exact_absence_result_and_trace():
     client = RoutingClient(semantic=PkulawMcpError("semantic network"), laws=[LAW])
     result = PkulawFallbackSource(client).lookup(_request())
-    assert result.status == LookupStatus.SOURCE_ERROR
+    assert result.status == LookupStatus.LAW_FOUND_ARTICLE_MISSING
     assert result.trace.metadata["route_attempts"][-2]["status"] == "error"
 
 

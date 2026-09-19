@@ -7,7 +7,7 @@ export async function seedSourceBookmarks(result) {
   const targets = bookmarkTargets(result)
   const includeNotes = supportsWordApi15()
 
-  const details = await Word.run(async context => {
+  return Word.run(async context => {
     const bookmarkNames = await getBookmarkNames(context, includeNotes)
     for (const name of bookmarkNames) {
       if (name.toLowerCase().startsWith(BOOKMARK_PREFIX)) {
@@ -18,35 +18,26 @@ export async function seedSourceBookmarks(result) {
 
     const searchable = []
     const failed = []
-    const methods = []
     for (const target of targets) {
       if (!includeNotes && isNoteBlock(target.location.block_id)) {
         failed.push(failureOf(target, "WordApi 1.4 不支持脚注或尾注定位"))
-        methods.push(methodOf(target, "failed"))
       } else {
         searchable.push(target)
       }
     }
 
     const located = await locateTargets(context, searchable, includeNotes)
-    let seeded = 0
     for (const target of searchable) {
       const match = located.get(target)
       if (!match) {
         failed.push(failureOf(target, "未找到 Anchor 原文"))
-        methods.push(methodOf(target, "failed"))
         continue
       }
       match.range.insertBookmark(target.bookmarkName)
-      seeded += 1
-      methods.push(methodOf(target, match.method))
     }
     await context.sync()
-    return { requested: targets.length, seeded, failed, methods }
+    return { failed }
   })
-
-  details.table_inventory = await collectTableInventory()
-  return details
 }
 
 export async function jumpToSource(check, documentKey, locationIndex = 0) {
@@ -331,27 +322,6 @@ async function selectBlockFallback(context, location, includeNotes) {
   throw new Error("原文已删除，请重新核查")
 }
 
-async function collectTableInventory() {
-  try {
-    return await Word.run(async context => {
-      const tables = context.document.body.tables
-      tables.load("items/rowCount,items/columnCount")
-      await context.sync()
-      return {
-        status: "ok",
-        count: tables.items.length,
-        tables: tables.items.map((table, index) => ({
-          index,
-          rows: table.rowCount,
-          columns: table.columnCount,
-        })),
-      }
-    })
-  } catch (error) {
-    return { status: "error", message: error?.message || String(error) }
-  }
-}
-
 function searchOptions() {
   return {
     matchCase: false,
@@ -427,10 +397,6 @@ function hashText(value) {
 
 function failureOf(target, reason) {
   return { check_id: target.checkId, location_index: target.index, reason }
-}
-
-function methodOf(target, method) {
-  return { check_id: target.checkId, location_index: target.index, method }
 }
 
 function isNoteBlock(blockId) {

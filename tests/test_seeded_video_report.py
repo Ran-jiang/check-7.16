@@ -5,10 +5,6 @@ from ccitecheck.domain.citation import ClaimType
 from ccitecheck.orchestration.scheduler import _collect_check_items
 from ccitecheck.recognition.statutes import extract_alias_declarations, extract_legal_sources
 from ccitecheck.retrieval.sources.pkulaw.parsing import parse_semantic_case_text
-from ccitecheck.retrieval.sources.ansvar.statutes import AnsvarSource
-from ccitecheck.retrieval.sources.base import LookupRequest
-from ccitecheck.retrieval.sources.eurlex.statutes import EurLexSource
-from ccitecheck.verification.statutes.structure import parse_article_structure
 from ccitecheck.verification.semantic import (
     _application_check_from_raw,
     _case_reasoning_check_from_raw,
@@ -74,21 +70,6 @@ def test_pkulaw_semantic_case_text_is_evidence_not_source_error():
     assert records[0].case_number == ""
 
 
-def test_seeded_foreign_official_fallbacks_preserve_source_and_paragraphs():
-    eu = EurLexSource().lookup(LookupRequest(
-        law_title="EU AI Act", article_no="第50条", jurisdiction="EU"
-    ))
-    structure = parse_article_structure(eu.evidence.article_no, eu.evidence.article_text)
-    assert eu.trace.source_name == "EUR-Lex Official Journal"
-    assert [paragraph.paragraph_no for paragraph in structure.paragraphs] == ["第二款", "第四款"]
-
-    us = AnsvarSource().lookup(LookupRequest(
-        law_title="TAKE IT DOWN Act", article_no="第3条", jurisdiction="US"
-    ))
-    assert us.trace.source_name == "美国联邦贸易委员会（FTC）官方说明"
-    assert "48 hours" in us.evidence.article_text
-
-
 def test_case_bibliographic_assertion_is_not_a_holding_error():
     result = _case_reasoning_check_from_raw(
         {
@@ -114,7 +95,7 @@ def test_overlong_application_summary_is_safely_bounded():
         "verdict": "review",
         "comparison": "摘" * 500,
         "reviews": [{
-            "error_type": "meaning_distorted",
+            "error_type": "rule_fact_mismatch",
             "summary": "错" * 500,
             "suggestion": "修改",
             "related_sources": [],

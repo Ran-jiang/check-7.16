@@ -63,6 +63,17 @@ def equivalent_law_titles(left: str, right: str) -> bool:
     return cn_title_shape_key(left_normalized) == cn_title_shape_key(right_normalized)
 
 
+def matches_requested_law_title(requested: str, returned: str) -> bool:
+    """同名之外，显式年份版本也必须一致；裸名仍可命中现行版本。"""
+    if not equivalent_law_titles(requested, returned):
+        return False
+    requested_year = re.search(r"[（(]((?:19|20)\d{2})", normalize_title(requested))
+    if requested_year is None:
+        return True
+    returned_year = re.search(r"[（(]((?:19|20)\d{2})", normalize_title(returned))
+    return returned_year is not None and returned_year.group(1) == requested_year.group(1)
+
+
 def _is_current(record: TitledRecord) -> bool:
     values = getattr(record, "timeliness", None) or []
     return any(_CURRENT_MARKER in value for value in values) and not any(
@@ -125,6 +136,7 @@ def _normalized_exact_title(title: str) -> str:
 
 __all__ = [
     "equivalent_law_titles",
+    "matches_requested_law_title",
     "match_law_record",
     "normalize_law_title_for_comparison",
 ]

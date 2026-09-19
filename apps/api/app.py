@@ -37,6 +37,7 @@ from .schema import (
 from .debug_capture import append_event, create_run, write_json
 
 ADDIN_ROOT = PROJECT_ROOT / "apps" / "word_addin"
+INSTALL_ROOT = ADDIN_ROOT / "install"
 LAW_DB = PROJECT_ROOT / "data" / "laws.sqlite"
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 # 保活间隔：核查超过该秒数仍未完成时，向连接发送保活空白防止 WKWebView 超时
@@ -63,7 +64,7 @@ async def revalidate_static_assets(request, call_next):
     path = request.url.path
     if path == "/" or path.startswith(("/assets", "/shared-assets")) or path.endswith((".html", ".css", ".js")):
         response.headers["Cache-Control"] = "no-cache"
-    if path in {"/", "/taskpane.html", "/help.html"}:
+    if path in {"/", "/taskpane.html", "/help.html", "/install.html"}:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' https://appsforoffice.microsoft.com; "
@@ -94,6 +95,29 @@ def taskpane() -> FileResponse:
 @app.get("/help.html", include_in_schema=False)
 def help_page() -> FileResponse:
     return FileResponse(ADDIN_ROOT / "help.html")
+
+
+@app.get("/manifest.xml", include_in_schema=False)
+def addin_manifest() -> FileResponse:
+    """公网 manifest:Word“上传我的加载项”可直接选文件或粘贴本 URL。"""
+    return FileResponse(ADDIN_ROOT / "manifest.render.xml", media_type="application/xml")
+
+
+@app.get("/install.html", include_in_schema=False)
+def install_page() -> FileResponse:
+    return FileResponse(INSTALL_ROOT / "index.html")
+
+
+@app.get("/install/install-ccitecheck.command", include_in_schema=False)
+def mac_installer() -> FileResponse:
+    """macOS 安装器以仓库 tools/ 下的脚本为唯一来源,避免副本漂移。"""
+    return FileResponse(
+        PROJECT_ROOT / "tools" / "word-installers" / "mac" / "install-ccitecheck.command",
+        media_type="text/x-shellscript",
+    )
+
+
+app.mount("/install", StaticFiles(directory=INSTALL_ROOT), name="install")
 
 
 @app.get("/api/health")

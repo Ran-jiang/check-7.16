@@ -121,11 +121,7 @@ test("seedSourceBookmarks replaces old markers and jumpToSource selects the book
       case_results: [],
     },
   })
-  assert.equal(details.requested, 1)
-  assert.equal(details.seeded, 1)
   assert.deepEqual(details.failed, [])
-  assert.deepEqual(details.methods, [{ check_id: "card_1", location_index: 0, method: "block_search" }])
-  assert.deepEqual(details.table_inventory, { status: "ok", count: 0, tables: [] })
   const insertedName = calls.find(call => call[0] === "insert")[1]
   assert.match(insertedName, /^_cc[a-z0-9]+_[a-z0-9_]+_0$/)
   assert.deepEqual(calls, [["delete", "_CCOLD_0"], ["insert", insertedName]])
@@ -200,14 +196,7 @@ test("seedSourceBookmarks searches inside the target table cell", async () => {
       case_results: [],
     },
   })
-  assert.equal(details.seeded, 1)
   assert.deepEqual(details.failed, [])
-  assert.equal(details.methods[0].method, "cell_search")
-  assert.deepEqual(details.table_inventory, {
-    status: "ok",
-    count: 1,
-    tables: [{ index: 0, rows: 3, columns: 2 }],
-  })
   assert.deepEqual(calls.map(call => call[0]), ["cell-search", "insert"])
 })
 

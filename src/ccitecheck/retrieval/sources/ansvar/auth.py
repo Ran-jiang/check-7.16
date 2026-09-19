@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from ....infrastructure.http import default_ssl_context
+from ....infrastructure.http import BROWSER_USER_AGENT, default_ssl_context
 
 
 class AnsvarAuthError(RuntimeError):
@@ -119,8 +119,11 @@ class AnsvarOAuth:
         if self._endpoints:
             return self._endpoints
         url = f"{self.realm}/.well-known/oauth-authorization-server"
+        request = urllib.request.Request(
+            url, headers={"User-Agent": BROWSER_USER_AGENT}
+        )
         try:
-            with urllib.request.urlopen(url, timeout=15, context=default_ssl_context()) as resp:
+            with urllib.request.urlopen(request, timeout=15, context=default_ssl_context()) as resp:
                 meta = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, OSError) as exc:
             raise AnsvarAuthError(f"无法发现 Ansvar OAuth 端点：{exc}") from exc
@@ -148,7 +151,11 @@ class AnsvarOAuth:
         }).encode("utf-8")
         req = urllib.request.Request(
             endpoints.registration, data=body,
-            headers={"Content-Type": "application/json"}, method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": BROWSER_USER_AGENT,
+            },
+            method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=15, context=default_ssl_context()) as resp:
@@ -233,7 +240,11 @@ class AnsvarOAuth:
         endpoints = self._discover()
         req = urllib.request.Request(
             endpoints.token, data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": BROWSER_USER_AGENT,
+            },
+            method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=20, context=default_ssl_context()) as resp:

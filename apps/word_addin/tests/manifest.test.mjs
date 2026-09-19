@@ -26,3 +26,10 @@ test("Word installers validate the public add-in identity", () => {
   assert.match(macInstaller, new RegExp(addinId(publicManifest), "i"))
   assert.match(windowsInstaller, new RegExp(addinId(publicManifest), "i"))
 })
+
+test("install page, manifest route and mac installer agree on the public origin", () => {
+  const installPage = readFileSync(new URL("../../word_addin/install/index.html", import.meta.url), "utf8")
+  assert.match(installPage, /https:\/\/cciteheck-api\.onrender\.com\/manifest\.xml/)
+  assert.match(installPage, /\/install\/install-ccitecheck\.command/)
+  assert.match(macInstaller, /https:\/\/cciteheck-api\.onrender\.com\/manifest\.xml/)
+})

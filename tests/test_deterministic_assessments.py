@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
+import pytest
+
 from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
+from ccitecheck.domain.queries import FidelityTriage, RepairDiagnosis, RepairPlan, RetrievalQueryPlan
 from ccitecheck.domain.statute_results import StatuteErrorCode, StatuteFinding, StatuteVersion
 from ccitecheck.orchestration.scheduler import _resolve_repealed_successors
 from ccitecheck.verification.statutes import assess_statute
 from ccitecheck.retrieval.sources import LookupResult
-from ccitecheck.retrieval.sources.base import LocationCandidateResult
+from ccitecheck.retrieval.sources.base import LookupRequest
 
 
 def test_source_not_found_requires_completed_pkulaw_search():
@@ -155,21 +158,45 @@ def test_implementation_date_and_future_status_are_checked():
 
 
 def test_unrelated_current_candidates_are_not_called_successors():
-    trace = SourceTrace(
+    old_trace = SourceTrace(
         tier=SourceTier.PKULAW_FALLBACK,
         source_name="北大法宝",
-        status=LookupStatus.RELEVANT_ARTICLES_FOUND,
+        status=LookupStatus.ARTICLE_FOUND,
     )
+    trace = old_trace.model_copy(deep=True)
     candidate = ArticleEvidence(
         law_title="某现行相关法",
         article_no="第一条",
         article_text="与农业税追缴规则无关的条文。",
+        version_status="现行有效",
         data_source=trace,
     )
 
     class NoiseSource:
-        def locate_successor_candidates(self, request):
-            return LocationCandidateResult([candidate], trace)
+        def lookup(self, request):
+            return LookupResult(LookupStatus.ARTICLE_FOUND, candidate, trace)
+
+    class Checker:
+        def plan_repair(self, **kwargs):
+            return RepairPlan(
+                diagnosis=RepairDiagnosis(
+                    reason="version_issue", confidence=.8, message="尝试现行候选"
+                ),
+                retry_request=RetrievalQueryPlan(
+                    route="statute_exact", target_name=candidate.law_title,
+                    article_no=candidate.article_no,
+                ),
+            )
+
+        def triage_fidelity(self, quote, cited, candidates):
+            return FidelityTriage(
+                verdict="none",
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"],
+                    False,
+                ),
+                differences=["规则内容无关"],
+            )
 
     finding = StatuteFinding(
         code=StatuteErrorCode.SOURCE_REPEALED,
@@ -180,15 +207,41 @@ def test_unrelated_current_candidates_are_not_called_successors():
     item = SimpleNamespace(
         jurisdiction="CN",
         law_title="农业税条例",
-        claim=SimpleNamespace(text="依据《农业税条例》追缴农业税及滞纳金。"),
+        display_title="农业税条例",
+        article_no="第一条",
+        article=None,
+        citation_span=None,
+        correction_evidence=None,
+        repaired_title=None,
+        repaired_article_no=None,
+        repair_verified=False,
+        claim=SimpleNamespace(
+            text="依据《农业税条例》第一条追缴农业税及滞纳金。",
+            context_text=None,
+        ),
+    )
+    item.lookup_key = ("CN", item.law_title, item.article_no, None)
+    old = ArticleEvidence(
+        law_title=item.law_title, article_no=item.article_no,
+        article_text="农业税及滞纳金追缴规则。", version_status="废止或失效",
+        data_source=old_trace,
+    )
+    lookups = {item.lookup_key: (LookupResult(LookupStatus.ARTICLE_FOUND, old, old_trace), [old_trace])}
+
+    _resolve_repealed_successors(
+        [NoiseSource()], [item], {0: [finding]}, lookups, Checker()
     )
 
-    _resolve_repealed_successors([NoiseSource()], [item], {0: [finding]})
+    assert item.correction_evidence is None
+    assert "未展示为纠正候选" in finding.suggestion
+    assert lookups[item.lookup_key][1][-1].metadata["temporal_repair"]["status"] == "rejected"
 
-    assert "未检索到可确认的现行继受法" in finding.suggestion
 
-
-def test_unique_successor_includes_repeal_basis_and_current_rule():
+@pytest.mark.parametrize("temporal_code", [
+    StatuteErrorCode.SOURCE_REPEALED,
+    StatuteErrorCode.SOURCE_AMENDED,
+])
+def test_temporal_source_uses_model_candidate_then_exact_verification(temporal_code):
     trace = SourceTrace(
         tier=SourceTier.PKULAW_FALLBACK,
         source_name="北大法宝",
@@ -199,28 +252,49 @@ def test_unique_successor_includes_repeal_basis_and_current_rule():
         article_no="第五百六十三条",
         article_text="当事人一方迟延履行主要债务，经催告后在合理期限内仍未履行，当事人可以解除合同。",
         effective_from="2021-01-01",
-        data_source=trace,
-    )
-    basis = ArticleEvidence(
-        law_title="中华人民共和国民法典",
-        article_no="第一千二百六十条",
-        article_text="《中华人民共和国合同法》同时废止。",
+        version_status="现行有效",
         data_source=trace,
     )
 
     class SuccessorSource:
-        def locate_successor_candidates(self, request):
-            return LocationCandidateResult([successor], trace)
+        def lookup(self, request):
+            assert request == LookupRequest(
+                law_title=successor.law_title,
+                article_no=successor.article_no,
+                context_text=text,
+                version_hint="current",
+                jurisdiction="CN",
+            )
+            return LookupResult(LookupStatus.ARTICLE_FOUND, successor, trace)
 
-        def locate_repeal_basis(self, request, successor_title):
-            return LocationCandidateResult([basis], trace)
+    class Checker:
+        def plan_repair(self, **kwargs):
+            assert kwargs["allow_unlisted"] is True
+            return RepairPlan(
+                diagnosis=RepairDiagnosis(
+                    reason="version_issue", confidence=.99, message="现行继受条文"
+                ),
+                retry_request=RetrievalQueryPlan(
+                    route="statute_exact", target_name=successor.law_title,
+                    article_no=successor.article_no,
+                ),
+            )
+
+        def triage_fidelity(self, quote, cited, candidates):
+            return FidelityTriage(
+                verdict="candidate_1",
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"],
+                    True,
+                ),
+            )
 
     text = (
         "当事人一方迟延履行主要债务，经催告后在合理期限内仍未履行的，"
         "对方可以依据《中华人民共和国合同法》第九十四条解除合同。"
     )
     finding = StatuteFinding(
-        code=StatuteErrorCode.SOURCE_REPEALED,
+        code=temporal_code,
         risk_level="HIGH",
         summary="《中华人民共和国合同法》已废止",
         suggestion="《中华人民共和国合同法》已废止或失效。",
@@ -228,16 +302,32 @@ def test_unique_successor_includes_repeal_basis_and_current_rule():
     item = SimpleNamespace(
         jurisdiction="CN",
         law_title="中华人民共和国合同法",
+        display_title="中华人民共和国合同法",
         article_no="第九十四条",
         article=None,
-        claim=SimpleNamespace(text=text),
+        citation_span=None,
+        correction_evidence=None,
+        repaired_title=None,
+        repaired_article_no=None,
+        repair_verified=False,
+        claim=SimpleNamespace(text=text, context_text=None),
+    )
+    item.lookup_key = ("CN", item.law_title, item.article_no, None)
+    old_trace = trace.model_copy(deep=True)
+    old = ArticleEvidence(
+        law_title=item.law_title, article_no=item.article_no,
+        article_text=successor.article_text, version_status="废止或失效",
+        data_source=old_trace,
+    )
+    lookups = {item.lookup_key: (LookupResult(LookupStatus.ARTICLE_FOUND, old, old_trace), [old_trace])}
+
+    _resolve_repealed_successors(
+        [SuccessorSource()], [item], {0: [finding]}, lookups, Checker()
     )
 
-    _resolve_repealed_successors([SuccessorSource()], [item], {0: [finding]})
-
-    assert "2021-01-01" in finding.suggestion
-    assert "第一千二百六十条" in finding.suggestion
+    assert item.correction_evidence == successor
     assert "第五百六十三条" in finding.suggestion
+    assert finding.revision.machine_applicable is True
 
 
 def test_historical_article_turns_missing_location_into_amended_source():

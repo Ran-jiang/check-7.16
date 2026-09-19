@@ -59,7 +59,7 @@
     "location_resolution": {
       "candidates": [
         {
-          "confirmed_level": "paragraph",
+          "confirmed_level": "article",
           "coverage": 1.0,
           "evidence_spans": [
             [
@@ -70,7 +70,7 @@
           "locator": {
             "article_no": "第二条",
             "item_no": null,
-            "paragraph_no": "第一款"
+            "paragraph_no": null
           },
           "source_url": "https://example.test/law",
           "supported": true,

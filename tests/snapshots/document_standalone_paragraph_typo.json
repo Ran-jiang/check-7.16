@@ -105,12 +105,12 @@
         "resolved_locator": {
           "article_no": "第105条",
           "item_no": null,
-          "paragraph_no": "第一款"
+          "paragraph_no": null
         },
         "revision": null,
         "risk_level": "HIGH",
-        "suggestion": "条号引用错误，应为《示例法》第105条第一款。",
-        "summary": "引文内容对应第105条第一款"
+        "suggestion": "条号引用错误，应为《示例法》第105条。",
+        "summary": "引文内容对应第105条"
       }
     ],
     "jurisdiction": "CN",
@@ -120,7 +120,7 @@
     "location_resolution": {
       "candidates": [
         {
-          "confirmed_level": "paragraph",
+          "confirmed_level": "article",
           "coverage": 1.0,
           "evidence_spans": [
             [
@@ -131,7 +131,7 @@
           "locator": {
             "article_no": "第105条",
             "item_no": null,
-            "paragraph_no": "第一款"
+            "paragraph_no": null
           },
           "source_url": "https://example.test/law",
           "supported": true,

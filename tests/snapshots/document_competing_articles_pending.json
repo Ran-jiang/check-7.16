@@ -59,7 +59,7 @@
     "location_resolution": {
       "candidates": [
         {
-          "confirmed_level": "paragraph",
+          "confirmed_level": "article",
           "coverage": 1.0,
           "evidence_spans": [
             [
@@ -70,14 +70,14 @@
           "locator": {
             "article_no": "第二条",
             "item_no": null,
-            "paragraph_no": "第一款"
+            "paragraph_no": null
           },
           "source_url": "https://example.test/law",
           "supported": true,
           "text": "处理个人信息应当遵循合法正当必要和诚信原则"
         },
         {
-          "confirmed_level": "paragraph",
+          "confirmed_level": "article",
           "coverage": 1.0,
           "evidence_spans": [
             [
@@ -88,7 +88,7 @@
           "locator": {
             "article_no": "第三条",
             "item_no": null,
-            "paragraph_no": "第一款"
+            "paragraph_no": null
           },
           "source_url": "https://example.test/law",
           "supported": true,

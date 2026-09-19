@@ -1,29 +1,32 @@
 import {
-  BADGE_TEXT,
   orderChecksByCitation,
-  sourceUrlOf,
-  stripRepeatedArticleHeading,
 } from "./view-model.js"
-import { caseTypeOf, caseViewOf, CASE_STATUS_LABELS } from "./case-view-model.js"
-import { formatReference, statuteViewOf } from "./statute-view-model.js"
+import { caseViewOf } from "./case-view-model.js"
+import { statuteViewOf } from "./statute-view-model.js"
 import { buildResultCards } from "./result-models.js"
-
-export {
-  BADGE_TEXT,
-  CASE_STATUS_LABELS,
-  caseTypeOf,
-  formatReference,
-  orderChecksByCitation,
-  sourceUrlOf,
-  stripRepeatedArticleHeading,
-}
+import { revisionFor } from "./word-revisions.js"
 
 const screens = ["home-screen", "progress-screen", "results-screen", "help-screen"]
 
 const REFERENCE_ROLE_LABELS = { nested: "内部转引", carry_forward: "承前条款" }
 
-function viewOf(check, options = {}) {
-  return check.check_kind === "case" ? caseViewOf(check, options) : statuteViewOf(check, options)
+// UI 展示层的三类业务状态:底层 review / bug 合并为"待核实",数据层不变。
+export function displayState(state) {
+  return ["review", "bug"].includes(state) ? "pending" : state
+}
+
+const STATUS_PILL_TEXT = { pass: "已通过", issue: "未通过", review: "待核实", bug: "待核实" }
+
+export function hasMachineFix(check) {
+  return Boolean(revisionFor(check))
+}
+
+function statNumber(value) {
+  return element("span", "stat-number", String(value))
+}
+
+function viewOf(check) {
+  return check.check_kind === "case" ? caseViewOf(check) : statuteViewOf(check)
 }
 
 export function stateMatchesFilter(state, filter) {
@@ -35,14 +38,12 @@ export function stateMatchesFilter(state, filter) {
 export class CheckUi {
   constructor() {
     this.messageTimer = null
-    this.handlers = { onJump: null, onDecide: null, onHistoryOpen: null }
+    this.handlers = { onJump: null, onHistoryOpen: null }
     this.decisions = {}
     this.decisionSyncers = new Map()
-    this.checks = []
     this.cards = []
     this.ready = false
     this.statusFilter = "all"
-    this.typeFilter = ""
   }
 
   setHandlers(handlers) {
@@ -125,33 +126,17 @@ export class CheckUi {
     this.decisions = decisions
     this.decisionSyncers = new Map()
     this.cards = orderChecksByCitation(buildResultCards(verification))
-    this.checks = [
-      ...this.cards.flatMap(item => item.check_kind === "statute-group"
-        ? item.references.map(reference => ({ ...reference, check_kind: "statute" }))
-        : [item]),
-    ]
-    const title = document.getElementById("results-title")
     const pending = (summary.reviews || 0) + (summary.bugs || 0)
-    title.replaceChildren(
-      element("span", "title-main", "核查完成！发现引用句"),
-      element("em", "title-count", String(summary.card_total)),
-      element("span", "title-main", "处，共核查法律引用"),
-      element("em", "title-count", String(summary.reference_total)),
-      element("span", "title-main", "条；"),
-      element("em", "title-count", String(summary.passed)),
-      element("span", "title-main", "处已通过，"),
-      element("em", "title-count", String(summary.issues)),
-      element("span", "title-main", "处未通过，"),
-      element("em", "title-count", String(pending)),
-      element("span", "title-main", "处待核实")
+    document.getElementById("results-stats").replaceChildren(
+      "共核查 ", statNumber(summary.reference_total), " 条引用，",
+      statNumber(summary.issues), " 处未通过，",
+      statNumber(pending), " 处待核实",
     )
     document.getElementById("results-subtitle").textContent = options.snapshotAt
       ? `${result.file_name} · ${formatCheckedAt(options.snapshotAt)} 的核查快照`
       : result.file_name
     this.statusFilter = "all"
-    this.typeFilter = ""
     this.renderStatusFilter(summary)
-    this.renderTypeFilter()
     this.renderChecks()
     this.showScreen("results-screen")
   }
@@ -160,53 +145,29 @@ export class CheckUi {
     const container = document.getElementById("status-filter")
     const pending = (summary.reviews || 0) + (summary.bugs || 0)
     const options = [
-      ["all", "全部", summary.total],
+      ["all", "全部", summary.reference_total],
       ["issue", "未通过", summary.issues],
       ["pending", "待核实", pending],
       ["pass", "已通过", summary.passed],
     ]
     container.replaceChildren()
+    const buttons = []
     for (const [value, label, count] of options) {
       const button = element("button", `status-tab${value === this.statusFilter ? " is-active" : ""}`)
       button.type = "button"
-      button.role = "tab"
-      button.setAttribute("aria-selected", String(value === this.statusFilter))
+      button.setAttribute("aria-pressed", String(value === this.statusFilter))
       button.append(label, element("em", "status-count", String(count)))
       button.addEventListener("click", () => {
         this.statusFilter = value
-        this.typeFilter = ""
-        this.renderStatusFilter(summary)
-        this.renderTypeFilter()
+        for (const [index, item] of buttons.entries()) {
+          const active = options[index][0] === value
+          item.classList.toggle("is-active", active)
+          item.setAttribute("aria-pressed", String(active))
+        }
         this.renderChecks()
       })
+      buttons.push(button)
       container.append(button)
-    }
-  }
-
-  renderTypeFilter() {
-    const select = document.getElementById("type-filter")
-    const types = new Set()
-    for (const check of this.checks) {
-      const findings = check.findings || []
-      if (findings.length) {
-        for (const type of viewOf(check).typeTags) types.add(type)
-      } else if (check.check_kind === "case") {
-        types.add(caseTypeOf(check))
-      }
-    }
-    const allOption = element("option", "", "全部类型")
-    allOption.value = ""
-    select.replaceChildren(allOption)
-    for (const type of types) {
-      const option = element("option", "", type)
-      option.value = type
-      select.append(option)
-    }
-    select.value = ""
-    select.classList.toggle("is-hidden", !["all", "issue"].includes(this.statusFilter))
-    select.onchange = () => {
-      this.typeFilter = select.value
-      this.renderChecks()
     }
   }
 
@@ -215,13 +176,10 @@ export class CheckUi {
     list.replaceChildren()
     const visible = this.cards.filter(item => {
       const checks = item.check_kind === "statute-group" ? item.references : [item]
-      if (!checks.some(check => stateMatchesFilter(check.outcome, this.statusFilter))) return false
-      if (!this.typeFilter) return true
-      return checks.some(check => viewOf(check).typeTags.includes(this.typeFilter) ||
-        (check.check_kind === "case" && caseTypeOf(check) === this.typeFilter))
+      return checks.some(check => stateMatchesFilter(check.outcome, this.statusFilter))
     })
     if (!visible.length) {
-      list.append(element("div", "empty-results", this.typeFilter ? "该类型下没有核查结果。" : "该状态下没有核查结果。"))
+      list.append(element("div", "empty-results", "该状态下没有核查结果。"))
       return
     }
     for (const item of visible) {
@@ -236,178 +194,258 @@ export class CheckUi {
         card_id: card.card_id,
         claim_text: card.claim_text,
         source_locations: card.source_locations,
+        display_locations: card.display_locations,
+        note_context: card.note_context || null,
       })
     }
     return this.createMultiReferenceCard(card)
   }
 
-  // 统一卡片解剖（单条/多条/案例同构）：
-  // ①汇总行（仅多条）②文书原文（含定位）③「核查对象」分区标签 ④收起的核查行×N
+  // 单条引用卡:卡头(条名/标签/徽章) → 文书原文 → [一行原因] → 建议/diff →
+  // 权威来源 → 接受修订。未通过默认全部展开;待核实展开卡头与原因;
+  // 已通过收起为一行,点击卡头展开引文与权威来源。
   createResultCard(check) {
-    const view = viewOf(check, { compact: true })
-    const card = element("article", `result-card is-${view.state}`)
-    if (check.note_context) card.append(element("div", "card-type", "脚注来源"))
-    card.append(...this.createQuoteZone(check.claim_text, check, check.card_id || check.check_id))
-    card.append(this.createSectionLabel(view.refLine.label))
-    const rows = element("div", "citation-references")
-    rows.append(this.createReferenceRow(view))
-    card.append(rows)
+    const view = viewOf(check)
+    const state = displayState(view.state)
+    const card = element("article", `result-card is-${state}${check.note_context ? " is-footnote" : ""}`)
+    const body = this.createItemBody(view, { includeQuote: state === "pass" })
+    card.append(this.createItemHeader(view, state !== "issue", body))
+    if (state !== "pass") {
+      card.append(this.createQuoteZone(check.claim_text, check, check.card_id || check.check_id, check.note_context))
+      if (state === "pending") {
+        const reason = this.createPendingReason(view)
+        if (reason) card.append(reason)
+      }
+    }
+    body.hidden = state !== "issue"
+    card.append(body)
     return card
   }
 
+  // 一句多引聚合卡:外层一张卡,共享文书原文,引用项之间细分割线、无嵌套边框。
   createMultiReferenceCard(card) {
-    const views = card.references.map(reference =>
-      viewOf(reference, { compact: true })
-    )
-    const container = element("article", "result-card statute-group is-multiple")
+    const views = card.references.map(viewOf)
+    const container = element("article", `result-card is-multiple${card.note_context ? " is-footnote" : ""}`)
 
     const top = element("div", "result-topline")
-    top.append(element("div", "card-type", `${card.note_context ? "脚注 · " : ""}本段共 ${views.length} 条引用`))
-    const counts = element("div", "multi-counts")
+    top.append(element("span", "topline-label", `${card.note_context ? "脚注 · " : ""}本段共 ${views.length} 条引用`))
+    const counts = element("span", "topline-counts")
     const primaryViews = views.filter(view => view.raw.reference_role !== "nested")
     const nestedCount = views.length - primaryViews.length
-    const issueCount = primaryViews.filter(view => view.state === "issue").length
-    const pendingCount = primaryViews.filter(view => ["review", "bug"].includes(view.state)).length
-    const passCount = primaryViews.filter(view => view.state === "pass").length
+    const countOf = state => primaryViews.filter(view => displayState(view.state) === state).length
+    const issueCount = countOf("issue")
+    const pendingCount = countOf("pending")
+    const passCount = countOf("pass")
     if (issueCount) counts.append(element("span", "count-issue", `${issueCount} 未通过`))
-    if (pendingCount) counts.append(element("span", "count-review", `${pendingCount} 待核实`))
+    if (pendingCount) counts.append(element("span", "count-pending", `${pendingCount} 待核实`))
     if (passCount) counts.append(element("span", "count-pass", `${passCount} 通过`))
     if (nestedCount) counts.append(element("span", "count-nested", `${nestedCount} 内部转引`))
     top.append(counts)
     container.append(top)
 
-    container.append(...this.createQuoteZone(card.claim_text, card, card.card_id))
-    container.append(this.createSectionLabel("核查对象"))
+    container.append(this.createQuoteZone(card.claim_text, card, card.card_id, card.note_context))
 
-    const references = element("div", "citation-references")
-    for (const view of views) references.append(this.createReferenceRow(view))
-    container.append(references)
+    const list = element("div", "reference-list")
+    for (const view of views) list.append(this.createReferenceItem(view))
+    container.append(list)
     return container
   }
 
-  createSectionLabel(text) {
-    const row = element("div", "zone-label-row")
-    row.append(element("span", "zone-label", text))
-    return row
+  // 多引卡内的引用项:结构同单条卡,但不重复 claim_text(共享块在卡顶)。
+  createReferenceItem(view) {
+    const state = displayState(view.state)
+    const nestedClass = ["nested", "carry_forward"].includes(view.raw.reference_role) ? " is-nested" : ""
+    const item = element("section", `reference-item is-${state}${nestedClass}`)
+    const body = this.createItemBody(view)
+    item.append(this.createItemHeader(view, state !== "issue", body))
+    if (state === "pending") {
+      const reason = this.createPendingReason(view)
+      if (reason) item.append(reason)
+    }
+    body.hidden = state !== "issue"
+    item.append(body)
+    return item
   }
 
-  // 核查行：默认收起为一行（条目 + 徽章），展开显示结论、建议、权威原文与决策
-  createReferenceRow(view) {
-    const nestedClass = view.raw.reference_role === "nested" ? " is-nested-reference" : ""
-    const row = element("details", `reference-row is-${view.state}${nestedClass}`)
-    const summary = element("summary", "reference-row-summary")
-    summary.append(element("span", "reference-source", view.refLine.text))
+  createPendingReason(view) {
+    const reason = view.verdict?.suggestion
+      || (view.typeTags.length ? view.typeTags.join(" · ") : "")
+    return reason ? element("p", "pending-reason", reason) : null
+  }
+
+  // 卡头:条名(15/600) + 角色前缀 + 问题类型标签 + 状态 pill(+展开箭头)。
+  // 未通过是静态行;待核实/已通过的卡头可点击展开正文。
+  createItemHeader(view, interactive, body) {
+    const state = displayState(view.state)
+    const header = element(interactive ? "button" : "div", "reference-item-header")
+    if (interactive) {
+      header.type = "button"
+      header.setAttribute("aria-expanded", "false")
+      header.addEventListener("click", () => {
+        const expanded = body.hidden === false
+        body.hidden = expanded
+        header.setAttribute("aria-expanded", String(!expanded))
+      })
+    }
+    const label = element("span", "reference-label")
     const role = REFERENCE_ROLE_LABELS[view.raw.reference_role]
-    if (role) summary.append(element("span", "reference-role", role))
-    summary.append(element("span", `status-pill is-${view.state}`, view.badge.text))
-    row.append(summary)
-
-    const body = element("div", "reference-row-body")
-    const bodyTop = element("div", "reference-body-topline")
-    bodyTop.append(element("div", "card-type", view.typeLabel))
-    body.append(bodyTop)
-    this.appendVerdict(body, view)
-    if (view.candidates?.length) body.append(this.createCaseCandidates(view.candidates))
-    if (view.evidence) body.append(this.createEvidenceDetails(view.evidence))
-    body.append(this.createDecisionRow(view))
-    row.append(body)
-    return row
+    if (role) label.append(element("span", "reference-role-prefix", `${role} · `))
+    if (view.candidateCitation) label.append(element("span", "reference-context-label", "原引用"))
+    label.append(element("span", "reference-title", view.reference))
+    if (state === "issue" && view.typeTags.length) {
+      label.append(element("span", "issue-tag", view.typeTags.join(" · ")))
+    }
+    header.append(label)
+    header.append(element("span", `status-pill is-${state}`, STATUS_PILL_TEXT[view.state] || "未核查"))
+    if (interactive) header.append(element("span", "reference-chevron", "▸"))
+    return header
   }
 
-  // ②区：区块标签行（文书原文 + 定位原文）+ 灰色引文块
-  // 同一问题聚合多处出现时，按出现位置逐个给出定位按钮
-  createQuoteZone(quoteText, jumpTarget, locateId) {
-    const labelRow = element("div", "zone-label-row")
-    labelRow.append(element("span", "zone-label", "文书原文"))
-    if (jumpTarget) {
-      const locationCount = (jumpTarget.source_locations || []).length
+  // 正文:建议(自然语言,diff 红删绿标)→ 候选修正引用 → 参考案例 → 权威来源 → 决策按钮。
+  createItemBody(view, options = {}) {
+    const body = element("div", "reference-item-body")
+    if (options.includeQuote) {
+      body.append(this.createQuoteZone(
+        view.raw.claim_text || "",
+        view.raw,
+        view.raw.card_id || view.checkId,
+        view.raw.note_context || null,
+      ))
+    }
+    if (view.verdict?.suggestion) {
+      const block = element("div", "suggestion-block")
+      block.append(element("p", "card-suggestion", view.verdict.suggestion))
+      const revision = revisionFor(view.raw)
+      if (revision) {
+        const diff = element("p", "diff-line")
+        diff.append(
+          element("span", "diff-remove", revision.original),
+          " → ",
+          element("span", "diff-add", revision.revised),
+        )
+        block.append(diff)
+      }
+      body.append(block)
+    }
+    const candidateCard = view.candidateCitation ? this.createCandidateCitation(view.candidateCitation) : null
+    if (candidateCard) body.append(candidateCard)
+    if (view.candidates?.length) body.append(this.createCaseCandidates(view.candidates))
+    if (view.verificationMode === "existence") body.append(this.createExistenceResult(view.authoritySources))
+    else if (view.evidence) body.append(this.createAuthorityBlock(view.evidence))
+    body.append(this.createDecisionRow(view, candidateCard))
+    return body
+  }
+
+  // 文书原文块:浅灰底,"文书原文/定位原文"整合进块内,不再依赖外部分区标签。
+  createQuoteZone(quoteText, jumpTarget, locateId, noteContext = null) {
+    const zone = element("div", "doc-quote")
+    const head = element("div", "doc-quote-header")
+    head.append(element("span", "doc-quote-label", noteContext ? "脚注原文" : "文书原文"))
+    const displayLocations = jumpTarget?.display_locations
+      || (jumpTarget?.source_locations || []).map((location, index) => ({ ...location, source_location_index: index }))
+    if (displayLocations.length) {
+      const locationCount = displayLocations.length
       const buttons = locationCount > 1
-        ? Array.from({ length: locationCount }, (_, index) => ({ text: `定位 ${index + 1}`, index }))
-        : [{ text: "定位原文", index: 0 }]
+        ? displayLocations.map((location, index) => ({ text: `定位 ${index + 1}`, index: location.source_location_index }))
+        : [{ text: "定位原文", index: displayLocations[0].source_location_index }]
+      const actions = element("span", "doc-quote-actions")
       for (const { text, index } of buttons) {
         const jump = element("button", "action-button jump-button", text)
         jump.type = "button"
         jump.dataset.locateId = locateId
         jump.addEventListener("click", () => this.handlers.onJump?.(jumpTarget, index))
-        labelRow.append(jump)
+        actions.append(jump)
       }
+      head.append(actions)
     }
-    return [labelRow, element("blockquote", "doc-quote", quoteText || "")]
+    zone.append(head, element("div", "doc-quote-text", quoteText || ""))
+    return zone
   }
 
-  // 展开态：风险分级 + 建议
-  appendVerdict(container, view) {
-    if (!view.verdict) return
-    if (view.verdict.riskText) {
-      container.append(element("div", "card-conf", `风险分级：${view.verdict.riskText}`))
-    }
-    if (view.verdict.suggestion) {
-      container.append(element("p", "card-suggestion", view.verdict.suggestion))
-    }
-  }
-
-  // ⑤区：权威原文折叠（蓝色左条），内容在前、链接在后
-  createEvidenceDetails(evidence) {
-    const details = element("details", "result-details")
-    details.append(element("summary", "", evidence.summaryLabel))
-    if (evidence.structurePath) {
-      details.append(element("div", "statute-line", `章节位置：${evidence.structurePath}`))
-    }
-    if (evidence.articleText) {
-      const block = element("div", "authority-quote")
-      if (evidence.articleHeading) {
-        block.append(element("strong", "", evidence.articleHeading), "　")
-      }
-      block.append(evidence.articleText)
-      details.append(block)
-    }
+  // 权威来源块:浅蓝底 + 3px 品牌蓝竖条,直接可见(不再 details 折叠);
+  // 链接固定为"查看权威原文 ↗",URL 不直接外露。
+  createAuthorityBlock(evidence) {
+    const block = element("div", "authority-block")
+    if (evidence.articleHeading) block.append(element("div", "authority-heading", evidence.articleHeading))
+    if (evidence.structurePath) block.append(element("div", "authority-meta", `章节位置:${evidence.structurePath}`))
+    if (evidence.articleText) block.append(element("div", "authority-text", evidence.articleText))
     for (const item of evidence.related) {
-      const block = element("div", "authority-quote")
-      if (item.heading) block.append(element("strong", "", item.heading), "　")
-      block.append(item.text)
-      details.append(block)
+      const line = element("div", "authority-text")
+      if (item.heading) line.append(element("strong", "", item.heading), "　")
+      line.append(item.text)
+      block.append(line)
     }
     if (evidence.url) {
-      const linkLine = element("div", "statute-line")
-      linkLine.append("原文链接：")
-      const link = element("a", "statute-link", evidence.url)
+      const row = element("div", "authority-link-row")
+      const link = element("a", "authority-link", "查看权威原文 ↗")
       link.href = evidence.url
       link.target = "_blank"
       link.rel = "noopener noreferrer"
-      linkLine.append(link)
-      details.append(linkLine)
+      row.append(link)
+      block.append(row)
     }
-    return details
+    return block
+  }
+
+  createExistenceResult(sources = []) {
+    const result = element("div", "existence-result")
+    result.append(element("span", "existence-status", "✓ 存在性核验通过"))
+    if (sources.length === 1) {
+      const link = element("a", "existence-link", `查看《${sources[0].title}》权威来源 →`)
+      link.href = sources[0].url
+      link.target = "_blank"
+      link.rel = "noopener noreferrer"
+      result.append(link)
+    } else if (sources.length > 1) {
+      const details = element("details", "existence-sources")
+      details.append(element("summary", "existence-link", `查看 ${sources.length} 个权威来源`))
+      for (const source of sources) {
+        const link = element("a", "existence-source-link", `《${source.title}》 →`)
+        link.href = source.url
+        link.target = "_blank"
+        link.rel = "noopener noreferrer"
+        details.append(link)
+      }
+      result.append(details)
+    }
+    return result
+  }
+
+  createCandidateCitation(candidate) {
+    const card = element("div", "candidate-citation")
+    card.append(
+      element("div", "candidate-citation-label", "候选修正引用"),
+      element("div", "candidate-citation-text", candidate.text),
+    )
+    return card
   }
 
   createCaseCandidates(candidates) {
-    const details = element("details", "result-details")
-    details.open = true
-    details.append(element("summary", "", `参考案例（${candidates.length}）`))
+    const box = element("div", "case-candidates")
+    box.append(element("div", "authority-meta", `参考案例(${candidates.length})`))
     candidates.forEach((candidate, index) => {
-      const line = element("div", "statute-line")
+      const line = element("div", "candidate-line")
       line.append(`${index + 1}. ${candidate.title || "未命名案例"}`)
       const metadata = [candidate.case_number, candidate.court, candidate.last_instance_date].filter(Boolean).join("｜")
-      if (metadata) line.append(element("div", "", metadata))
+      if (metadata) line.append(element("div", "candidate-meta", metadata))
       if (candidate.url) {
         line.append(" ")
-        const link = element("a", "statute-link", "查看原文")
+        const link = element("a", "authority-link", "查看原文 ↗")
         link.href = candidate.url
         link.target = "_blank"
         link.rel = "noopener noreferrer"
         line.append(link)
       }
-      details.append(line)
+      box.append(line)
     })
-    return details
+    return box
   }
 
-  // ⑥区：单个决策按钮，接受修订 ⇄ 取消修订
-  createDecisionRow(view) {
-    const row = element("div", "action-row")
-    const applicable = (view.raw.findings || []).some(finding => finding.revision?.machine_applicable)
-    if (!applicable) return row
-    const button = element("button", "action-button decision-button")
+  // 决策按钮:存在 machine_applicable 修订时显示,右下对齐,接受 ⇄ 取消。
+  createDecisionRow(view, candidateCard = null) {
+    const row = element("div", "decision-row")
+    if (!hasMachineFix(view.raw)) return row
+    const button = element("button", "decision-button")
     button.type = "button"
     button.dataset.decision = "accepted"
     button.dataset.checkId = view.checkId
@@ -415,9 +453,10 @@ export class CheckUi {
       const accepted = this.decisions[view.checkId] === "accepted"
       button.textContent = accepted ? "取消修订" : "接受修订"
       button.classList.toggle("is-active", accepted)
+      candidateCard?.classList.toggle("is-accepted", accepted)
       button.disabled = false
     }
-    // 供 setDecision 原地刷新本按钮，避免整表重渲染导致列表跳动
+    // 供 setDecision 原地刷新本按钮,避免整表重渲染导致列表跳动
     this.decisionSyncers.set(view.checkId, sync)
     sync()
     button.addEventListener("click", async () => {
@@ -436,7 +475,7 @@ export class CheckUi {
     return row
   }
 
-  // 原地更新某条结果的决策状态与按钮文案（不重建列表、不改变滚动位置）
+  // 原地更新某条结果的决策状态与按钮文案(不重建列表、不改变滚动位置)
   setDecision(checkId, decision) {
     if (decision) {
       this.decisions[checkId] = decision

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildResultCards } from "../assets/result-models.js"
+import { buildResultCards, displayLocationsOf } from "../assets/result-models.js"
 
 
-test("new statute results are grouped without reading legacy findings", () => {
+test("new statute results are grouped with normalized locators", () => {
   const cards = buildResultCards({
     statute_results: [{
       check_id: "vc_1",
@@ -21,34 +21,12 @@ test("new statute results are grouped without reading legacy findings", () => {
     case_results: [],
   })
 
-  assert.equal(cards[0].references[0].type, "条款项层级错误")
-  assert.equal(cards[0].references[0].state, "issue")
+  assert.equal(cards[0].references[0].outcome, "issue")
   assert.deepEqual(cards[0].references[0].paragraphs, ["第三款"])
 })
 
 
-test("statute result types use source-specific and prefix-free labels", () => {
-  const cards = buildResultCards({
-    statute_results: [{
-      check_id: "vc_1", card_id: "card_1", display_group_id: "dg_1",
-      claim_id: "claim_1", claim_text: "引用内容", law_title: "GDPR",
-      jurisdiction: "EU", cited_locators: [], outcome: "issue",
-      source_attempts: [{ status: "law_not_found", source_name: "EUR-Lex MCP" }],
-      findings: [{ code: "source_not_found", risk_level: "HIGH" }],
-      application_check: { reviews: [{ error_type: "meaning_distorted" }] },
-      source_locations: [],
-    }],
-    case_results: [],
-  })
-
-  assert.equal(
-    cards[0].references[0].type,
-    "EUR-Lex MCP未检索到所引法源；引文不忠实于权威原文",
-  )
-})
-
-
-test("case results use case-specific error labels", () => {
+test("single case results remain standalone cards", () => {
   const cards = buildResultCards({
     statute_results: [],
     case_results: [{
@@ -61,8 +39,8 @@ test("case results use case-specific error labels", () => {
     }],
   })
 
-  assert.equal(cards[0].type, "案例引用信息错误")
-  assert.equal(cards[0].state, "issue")
+  assert.equal(cards[0].check_kind, "case")
+  assert.equal(cards[0].outcome, "issue")
 })
 
 
@@ -106,5 +84,37 @@ test("footnote results retain their body reference location for grouping and sor
   assert.deepEqual(cards[0].note_context, noteContext)
   assert.equal(cards[0].sort_source_locations[0].block_id, "word:p:3")
   assert.equal(cards[0].source_locations[0].block_id, "word:p:3")
-  assert.equal(cards[0].note_source_locations[0].block_id, "word:footnote:2")
+})
+
+
+test("display locations collapse duplicates and overlapping spans without mutating source locations", () => {
+  const locations = [
+    { block_id: "word:p:1", char_start: 10, char_end: 40, anchor_text: "较完整原文" },
+    { block_id: "word:p:1", char_start: 10, char_end: 40, anchor_text: "重复" },
+    { block_id: "word:p:1", char_start: 12, char_end: 38, anchor_text: "子串" },
+    { block_id: "word:p:1", char_start: 8, char_end: 42, anchor_text: "最完整原文" },
+    { block_id: "word:p:1", char_start: 70, char_end: 90, anchor_text: "独立位置" },
+    { block_id: "word:p:2", char_start: 8, char_end: 42, anchor_text: "另一段" },
+  ]
+
+  const displayed = displayLocationsOf(locations)
+
+  assert.equal(locations.length, 6)
+  assert.equal(displayed.length, 3)
+  assert.deepEqual(displayed.map(item => item.source_location_index), [3, 4, 5])
+  assert.equal(locations[3].source_location_index, undefined)
+
+  const noteReferences = displayLocationsOf([
+    { block_id: "word:p:3", char_start: 5, char_end: 5, anchor_text: "同一段正文", occurrence: 0 },
+    { block_id: "word:p:3", char_start: 12, char_end: 12, anchor_text: "同一段正文", occurrence: 0 },
+  ])
+  assert.equal(noteReferences.length, 2, "同段内不同脚注引用点仍是独立位置")
+
+  const splitCitation = displayLocationsOf([
+    { block_id: "word:p:56", char_start: 348, char_end: 394, anchor_text: "引用所在首句" },
+    { block_id: "word:p:56", char_start: 394, char_end: 420, anchor_text: "连续第二句" },
+    { block_id: "word:p:56", char_start: 420, char_end: 465, anchor_text: "连续第三句" },
+  ])
+  assert.equal(splitCitation.length, 1)
+  assert.equal(splitCitation[0].source_location_index, 0, "连续片段应定位到含引用的首个 span")
 })

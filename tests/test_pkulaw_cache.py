@@ -131,6 +131,22 @@ def test_location_semantic_and_law_item_results_are_cached_once(cache_db):
     assert all(item.article_text == "条文全文" for item in items)
 
 
+def test_mismatched_exact_article_is_not_cached(cache_db):
+    fake = FakeClient()
+    fake.get_law_item_content = lambda title, article_no: PkulawArticle(
+        title="无关培训通知",
+        article_no=article_no,
+        article_text="无关内容",
+    )
+    cached = CachedPkulawClient(fake, cache_db)
+
+    with pytest.raises(PkulawMcpError, match="法名或条号不匹配"):
+        cached.get_law_item_content("中华人民共和国民法典", "第一条")
+
+    with connect_cache(cache_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM cache_entries").fetchone()[0] == 0
+
+
 def test_law_recognition_fulltext_is_cached(cache_db):
     fake = FakeClient()
     cached = CachedPkulawClient(fake, cache_db)
@@ -183,15 +199,16 @@ def test_repeating_same_lookup_uses_only_cached_pkulaw_results(cache_db):
         context_text="当事人一方不履行合同义务，应当承担违约责任。",
     )
     first = source.lookup(request)
-    calls_after_first = (fake.article_calls, fake.list_calls)
+    calls_after_first = (fake.article_calls, fake.law_item_calls, fake.list_calls)
     second = source.lookup(request)
     assert first.status == second.status == LookupStatus.ARTICLE_FOUND
-    assert calls_after_first == (1, 1)
-    assert (fake.article_calls, fake.list_calls) == calls_after_first
+    assert calls_after_first == (0, 1, 1)
+    assert (fake.article_calls, fake.law_item_calls, fake.list_calls) == calls_after_first
 
 
-def test_repealed_law_list_stores_full_metadata(cache_db):
-    fake = FakeClient(timeliness=("废止或失效",))
+@pytest.mark.parametrize("status", ["废止或失效", "已被修改", "部分失效"])
+def test_non_current_law_list_is_not_cached_as_effective(cache_db, status):
+    fake = FakeClient(timeliness=(status,))
     cached = CachedPkulawClient(fake, cache_db)
     cached.get_law_list(title="中华人民共和国合同法")
     cached.get_law_list(title="中华人民共和国合同法")
@@ -200,7 +217,7 @@ def test_repealed_law_list_stores_full_metadata(cache_db):
         row = conn.execute("SELECT status, payload FROM cache_entries").fetchone()
     assert row["status"] == "repealed"
     assert "url" in row["payload"]
-    assert "废止或失效" in row["payload"]
+    assert status in row["payload"]
 
 
 def test_old_minimal_repealed_law_cache_is_refetched(cache_db):

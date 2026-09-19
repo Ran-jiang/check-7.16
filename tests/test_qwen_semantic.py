@@ -29,13 +29,13 @@ def _qwen_response(text='{"verdict":"pass"}'):
 def test_application_check_receives_all_statutes_once_and_normalizes_to_review(monkeypatch):
     captured = {}
     response = json.dumps({
-        "comparison": "引文将二倍改为三倍",
+        "comparison": "事实不足以适用法条",
         "verdict": "issue",
         "reviews": [{
-            "error_type": "meaning_distorted",
+            "error_type": "rule_fact_mismatch",
             "review_level": "HIGH",
-            "summary": "原文写三倍，权威原文为二倍。",
-            "suggestion": "将三倍改为二倍。",
+            "summary": "原文没有给出适用该法条的事实。",
+            "suggestion": "补充事实依据或核对法条适用。",
             "related_sources": ["《甲法》第一条"],
         }],
         "notes": "",
@@ -60,8 +60,45 @@ def test_application_check_receives_all_statutes_once_and_normalizes_to_review(m
         "《甲法》第一条", "《乙法》第二条",
     ]
     assert result.verdict == "review"
-    assert result.reviews[0].error_type == "meaning_distorted"
+    assert result.reviews[0].error_type == "rule_fact_mismatch"
     assert result.reviews[0].review_level == "待核查"
+
+
+def test_fidelity_triage_repairs_unknown_source_id(monkeypatch):
+    responses = iter([
+        json.dumps({
+            "verdict": "candidate_99",
+            "checks": dict.fromkeys(
+                ["subject", "condition", "numbers", "negation", "consequence"], True
+            ),
+            "differences": [],
+        }),
+        json.dumps({
+            "verdict": "cited",
+            "checks": dict.fromkeys(
+                ["subject", "condition", "numbers", "negation", "consequence"], True
+            ),
+            "differences": [],
+        }),
+    ])
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json=_qwen_response(next(responses)))
+
+    _install_mock_client(monkeypatch, handler)
+    result = QwenSemanticChecker(api_key="test-key").triage_fidelity(
+        "当事人应当履行义务",
+        {
+            "id": "cited", "sources": [{"law_title": "甲法", "article_no": "第一条"}],
+            "article_text": "当事人应当履行义务",
+        },
+        [],
+    )
+
+    assert result.verdict == "cited"
+    assert len(calls) == 2
 
 
 _REASONING_TEXT = "公司章程可以限制股权转让。该约定系公司自治的体现。该约定不违反公司法的禁止性规定。"

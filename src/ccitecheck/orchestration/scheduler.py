@@ -26,6 +26,7 @@ from ..domain.checks import ExecutionStatus
 from ..domain.result import FrontendVerificationDocument, VERIFICATION_SCHEMA_VERSION
 from ..domain.statute_results import (
     LegalApplicationCheck,
+    LegalApplicationReview,
     StatuteErrorCode,
     StatuteFinding,
     StatuteLocationResolution,
@@ -43,6 +44,7 @@ from ..domain.claims import (
 from ..domain.evidence import RetrievalEvidence, TechnicalStatus
 from ..domain.law_titles import cn_title_shape_key
 from ..domain.queries import (
+    FidelityTriage,
     HypothesisFeedback,
     IdentityCandidate,
     RepairPlan,
@@ -138,6 +140,8 @@ def _plan_repair(
     candidate_titles: list[str],
     known_titles: list[str],
     current_title: str,
+    allow_unlisted: bool = False,
+    authoritative_text: str | None = None,
 ) -> tuple[RepairPlan | None, str | None]:
     """唯一的 repair planner 调用、白名单和目标校验入口。"""
     planner = getattr(semantic_checker, "plan_repair", None)
@@ -145,26 +149,34 @@ def _plan_repair(
         return None, None
     fuzzy = fuzzy_title_candidates(raw_title, known_titles)
     try:
+        planner_args = {
+            "raw_text": raw_text,
+            "raw_title": raw_title,
+            "raw_time": raw_time,
+            "article_no": article_no,
+            "retrieval_status": retrieval_status,
+            "candidate_titles": candidate_titles,
+            "fuzzy_candidates": fuzzy,
+        }
+        if allow_unlisted:
+            planner_args.update(
+                allow_unlisted=True,
+                authoritative_text=authoritative_text,
+            )
         with measure("query_construction.total"), measure("query.repair_planner"):
-            plan = RepairPlan.model_validate(planner(
-                raw_text=raw_text,
-                raw_title=raw_title,
-                raw_time=raw_time,
-                article_no=article_no,
-                retrieval_status=retrieval_status,
-                candidate_titles=candidate_titles,
-                fuzzy_candidates=fuzzy,
-            ))
+            plan = RepairPlan.model_validate(planner(**planner_args))
     except Exception as exc:
         return None, f"Repair Planner 失败：{exc}"
     retry = plan.retry_request
     if retry is None:
         return None, plan.diagnosis.message
-    if not repair_target_is_allowed(plan, raw_title, candidate_titles, fuzzy):
+    if not allow_unlisted and not repair_target_is_allowed(
+        plan, raw_title, candidate_titles, fuzzy
+    ):
         return None, "Repair Planner 提出的法规名不在确定性候选列表中，未执行重试。"
     if retry.route != "statute_exact" or not retry.target_name or not retry.article_no:
         return None, "Repair Planner 未返回可执行的精确检索计划。"
-    if (
+    if not allow_unlisted and (
         cn_title_shape_key(normalize_title(retry.target_name))
         == cn_title_shape_key(normalize_title(current_title))
         and normalize_article_key(retry.article_no)
@@ -461,7 +473,8 @@ class VerificationScheduler:
                     result, attempts = lookup_results[item.lookup_key]
                     resolution = resolve_location_for_item(
                         item, result, attempts,
-                        locator_source=locator_source, local=local, retry_only=retry_only,
+                        locator_source=locator_source, local=local,
+                        semantic_checker=semantic_checker, retry_only=retry_only,
                     )
                     if resolution is not None:
                         repairs[index] = resolution
@@ -498,7 +511,9 @@ class VerificationScheduler:
                         location_repairs.get(index),
                     )
             with timer.measure("retrieval.total"):
-                _resolve_repealed_successors(source_chain, items, judgments)
+                _resolve_repealed_successors(
+                    source_chain, items, judgments, lookup_results, semantic_checker
+                )
             with timer.measure("comparison.total"):
                 finalize_nested_dependencies(items, judgments)
                 application_checks = _run_application_checks(
@@ -506,6 +521,9 @@ class VerificationScheduler:
                     items,
                     lookup_results,
                     judgments,
+                )
+                application_checks = _merge_fidelity_reviews(
+                    items, application_checks
                 )
             with timer.measure("output"):
                 statute_results = _aggregate_duplicate_statute_results(
@@ -603,6 +621,9 @@ class _CheckItem:
     repair_verified: bool = False
     correction_evidence: ArticleEvidence | None = None
     location_resolution: StatuteLocationResolution | None = None
+    lookup_version_key: str | None = None
+    fidelity_triage: FidelityTriage | None = None
+    fidelity_error: str = ""
     @property
     def skip_lookup(self) -> bool:
         return (
@@ -1145,6 +1166,158 @@ def _lookup_structure(
         return LookupResult(trace.status, evidence, trace), [trace]
 
 
+def _evidence_identity(evidence: ArticleEvidence) -> tuple[str, str, str]:
+    return (
+        normalize_title(evidence.law_title),
+        normalize_article_key(evidence.article_no or ""),
+        str(
+            evidence.source_metadata.get("version_key")
+            or evidence.data_source.metadata.get("version_key")
+            or ""
+        ),
+    )
+
+
+def _triage_candidate_groups(
+    cited: ArticleEvidence | None,
+    candidates: list[ArticleEvidence],
+) -> list[list[ArticleEvidence]]:
+    cited_identity = _evidence_identity(cited) if cited is not None else None
+    cited_text = (
+        re.sub(r"\s+", "", cited.article_text or "") if cited is not None else ""
+    )
+    grouped: dict[str, list[ArticleEvidence]] = {}
+    for evidence in candidates:
+        if not evidence.article_text or _evidence_identity(evidence) == cited_identity:
+            continue
+        text_key = re.sub(r"\s+", "", evidence.article_text)
+        if cited_text and text_key == cited_text:
+            continue
+        members = grouped.setdefault(text_key, [])
+        identity = _evidence_identity(evidence)
+        if all(_evidence_identity(member) != identity for member in members):
+            members.append(evidence)
+
+    groups = list(grouped.values())
+    local = [
+        group for group in groups
+        if any(member.data_source.tier == SourceTier.LOCAL_SQLITE for member in group)
+    ]
+    remote = [group for group in groups if group not in local]
+    local.sort(key=lambda group: -max(
+        float(member.source_metadata.get("relevance_score") or 0)
+        for member in group
+    ))
+    selected = [*local[:3], *remote[:2]]
+    selected.extend(group for group in groups if group not in selected)
+    return selected[:5]
+
+
+def _triage_source_payload(
+    source_id: str, members: list[ArticleEvidence]
+) -> dict:
+    first = members[0]
+    return {
+        "id": source_id,
+        "sources": [
+            {
+                "law_title": member.law_title,
+                "article_no": member.article_no,
+                "version_label": (
+                    member.version_label
+                    or member.source_metadata.get("version_key")
+                    or member.data_source.metadata.get("version_key")
+                ),
+                "temporal_status": _temporal_status(member),
+                "timeliness": (
+                    member.source_metadata.get("timeliness")
+                    or member.data_source.metadata.get("timeliness")
+                    or member.version_status
+                    or member.version_label
+                ),
+            }
+            for member in members
+        ],
+        "article_text": first.article_text,
+    }
+
+
+def _downgrade_triage(triage: FidelityTriage, difference: str) -> FidelityTriage:
+    return FidelityTriage.model_validate({
+        **triage.model_dump(),
+        "verdict": "none",
+        "differences": [difference],
+    })
+
+
+def _deterministic_candidate_resolution(
+    quote: str, candidates: list[ArticleEvidence]
+) -> tuple[StatuteLocationResolution, list[ArticleEvidence]] | None:
+    matches = {}
+    for evidence in candidates:
+        resolution = resolve_location_candidates(quote, [evidence])
+        supported = next(
+            (candidate for candidate in resolution.candidates if candidate.supported),
+            None,
+        )
+        if supported is not None:
+            matches[_evidence_identity(evidence)] = (evidence, supported)
+    if len(matches) != 1:
+        return None
+    evidence, candidate = next(iter(matches.values()))
+    return (
+        StatuteLocationResolution(status="resolved", candidates=[candidate]),
+        [evidence],
+    )
+
+
+def _run_fidelity_triage(
+    item: _CheckItem,
+    quote: str,
+    cited: ArticleEvidence | None,
+    candidates: list[ArticleEvidence],
+    semantic_checker: SemanticChecker | None,
+) -> tuple[FidelityTriage | None, dict[str, list[ArticleEvidence]]]:
+    triage = getattr(semantic_checker, "triage_fidelity", None)
+    groups = _triage_candidate_groups(cited, candidates)
+    mapped = {
+        f"candidate_{index}": group
+        for index, group in enumerate(groups, start=1)
+    }
+    if item.fidelity_triage is not None or item.fidelity_error:
+        return None, mapped
+    if not quote or (cited is None and not mapped):
+        return None, mapped
+    if not callable(triage):
+        if semantic_checker is not None:
+            item.fidelity_error = "当前模型不支持引文忠实性分诊，结果待核查"
+        return None, mapped
+    cited_payload = (
+        _triage_source_payload("cited", [cited]) if cited is not None else None
+    )
+    try:
+        with measure("location.triage_llm"):
+            result = triage(
+                quote,
+                cited_payload,
+                [
+                    _triage_source_payload(candidate_id, members)
+                    for candidate_id, members in mapped.items()
+                ],
+            )
+        result = FidelityTriage.model_validate(
+            result.model_dump() if isinstance(result, FidelityTriage) else result,
+            context={"allowed_verdicts": [
+                *(["cited"] if cited is not None else []), *mapped, "none",
+            ]},
+        )
+    except Exception:
+        item.fidelity_error = "引文忠实性模型暂时不可用，结果待核查"
+        return None, mapped
+    item.fidelity_triage = result
+    return result, mapped
+
+
 def resolve_location_for_item(
     item: _CheckItem,
     result: LookupResult,
@@ -1152,6 +1325,7 @@ def resolve_location_for_item(
     *,
     locator_source: StatuteSource | None,
     local: LocalSQLiteSource | None,
+    semantic_checker: SemanticChecker | None = None,
     retry_only: bool,
 ) -> StatuteLocationResolution | None:
     """单条引用的定位解析；与批量定位循环同一实现，便于按引用驱动。"""
@@ -1175,6 +1349,9 @@ def resolve_location_for_item(
     target_title = item.repaired_title if result.status == LookupStatus.LAW_NOT_FOUND and item.repaired_title else item.law_title
     quote = _location_query_text(item)
     current_text = ""
+    # 反推模式：所引位置存疑（条号缺失/法名未命中/内容对不上所引条）时，
+    # 纠错搜索放开到全版本、跨法候选；正常位置核查保持同法同版本。
+    backtrack = result.status != LookupStatus.ARTICLE_FOUND
     if result.status == LookupStatus.ARTICLE_FOUND and current:
         location = _assess_item_location(item, result)
         current_text = location.authoritative_text or ""
@@ -1185,6 +1362,7 @@ def resolve_location_for_item(
             supported = any(supports_assertion(quote, scope) for scope in scopes)
             if supported:
                 return None
+            backtrack = True
     pool = []
     if current and result.status == LookupStatus.ARTICLE_FOUND:
         pool.append(current)
@@ -1199,14 +1377,15 @@ def resolve_location_for_item(
                     for part in current.related_articles)
     basis = current or item.correction_evidence
     version = (basis.source_metadata.get("version_key") if basis else None) or result.trace.metadata.get("version_key")
+    item.lookup_version_key = version
     version_confirmed = (result.trace.metadata.get("version_confirmed") is True
                          or bool(basis and (basis.source_metadata.get("version_confirmed") is True or basis.data_source.metadata.get("version_confirmed") is True)))
     if local and local.db_path.exists():
-        rows = local.current_articles(target_title)
+        rows = local.all_articles(target_title) if backtrack else local.current_articles(target_title)
         metadata = local.corpus_metadata(rows[0]["title"] if rows else target_title, rows)
         version = version or metadata.get("version_key")
         version_confirmed = version_confirmed or metadata.get("version_confirmed") is True
-        selected = [r for r in rows if r["version_key"] == version]
+        selected = rows if backtrack else [r for r in rows if r["version_key"] == version]
         ranked = retrieve_relevant_articles(quote, selected, limit=3)
         keys = {normalize_article_key(r.article_no) for r in ranked}
         rank_confirmed = bool(
@@ -1248,11 +1427,24 @@ def resolve_location_for_item(
         eligible = []
         for evidence in candidates:
             if not equivalent_law_titles(evidence.law_title, target_title):
+                if backtrack:
+                    # 跨法候选只进反推模式，是否构成法名错误由确认规则把关。
+                    eligible.append(evidence)
                 continue
             candidate_version = (
                 evidence.source_metadata.get("version_key")
                 or evidence.data_source.metadata.get("version_key")
             )
+            if backtrack:
+                # 同法反推：权威已确认条号缺席时任意候选可进（缺席旁路）；同版本
+                # 候选任意条（条号错）；其他版本仅限条号一致的候选（版本直通的
+                # 干净信号）。跨版本跨条号可能只是合法的历史引用，不据此纠错。
+                same_article = normalize_article_key(
+                    evidence.article_no or ""
+                ) == normalize_article_key(item.article_no or "")
+                if pkulaw_absence or candidate_version is None or candidate_version == version or same_article:
+                    eligible.append(evidence)
+                continue
             if pkulaw_absence or (
                 candidate_version is not None and candidate_version == version
             ) or (current_authority and _authority_marks_current(evidence)) or (
@@ -1263,9 +1455,38 @@ def resolve_location_for_item(
             ):
                 eligible.append(evidence)
         resolution = resolve_location_candidates(
-            quote, eligible, current_text=current_text,
-            cited_article_no=item.article_no,
+            quote, eligible, cited_article_no=item.article_no,
         )
+        if resolution.status == "resolved":
+            resolved_article = normalize_article_key(
+                resolution.candidates[0].locator.article_no or ""
+            )
+            matched_evidence = [
+                evidence for evidence in eligible
+                if normalize_article_key(evidence.article_no or "") == resolved_article
+                and any(
+                    candidate.supported
+                    for candidate in resolve_location_candidates(
+                        quote, [evidence]
+                    ).candidates
+                )
+            ]
+            cross_law_matches = [
+                evidence for evidence in matched_evidence
+                if not equivalent_law_titles(evidence.law_title, target_title)
+            ]
+            if cross_law_matches and not any(
+                _temporal_status(evidence) == "current"
+                for evidence in cross_law_matches
+            ):
+                resolution.status = "candidates_pending"
+            eligible = [
+                *sorted(
+                    matched_evidence,
+                    key=lambda evidence: _temporal_status(evidence) != "current",
+                ),
+                *[evidence for evidence in eligible if evidence not in matched_evidence],
+            ]
         resolved_authority = bool(
             resolution.status == "resolved"
             and any(
@@ -1284,20 +1505,76 @@ def resolve_location_for_item(
         return resolution, eligible
     resolution, eligible = resolve(pool)
     if (resolution.status != "resolved" and locator_source is not None
-            and item.jurisdiction == "CN" and version != "current" and not retry_only):
+            and item.jurisdiction == "CN" and (version != "current" or backtrack) and not retry_only):
         remote = locator_source.locate_candidates(LookupRequest(
             law_title=target_title, article_no=item.article_no, context_text=quote))
         attempts.append(remote.trace)
         pool.extend(remote.candidates)
         resolution, eligible = resolve(pool)
         resolution.source_trace = remote.trace
+    if resolution.status != "resolved":
+        cited_evidence = (
+            current.model_copy(update={"article_text": current_text})
+            if current is not None and current_text else None
+        )
+        triage, mapped = _run_fidelity_triage(
+            item, quote, cited_evidence, eligible, semantic_checker
+        )
+        if triage is not None and triage.verdict == "cited":
+            return None
+        if triage is not None and triage.verdict in mapped:
+            selected = mapped[triage.verdict]
+            cross_law = any(
+                not equivalent_law_titles(evidence.law_title, item.law_title)
+                for evidence in selected
+            )
+            current_members = [
+                evidence for evidence in selected
+                if _temporal_status(evidence) == "current"
+            ]
+            if cross_law and current_members:
+                selected = current_members
+
+            verified = _deterministic_candidate_resolution(quote, selected)
+            cross_law = any(
+                not equivalent_law_titles(evidence.law_title, item.law_title)
+                for evidence in selected
+            )
+            selected_authority = bool(selected) and all(
+                _temporal_status(evidence) == "current" for evidence in selected
+            )
+            authorized = (
+                selected_authority
+                if cross_law
+                else version_confirmed or selected_authority or pkulaw_absence
+            )
+            if verified is not None and authorized:
+                resolution, eligible = verified
+            else:
+                item.fidelity_triage = _downgrade_triage(
+                    triage,
+                    "候选定位未通过现行效力、唯一性和确定性覆盖复核",
+                )
     if resolution.status == "resolved":
         target = resolution.candidates[0].locator
         cited = _item_locators(item)[0]
         same_article = normalize_article_key(target.article_no or "") == normalize_article_key(item.article_no)
-        # 没有限定款项的条级引用已覆盖该位置；无须补写层级。
-        title_changed = not equivalent_law_titles(target_title, item.law_title)
-        if same_article and not title_changed and not cited.paragraph_no and not cited.item_no:
+        matched = next(
+            (e for e in eligible if normalize_article_key(e.article_no or "")
+             == normalize_article_key(target.article_no or "")),
+            None,
+        )
+        # 没有限定款项的同法条级引用已覆盖该位置；跨法同条号仍须纠正法名。
+        resolved_title = matched.law_title if matched is not None else target_title
+        title_changed = not equivalent_law_titles(resolved_title, item.law_title)
+        matched_version = matched.source_metadata.get("version_key") if matched else None
+        # 同法同条号但命中其他版本：版本直通的修正，不能按"位置已覆盖"丢弃。
+        version_shifted = bool(
+            matched_version and item.lookup_version_key
+            and matched_version != item.lookup_version_key
+            and same_article and not title_changed
+        )
+        if same_article and not title_changed and not version_shifted and not cited.paragraph_no and not cited.item_no:
             return None
         paragraph_matches = (
             _locator_key(cited.paragraph_no) == _locator_key(target.paragraph_no)
@@ -1308,11 +1585,11 @@ def resolve_location_for_item(
             not cited.item_no
             or _locator_key(cited.item_no) == _locator_key(target.item_no)
         )
-        if same_article and not title_changed and paragraph_matches and item_matches:
+        if same_article and not title_changed and not version_shifted and paragraph_matches and item_matches:
             return None
-        if same_article and not title_changed and repair_level_missing(cited, target):
+        if same_article and not title_changed and not version_shifted and repair_level_missing(cited, target):
             resolution.status = "candidates_pending"
-        item.correction_evidence = next((e for e in eligible if normalize_article_key(e.article_no or "") == normalize_article_key(target.article_no or "")), None)
+        item.correction_evidence = matched
         item.repair_verified = item.correction_evidence is not None and resolution.status == "resolved"
     item.location_resolution = resolution
     return resolution
@@ -1332,7 +1609,12 @@ def _location_query_text(item: _CheckItem) -> str:
         item.claim.text[end:],
         count=1,
     )
-    return (item.claim.text[:start] + tail).strip(" \t，,。；;")
+    quote = (item.claim.text[:start] + tail).strip(" \t，,。；;")
+    # 去掉引用前的引导动词（依据《X》第N条，……），其残留会打断比对边界，
+    # 导致逐字引用也被判"待核查"。
+    return re.sub(
+        r"^(?:依据|根据|按照|依照|参照|按照|依|参见|见)\s*", "", quote, count=1,
+    ).strip(" \t，,。；;")
 
 
 def repair_level_missing(cited: StatuteLocator, target: StatuteLocator) -> bool:
@@ -1346,6 +1628,25 @@ def _authority_marks_current(evidence: ArticleEvidence | None) -> bool:
     timeliness = evidence.source_metadata.get("timeliness", [])
     values.extend(timeliness if isinstance(timeliness, list) else [timeliness])
     return any("现行有效" in str(value) for value in values if value)
+
+
+def _temporal_status(evidence: ArticleEvidence) -> str:
+    values = [evidence.version_label, evidence.version_status]
+    for metadata in (evidence.source_metadata, evidence.data_source.metadata):
+        for key in ("timeliness", "effectiveness"):
+            value = metadata.get(key, [])
+            values.extend(value if isinstance(value, list) else [value])
+    status = "".join(str(value) for value in values if value)
+    if any(token in status for token in ("废止", "失效", "已被修改", "已修改")):
+        return "obsolete"
+    if (
+        "有效" in status
+        or status.strip().lower() in {"effective", "current", "valid"}
+        or evidence.source_metadata.get("version_confirmed") is True
+        or evidence.data_source.metadata.get("version_confirmed") is True
+    ):
+        return "current"
+    return "unknown"
 
 
 def _locator_key(value: str | None) -> str:
@@ -1502,7 +1803,7 @@ def judge_item(
         findings = [f for f in findings if f.code not in {
             StatuteErrorCode.ARTICLE_NOT_FOUND, StatuteErrorCode.ARTICLE_NUMBER_ERROR,
             StatuteErrorCode.CITATION_HIERARCHY_ERROR, StatuteErrorCode.SOURCE_NOT_FOUND,
-            StatuteErrorCode.LAW_NAME_ERROR}]
+            StatuteErrorCode.LAW_NAME_ERROR, StatuteErrorCode.SOURCE_AMENDED}]
         findings.append(repair_finding)
         return findings
     absence_override = _absence_override_findings(item, lookup_result, attempts, findings)
@@ -1584,6 +1885,29 @@ def _verified_repair_finding(item: _CheckItem) -> StatuteFinding | None:
     elif normalize_article_key(resolved.article_no or "") != normalize_article_key(item.article_no or ""):
         code = StatuteErrorCode.ARTICLE_NUMBER_ERROR
     else:
+        # 同法同条号但命中其他版本：版本/效力错误（条号与内容本身无需改正）
+        correction_version = item.correction_evidence.source_metadata.get("version_key")
+        if (
+            correction_version
+            and item.lookup_version_key
+            and correction_version != item.lookup_version_key
+        ):
+            label = (
+                item.correction_evidence.version_label
+                or item.correction_evidence.version_status
+                or correction_version
+            )
+            return StatuteFinding(
+                code=StatuteErrorCode.SOURCE_AMENDED,
+                risk_level="HIGH",
+                summary=f"所引条文对应《{item.display_title}》的{label}版本",
+                suggestion=(
+                    f"《{item.display_title}》的{label}版本中存在所引条文，"
+                    "现行版本无此条，请核对适用时间和现行规定。"
+                ),
+                cited_locator=_item_locators(item)[0],
+                resolved_locator=resolved,
+            )
         if not resolution.candidates[0].supported:
             return None
         code = StatuteErrorCode.CITATION_HIERARCHY_ERROR
@@ -1651,84 +1975,189 @@ def _locator_revision(
     )
 
 
-_CITATION_TEXT = re.compile(r"《[^》]+》第[^，。；：]{1,30}条(?:第[^，。；：]{1,12}[款项])?")
-
-
 def _resolve_repealed_successors(
     source_chain: list[StatuteSource],
     items: list[_CheckItem],
     judgments: dict[int, list[StatuteFinding]],
+    lookup_results: dict[tuple, tuple[LookupResult, list[SourceTrace]]] | None = None,
+    semantic_checker: SemanticChecker | None = None,
 ) -> None:
-    """仅批准能由候选权威正文直接支持的唯一跨法源替换。"""
-    source = next((
-        candidate for candidate in source_chain
-        if callable(getattr(candidate, "locate_successor_candidates", None))
-    ), None)
-    if source is None:
+    """模型只提一个继受候选；权威精确命中后才允许展示。"""
+    if not source_chain or lookup_results is None:
         return
+    targets = []
     for index, item in enumerate(items):
-        findings = judgments[index]
-        repealed = next((f for f in findings if f.code == StatuteErrorCode.SOURCE_REPEALED), None)
-        if repealed is None or item.jurisdiction != "CN":
-            continue
-        result = source.locate_successor_candidates(LookupRequest(
-            law_title=item.law_title,
-            context_text=item.claim.text,
-        ))
-        supported = [
-            candidate for candidate in result.candidates
-            if _candidate_supports_claim(item.claim.text, candidate.article_text or "")
-        ]
-        unique = {
-            (candidate.law_title, candidate.article_no): candidate
-            for candidate in supported
-            if candidate.article_no
-        }
-        status_note = repealed.suggestion.rstrip("。")
-        if len(unique) != 1:
-            repealed.suggestion = (
-                f"{status_note}；北大法宝未检索到可确认的现行继受法。"
-                if not unique
-                else f"{status_note}；北大法宝返回了多个可直接支持原规则的现行条文，请人工确认继受关系。"
-            )
-            continue
-        candidate = next(iter(unique.values()))
-        revision = _successor_revision(item, candidate)
-        if revision is None:
-            continue
-        locate_basis = getattr(source, "locate_repeal_basis", None)
-        if callable(locate_basis):
-            basis_result = locate_basis(
-                LookupRequest(law_title=item.law_title), candidate.law_title
-            )
-            bases = {
-                (basis.law_title, basis.article_no): basis
-                for basis in basis_result.candidates
-                if basis.article_no
+        temporal = next((
+            finding for finding in judgments[index]
+            if finding.code in {
+                StatuteErrorCode.SOURCE_REPEALED,
+                StatuteErrorCode.SOURCE_AMENDED,
             }
-            if len(bases) == 1:
-                basis = next(iter(bases.values()))
-                date = f"于{candidate.effective_from}" if candidate.effective_from else ""
-                status_note = (
-                    f"《{item.law_title}》已{date}因《{basis.law_title}》施行而废止"
-                    f"（{basis.article_no}）"
-                )
-        repealed.resolved_locator = StatuteLocator(article_no=candidate.article_no)
-        repealed.suggestion = (
-            f"{status_note}；经北大法宝条文直接核验，现行对应规则由"
+        ), None)
+        if (
+            temporal is not None
+            and item.jurisdiction == "CN"
+            and item.article_no
+            and item.lookup_key in lookup_results
+        ):
+            targets.append((index, item, temporal))
+
+    if not callable(getattr(semantic_checker, "plan_repair", None)):
+        for _, item, finding in targets:
+            original, attempts = lookup_results[item.lookup_key]
+            original.trace.metadata["temporal_repair"] = {
+                "status": "planner_unavailable",
+                "candidate_count": 0,
+                "verified_count": 0,
+                "accepted_count": 0,
+                "planned_candidate": None,
+                "message": "未配置继受候选模型",
+            }
+            lookup_results[item.lookup_key] = (original, attempts)
+            finding.suggestion = (
+                f"{finding.suggestion.rstrip('。')}；未配置继受候选模型。"
+            )
+        return
+
+    def execute(target):
+        index, item, finding = target
+        original, _ = lookup_results[item.lookup_key]
+        plan, error = _plan_repair(
+            semantic_checker,
+            raw_text=item.claim.text,
+            raw_title=item.display_title,
+            raw_time="现行",
+            article_no=item.article_no,
+            retrieval_status=finding.code.name,
+            candidate_titles=[],
+            known_titles=[],
+            current_title=item.law_title,
+            allow_unlisted=True,
+            authoritative_text=(
+                original.evidence.article_text if original.evidence else None
+            ),
+        )
+        if plan is None or plan.retry_request is None:
+            return index, None, "planner_empty", error or "模型未提出可靠候选", [], None
+        retry = plan.retry_request
+        planned = {"law_title": retry.target_name, "article_no": retry.article_no}
+        try:
+            retried = lookup_with_chain(
+                sources_for_jurisdiction(item.jurisdiction, cn_chain=source_chain),
+                LookupRequest(
+                    law_title=retry.target_name,
+                    article_no=retry.article_no,
+                    context_text=item.claim.context_text or item.claim.text,
+                    version_hint="current",
+                    jurisdiction=item.jurisdiction,
+                ),
+            )
+        except Exception as exc:
+            return index, None, "source_error", str(exc), [], planned
+        result, attempts = retried
+        candidate = result.evidence
+        if result.status != LookupStatus.ARTICLE_FOUND or candidate is None:
+            status = (
+                "source_error"
+                if result.status in {
+                    LookupStatus.SOURCE_ERROR,
+                    LookupStatus.SOURCE_NOT_CONFIGURED,
+                }
+                else "not_found"
+            )
+            return index, None, status, result.trace.message, attempts, planned
+        if (
+            not equivalent_law_titles(candidate.law_title, retry.target_name)
+            or normalize_article_key(candidate.article_no or "")
+            != normalize_article_key(retry.article_no or "")
+        ):
+            return index, None, "not_found", "权威源返回内容与精确候选不一致", attempts, planned
+        if _temporal_status(candidate) != "current":
+            return index, None, "not_current", "候选效力未确认为现行", attempts, planned
+        relation, message = _successor_relation(item, candidate, semantic_checker)
+        return index, candidate, relation, message, attempts, planned
+
+    with ThreadPoolExecutor(max_workers=_semantic_workers()) as pool:
+        outcomes = list(pool.map(bind_current_timer(execute), targets))
+
+    by_index = {index: outcome for index, *outcome in outcomes}
+    for index, item, finding in targets:
+        candidate, status, message, retry_attempts, planned = by_index[index]
+        original, attempts = lookup_results[item.lookup_key]
+        trace = retry_attempts[-1] if retry_attempts else original.trace
+        trace.metadata["temporal_repair"] = {
+            "status": status,
+            "candidate_count": int(planned is not None),
+            "verified_count": int(candidate is not None),
+            "accepted_count": int(status in {"confirmed", "pending"}),
+            "planned_candidate": planned,
+            "message": message,
+        }
+        lookup_results[item.lookup_key] = (original, [*attempts, *retry_attempts])
+        status_note = finding.suggestion.rstrip("。")
+        if candidate is None:
+            reason = {
+                "planner_empty": "模型未提出可靠的现行候选",
+                "source_error": "候选精确检索失败",
+                "not_found": "模型候选未通过权威源精确复核",
+                "not_current": "候选效力未确认为现行",
+            }.get(status, "未确认可靠的现行对应条文")
+            finding.suggestion = f"{status_note}；{reason}。"
+            continue
+        if status == "rejected":
+            finding.suggestion = (
+                f"{status_note}；权威源已核验候选，但其规则内容与原引文不匹配，未展示为纠正候选。"
+            )
+            continue
+        item.correction_evidence = candidate
+        item.repaired_title = candidate.law_title
+        item.repaired_article_no = candidate.article_no
+        item.repair_verified = status == "confirmed"
+        if status == "pending":
+            finding.suggestion = (
+                f"{status_note}；已精确核验一个现行候选《{candidate.law_title}》"
+                f"{candidate.article_no}，但规则关系尚需人工确认。"
+            )
+            continue
+        finding.resolved_locator = StatuteLocator(article_no=candidate.article_no)
+        finding.suggestion = (
+            f"{status_note}；经权威原文核验，现行对应规则由"
             f"《{candidate.law_title}》{candidate.article_no}规定。"
         )
-        repealed.revision = revision
+        finding.revision = _successor_revision(item, candidate)
 
 
-def _candidate_supports_claim(claim_text: str, article_text: str) -> bool:
-    normalized_article = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", article_text)
-    without_citation = _CITATION_TEXT.sub("", claim_text)
-    clauses = [
-        re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", clause)
-        for clause in re.split(r"[，。；：]", without_citation)
-    ]
-    return any(len(clause) >= 8 and clause in normalized_article for clause in clauses)
+def _successor_relation(
+    item: _CheckItem,
+    candidate: ArticleEvidence,
+    semantic_checker: SemanticChecker | None,
+) -> tuple[str, str]:
+    triage = getattr(semantic_checker, "triage_fidelity", None)
+    if not callable(triage) or not candidate.article_text:
+        return "rejected", "缺少规则关系核验能力"
+    try:
+        raw = triage(
+            _location_query_text(item),
+            None,
+            [_triage_source_payload("candidate_1", [candidate])],
+        )
+        result = FidelityTriage.model_validate(
+            raw.model_dump() if isinstance(raw, FidelityTriage) else raw,
+            context={"allowed_verdicts": ["candidate_1", "none"]},
+        )
+    except Exception as exc:
+        return "rejected", f"规则关系核验失败：{exc}"
+    if result.verdict == "candidate_1":
+        return "confirmed", "主体、条件、数字、否定和法律后果均一致"
+    checks = result.checks
+    if (
+        checks.numbers
+        and checks.negation
+        and checks.consequence
+        and (checks.subject or checks.condition)
+    ):
+        return "pending", "候选达到展示门槛，但未达到自动纠正门槛"
+    return "rejected", "候选未达到可信展示门槛"
 
 
 def _explicit_version_hint(raw_time: str | None) -> str | None:
@@ -1810,6 +2239,75 @@ def _item_locators(item: _CheckItem) -> list[StatuteLocator]:
     ]
 
 
+_CORRECTION_CODES = {
+    StatuteErrorCode.ARTICLE_NUMBER_ERROR,
+    StatuteErrorCode.CITATION_HIERARCHY_ERROR,
+    StatuteErrorCode.LAW_NAME_ERROR,
+    StatuteErrorCode.SOURCE_AMENDED,
+}
+
+
+def _resolved_correction(citation_findings: list[StatuteFinding]) -> StatuteFinding | None:
+    return next(
+        (f for f in citation_findings if f.code in _CORRECTION_CODES and f.resolved_locator),
+        None,
+    )
+
+
+def _drop_superseded_fidelity_reviews(
+    check: LegalApplicationCheck,
+    citation_findings: list[StatuteFinding],
+) -> LegalApplicationCheck:
+    """确定性修正（条号/层级/法名/版本）已解释引文差异时，压掉同处保真意见。
+
+    否则同一处引文会被提示两遍：引用层报"应为第X条"，适用层又报
+    "引文不忠实"。只剩保真意见时空转回 pass。
+    """
+    if not check.reviews or _resolved_correction(citation_findings) is None:
+        return check
+    reviews = [r for r in check.reviews if r.error_type != "meaning_distorted"]
+    if len(reviews) == len(check.reviews):
+        return check
+    verdict = check.verdict
+    if not reviews and verdict == "review":
+        verdict = "pass"
+    return check.model_copy(update={"reviews": reviews, "verdict": verdict})
+
+
+def _review_target_index(
+    review,
+    group: list[ApplicationCandidate],
+    default_index: int,
+) -> int:
+    """按相关法条把适用意见归到组内对应引用的条目。
+
+    只命中一个引用时才归位；命中多个（含首条）说明是句级意见，归首条
+    （保持旧行为）；完全匹配不到也归首条。
+    """
+    def normalize(value: str) -> str:
+        return re.sub(r"[《》\s]", "", value or "")
+
+    matched: list[int] = []
+    for source in review.related_sources or []:
+        needle = normalize(source)
+        if not needle:
+            continue
+        for candidate in group:
+            authority = candidate.authority
+            cited = normalize(authority.cited_source)
+            title = normalize(authority.law_title)
+            article = normalize(authority.article_no or "")
+            hit = bool(
+                (cited and (cited in needle or needle in cited))
+                or (title and article and title in needle and article in needle)
+            )
+            if hit and candidate.item_index not in matched:
+                matched.append(candidate.item_index)
+    if len(matched) == 1:
+        return matched[0]
+    return default_index
+
+
 def _run_application_checks(
     semantic_checker: SemanticChecker | None,
     items: list[_CheckItem],
@@ -1837,9 +2335,7 @@ def _run_application_checks(
         lookup_result, _ = lookup_pair
         evidence = item.correction_evidence if item.repair_verified else lookup_result.evidence
         citation_findings = judgments[index]
-        correction = next((f for f in citation_findings if f.code in {
-            StatuteErrorCode.ARTICLE_NUMBER_ERROR, StatuteErrorCode.CITATION_HIERARCHY_ERROR
-        } and f.resolved_locator), None)
+        correction = _resolved_correction(citation_findings)
         if (
             (lookup_result.status not in {
                 LookupStatus.ARTICLE_FOUND,
@@ -1868,7 +2364,9 @@ def _run_application_checks(
             claim_id=item.claim.claim_id,
             original_text=item.claim.text,
             authority=ApplicationAuthority.from_evidence(
-                _cited_source(item) if correction is None else f"《{item.display_title}》{evidence.article_no}", evidence
+                _cited_source(item) if correction is None
+                else f"《{evidence.law_title}》{evidence.article_no}",
+                evidence,
             ),
         ))
 
@@ -1901,11 +2399,93 @@ def _run_application_checks(
         )
 
     results: dict[int, LegalApplicationCheck] = {}
+    claim_groups: dict[str, list[ApplicationCandidate]] = {}
+    for candidate in candidates:
+        claim_groups.setdefault(candidate.claim_id, []).append(candidate)
     for job in jobs:
         check = checks[job.job_id].model_copy(deep=True)
         check.job_id = job.job_id
+        check = _drop_superseded_fidelity_reviews(
+            check, judgments.get(job.result_item_index, [])
+        )
+        group = claim_groups.get(job.claim_id, [])
+        if len(group) > 1 and check.reviews:
+            # 一句多引用：按相关法条把每条意见归到对应条目的卡片，挂不上的归首条。
+            buckets: dict[int, list] = {}
+            for review in check.reviews:
+                target = _review_target_index(review, group, job.result_item_index)
+                buckets.setdefault(target, []).append(review)
+            routed_first = buckets.pop(job.result_item_index, [])
+            if not routed_first and buckets:
+                # 全部意见都指向组内其他条目：首条回到无意见状态。
+                check = check.model_copy(update={"reviews": [], "verdict": "pass"})
+            else:
+                check = check.model_copy(update={"reviews": routed_first})
+            for item_index, reviews in buckets.items():
+                results[item_index] = LegalApplicationCheck(
+                    execution_status=check.execution_status,
+                    verdict="review" if reviews else check.verdict,
+                    reviews=reviews,
+                    notes=check.notes if reviews else "",
+                    job_id=check.job_id,
+                )
         results[job.result_item_index] = check
     return results
+
+
+def _merge_fidelity_reviews(
+    items: list[_CheckItem],
+    checks: dict[int, LegalApplicationCheck],
+) -> dict[int, LegalApplicationCheck]:
+    for index, item in enumerate(items):
+        triage = item.fidelity_triage
+        if triage is None or triage.verdict != "none":
+            continue
+        summary = "；".join(triage.differences)[:300]
+        review = LegalApplicationReview(
+            error_type="meaning_distorted",
+            summary=summary,
+            suggestion="请依据权威原文核对并修改该引文的实质差异。",
+            related_sources=[_cited_source(item)],
+        )
+        check = checks.get(index) or LegalApplicationCheck(verdict="pass")
+        reviews = [
+            existing for existing in check.reviews
+            if not (
+                existing.error_type == review.error_type
+                and re.sub(r"\s+", "", existing.summary)
+                == re.sub(r"\s+", "", review.summary)
+            )
+        ]
+        checks[index] = check.model_copy(update={
+            "verdict": "review",
+            "reviews": [*reviews, review],
+        })
+    return checks
+
+
+def _merge_same_code_findings(findings: list[StatuteFinding]) -> list[StatuteFinding]:
+    """同一张卡片的同类型引用问题合并为一条，避免同一类型重复刷屏。"""
+    merged: dict[StatuteErrorCode, StatuteFinding] = {}
+    order: list[StatuteErrorCode] = []
+    for finding in findings:
+        base = merged.get(finding.code)
+        if base is None:
+            merged[finding.code] = finding
+            order.append(finding.code)
+            continue
+        summary = base.summary
+        if finding.summary and finding.summary not in summary:
+            summary = f"{summary}；{finding.summary}" if summary else finding.summary
+        suggestion = base.suggestion
+        if finding.suggestion and finding.suggestion not in suggestion:
+            suggestion = f"{suggestion}；{finding.suggestion}" if suggestion else finding.suggestion
+        merged[finding.code] = base.model_copy(update={
+            "summary": summary[:300],
+            "suggestion": suggestion,
+            "risk_level": "HIGH" if "HIGH" in (base.risk_level, finding.risk_level) else base.risk_level,
+        })
+    return [merged[code] for code in order]
 
 
 def _build_statute_results(
@@ -1928,7 +2508,7 @@ def _build_statute_results(
                 status=LookupStatus.OUT_OF_SCOPE,
                 message=item.out_of_scope,
             )]
-        findings = judgments[index]
+        findings = _merge_same_code_findings(judgments[index])
         application_check = application_checks.get(index)
         card_id = card_ids.setdefault(
             item.claim.claim_id, f"card_{len(card_ids) + 1:05d}"
@@ -1999,6 +2579,7 @@ def _build_statute_results(
                         item.repair_message
                         if not _is_title_normalization_only_repair(item) else ""
                     )
+                    or item.fidelity_error
                     or ("引文内容与所引规范的对应关系尚待核查" if item.location_resolution and item.location_resolution.status != "resolved" else "")
                     or item.out_of_scope or item.not_verifiable or ""
                 ),

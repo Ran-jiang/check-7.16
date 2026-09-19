@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import threading
+from dataclasses import replace
 from typing import Optional
 
 from ....domain.evidence import (
@@ -29,20 +30,9 @@ from .client import (
     AnsvarQuotaExceededError,
     AnsvarRecord,
 )
+from .cache import CachedAnsvarClient, cache_enabled
 
 SOURCE_NAME = "Ansvar Gateway"
-_FTC_TAKE_IT_DOWN_URL = (
-    "https://www.ftc.gov/legal-library/browse/statutes/"
-    "tools-address-known-exploitation-immobilizing-technological-deepfakes-websites-networks-act-take-it"
-)
-_FTC_TAKE_IT_DOWN_SECTION_3 = (
-    "Section 3 requires covered platforms to provide a process for people to request the removal "
-    "of intimate photos or videos shared without their consent. When a covered platform receives "
-    "a valid request, it must remove the content, along with any known identical copies, within "
-    "48 hours. Covered platforms must comply with Section 3 starting May 19, 2026, and the Federal "
-    "Trade Commission enforces this notice and removal process."
-)
-
 # 常见涉外法规中文名 → (官方外文检索名, 法域代码)。命中别名提高召回。
 FOREIGN_LAW_ALIASES: dict[str, tuple[str, str]] = {
     "知识产权法典": ("Code de la propriété intellectuelle", "FR"),
@@ -57,14 +47,16 @@ class AnsvarSource:
         self._client_lock = threading.Lock()
 
     def lookup(self, request: LookupRequest) -> LookupResult:
-        if official := _official_take_it_down_evidence(request):
-            return official
         client = self._client
         if client is None:
             try:
                 with self._client_lock:
                     if self._client is None:
-                        self._client = AnsvarMcpClient()
+                        real_client = AnsvarMcpClient()
+                        self._client = (
+                            CachedAnsvarClient(real_client)
+                            if cache_enabled() else real_client
+                        )
                     client = self._client
             except AnsvarNotConfiguredError:
                 return self._error_result(
@@ -74,8 +66,40 @@ class AnsvarSource:
         query, override_jur = self._build_query(request.law_title)
         jurisdiction = override_jur or request.jurisdiction or ""
         gateway_jurisdiction = jurisdiction.split("-", 1)[0]
+        article_locator = _normalize_article_for_lookup(request.article_no)
+        article = None
         try:
-            records = client.search_law(query, jurisdiction=gateway_jurisdiction)
+            # 涉外引文通常同时带法名和条号，先走 get_provision 精确解析。
+            if article_locator:
+                article = client.get_article_text(
+                    query,
+                    article_locator,
+                    jurisdiction=gateway_jurisdiction,
+                )
+            if article is not None:
+                match = AnsvarRecord(
+                    title=article.get("title") or query,
+                    identifier=article.get("resolved_canonical_ref") or query,
+                    url=article.get("url") or "",
+                    jurisdiction=gateway_jurisdiction,
+                    in_force=article.get("in_force"),
+                    version_label=article.get("version_label") or "",
+                    publisher=article.get("publisher") or "",
+                    license=article.get("license") or "",
+                    citation=article.get("citation") or {},
+                )
+            else:
+                records = client.search_law(query, jurisdiction=gateway_jurisdiction)
+                match = _pick_match(records, gateway_jurisdiction)
+                if match is not None and article_locator and (
+                    match.identifier or match.lookup_arguments
+                ):
+                    article = client.get_article_text(
+                        match.identifier,
+                        article_locator,
+                        jurisdiction=gateway_jurisdiction,
+                        lookup_arguments=match.lookup_arguments,
+                    )
         except AnsvarQuotaExceededError as exc:
             # 额度超限 ≠ 法律不存在；归 SOURCE_ERROR 保留人工核查
             return self._error_result(
@@ -92,7 +116,6 @@ class AnsvarSource:
         except AnsvarMcpError as exc:
             return self._error_result(request, LookupStatus.SOURCE_ERROR, str(exc))
 
-        match = _pick_match(records, gateway_jurisdiction)
         if match is None:
             trace = SourceTrace(
                 tier=SourceTier.ANSVAR,
@@ -108,51 +131,34 @@ class AnsvarSource:
 
         # 按返回的精确引用取回条文，不把摘要当权威原文
         article_text = None
-        article_locator = _normalize_article_for_lookup(request.article_no)
         article_meta: dict = {}
-        if article_locator and (match.identifier or match.lookup_arguments):
-            try:
-                article = client.get_article_text(
-                    match.identifier,
-                    article_locator,
-                    jurisdiction=gateway_jurisdiction,
-                    lookup_arguments=match.lookup_arguments,
-                )
-            except AnsvarQuotaExceededError as exc:
-                return self._error_result(
-                    request,
-                    LookupStatus.SOURCE_ERROR,
-                    f"Ansvar 额度超限，无法取得所引条文：{exc}",
-                    metadata={"error_type": "quota_exceeded"},
-                )
-            except AnsvarPackageUnavailableError as exc:
-                return self._error_result(
-                    request,
-                    LookupStatus.SOURCE_ERROR,
-                    f"Ansvar 套餐不可用，无法取得所引条文：{exc}",
-                    metadata={"error_type": "package_unavailable"},
-                )
-            except AnsvarMcpError as exc:
-                return self._error_result(request, LookupStatus.SOURCE_ERROR, str(exc))
-            if article is not None:
-                article_text = _strip_heading(article["text"], article_locator)
-                if article.get("url"):
-                    match = AnsvarRecord(
-                        title=match.title, identifier=match.identifier,
-                        url=article["url"] or match.url,
-                        jurisdiction=match.jurisdiction, in_force=match.in_force,
-                        version_label=article.get("version_label") or match.version_label,
-                        snippet=match.snippet, publisher=match.publisher,
-                        license=match.license,
-                        lookup_arguments=match.lookup_arguments,
-                    )
-                article_meta = {
-                    "publisher": article.get("publisher") or match.publisher,
-                    "license": article.get("license") or match.license,
-                    "version_date": article.get("version_date") or "",
-                    # 辅助译文：语义比对辅助，不替代原文作为直接引用依据
-                    "translation": article.get("translation") or "",
-                }
+        if article is not None:
+            article_text = _strip_heading(article["text"], article_locator)
+            match = replace(
+                match,
+                title=article.get("title") or match.title,
+                identifier=article.get("resolved_canonical_ref") or match.identifier,
+                url=article.get("url") or match.url,
+                in_force=(
+                    article["in_force"]
+                    if isinstance(article.get("in_force"), bool) else match.in_force
+                ),
+                version_label=article.get("version_label") or match.version_label,
+                publisher=article.get("publisher") or match.publisher,
+                license=article.get("license") or match.license,
+                citation=article.get("citation") or match.citation,
+            )
+            article_meta = {
+                "publisher": match.publisher,
+                "license": match.license,
+                "citation": match.citation,
+                "last_verified": article.get("last_verified") or "",
+                "resolved_canonical_ref": article.get("resolved_canonical_ref") or "",
+                "resolution_method": article.get("resolution_method") or "",
+                "version_date": article.get("version_date") or "",
+                # 辅助译文：语义比对辅助，不替代原文作为直接引用依据
+                "translation": article.get("translation") or "",
+            }
 
         version_status = _version_status(match.in_force)
         if article_text:
@@ -193,9 +199,15 @@ class AnsvarSource:
                 "cited_title": request.law_title,
                 "publisher": article_meta.get("publisher") or match.publisher,
                 "license": article_meta.get("license") or match.license,
-                # 辅助译文/版本日期仅在取到条文时存在
-                **{k: v for k, v in article_meta.items()
-                   if k in ("version_date", "translation") and v},
+                **({"citation": match.citation} if match.citation else {}),
+                **{
+                    key: value
+                    for key in (
+                        "last_verified", "resolved_canonical_ref",
+                        "resolution_method", "version_date", "translation",
+                    )
+                    if (value := article_meta.get(key) or match.citation.get(key))
+                },
             },
             data_source=trace,
         )
@@ -221,32 +233,6 @@ class AnsvarSource:
             metadata=metadata or {},
         )
         return LookupResult(status, None, trace)
-
-
-def _official_take_it_down_evidence(request: LookupRequest) -> LookupResult | None:
-    if re.sub(r"[^A-Za-z]", "", request.law_title).upper() != "TAKEITDOWNACT":
-        return None
-    trace = SourceTrace(
-        tier=SourceTier.FTC_OFFICIAL,
-        source_name="美国联邦贸易委员会（FTC）官方说明",
-        source_url=_FTC_TAKE_IT_DOWN_URL,
-        status=LookupStatus.ARTICLE_FOUND,
-        message="FTC 官方说明已确认 TAKE IT DOWN Act 第3条的通知删除要求",
-        metadata={"official_agency": "FTC", "embedded_verified_excerpt": True},
-    )
-    evidence = ArticleEvidence(
-        law_title="TAKE IT DOWN Act",
-        source_type="official_agency_guidance",
-        article_no=request.article_no or "Section 3",
-        article_text=_FTC_TAKE_IT_DOWN_SECTION_3,
-        source_metadata={
-            "official_agency": "FTC",
-            "cited_title": request.law_title,
-            "embedded_verified_excerpt": True,
-        },
-        data_source=trace,
-    )
-    return LookupResult(trace.status, evidence, trace)
 
 
 _CN_ARTICLE_PATTERN = re.compile(r"^第([一二三四五六七八九十百千零两0-9]+)条$")

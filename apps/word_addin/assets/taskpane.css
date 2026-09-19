@@ -207,28 +207,23 @@ label.scope-row { cursor: pointer; }
    结果页
    ========================================================================== */
 .results-screen { padding: 24px 16px 8px; background: var(--bg-2); }
-.results-heading h1 { display: block; margin: 0; font-size: 16px; line-height: 28px; font-weight: 600; color: var(--fg-1); }
-.title-main { font-size: 16px; font-weight: 600; }
-.title-count {
-  display: inline; padding: 0; font-style: normal;
-  font-size: inherit; font-weight: inherit; line-height: inherit;
-  color: var(--brand-fg); vertical-align: baseline;
-  font-variant-numeric: tabular-nums;
-}
-.title-sub { font-size: 12px; font-weight: 400; color: var(--fg-3); margin-left: 8px; }
-.results-subtitle { margin: 12px 0 0; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+.results-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.results-heading h1 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; color: var(--fg-1); }
+.results-stats { margin: 8px 0 0; font-size: 14px; line-height: 22px; color: var(--fg-2); }
+.stat-number { color: var(--brand-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.results-subtitle { margin: 4px 0 0; font-size: 12px; line-height: 18px; color: var(--fg-3); }
 
-/* 状态筛选 TabList：选中 = fg-1 加粗 + 2px 品牌圆头下划线 */
-.results-filters { margin: 24px 0 12px; }
+/* 状态筛选按钮组：选中 = fg-1 加粗 + 2px 品牌圆头下划线 */
 .status-filter {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+  margin: 16px 0 12px;
   overflow-x: auto; border-bottom: 1px solid var(--stroke-2); scrollbar-width: none;
 }
 .status-filter::-webkit-scrollbar { display: none; }
 .status-tab {
   position: relative; flex: 0 0 auto; min-width: max-content;
-  border: 0; border-radius: 0; padding: 6px 0 10px; background: transparent;
-  color: var(--fg-2); font-size: 12px; line-height: 18px; font-weight: 500;
+  min-height: 44px; border: 0; border-radius: 0; padding: 8px 0; background: transparent;
+  color: var(--fg-2); font-size: 13px; line-height: 20px; font-weight: 500;
   text-align: center; cursor: pointer;
 }
 .status-tab:hover { color: var(--fg-1); }
@@ -241,116 +236,143 @@ label.scope-row { cursor: pointer; }
   margin-left: 4px; color: var(--brand-fg);
   font-size: 12px; font-style: normal; font-variant-numeric: tabular-nums;
 }
-.filter-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding-top: 8px; }
-.type-filter {
-  max-width: 68%; border: 0; padding: 4px 20px 4px 0; background: transparent;
-  color: var(--fg-2); font-size: 12px; cursor: pointer;
-}
 .text-button {
-  border: 0; padding: 6px 8px; border-radius: 4px; background: none;
-  color: var(--fg-2); font-size: 12px; cursor: pointer;
+  min-height: 44px; border: 0; padding: 6px 8px; border-radius: 4px; background: none;
+  color: var(--fg-2); font-size: 13px; line-height: 20px; cursor: pointer;
   transition: background var(--duration-fast) var(--curve);
 }
 .text-button:hover { background: var(--bg-subtle-hover); color: var(--fg-1); }
 
-/* 结果卡片：状态语义由 Badge 承担，无左侧色条 */
-.results-list { display: grid; gap: 12px; }
-.result-card { background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: 8px; padding: 16px 16px 12px; }
-.result-topline { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.card-type { flex: 1; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+/* 结果卡片：一处引文一卡，卡内无嵌套边框卡片 */
+.results-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.result-card { min-width: 0; background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: 8px; padding: 14px 16px 12px; }
+
+/* 多引卡头：左“本段共 N 条引用”，右侧按状态着色的聚合计数 */
+.result-topline { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.topline-label { font-size: 13px; line-height: 20px; color: var(--fg-3); }
+.topline-counts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 8px; font-size: 12px; line-height: 18px; }
+.count-issue { color: var(--danger-fg); font-weight: 500; }
+.count-pending { color: var(--warning-fg); font-weight: 500; }
+.count-pass { color: var(--success-fg); font-weight: 500; }
+.count-nested { color: var(--fg-3); }
+
+/* 引用项卡头：条名 + 角色前缀 + 问题类型标签 + 状态 pill（+展开箭头） */
+.reference-item-header {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 8px;
+  width: 100%; margin: 0; padding: 0; border: 0; background: none;
+  text-align: left; cursor: pointer; color: inherit; font: inherit;
+}
+div.reference-item-header { cursor: default; }
+.reference-label { min-width: 0; overflow-wrap: anywhere; }
+.reference-context-label { display: block; margin-bottom: 2px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--danger-fg); }
+.reference-title { font-size: 15px; line-height: 22px; font-weight: 600; color: var(--fg-1); overflow-wrap: anywhere; }
+.reference-role-prefix { margin-inline-end: 4px; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+.issue-tag {
+  display: inline-block; margin-inline-start: 8px; padding: 0 6px; border-radius: 4px;
+  font-size: 12px; line-height: 18px; font-weight: 500;
+  background: var(--danger-bg); color: var(--danger-fg);
+}
 .status-pill {
-  flex: 0 0 auto; padding: 2px 8px; border-radius: 999px;
+  padding: 1px 8px; border-radius: 999px;
   font-size: 12px; line-height: 18px; font-weight: 600;
   background: var(--success-bg); color: var(--success-fg);
 }
 .status-pill.is-issue { background: var(--danger-bg); color: var(--danger-fg); }
-.status-pill.is-review, .status-pill.is-bug { background: var(--warning-bg); color: var(--warning-fg); }
-.status-pill.is-not-run { background: var(--bg-subtle-hover); color: var(--fg-3); }
-/* 区块标签：每个分区上方的 caption 小字（文书原文/核查对象/权威原文） */
-.zone-label-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 18px; }
-.zone-label { font-size: 12px; line-height: 18px; color: var(--fg-3); }
-.zone-label-row .jump-button { margin-left: auto; min-height: 0; padding: 0 2px; color: var(--brand-fg); }
-.zone-label-row .jump-button:hover { background: transparent; color: var(--brand-bg-hover); text-decoration: underline; }
+.status-pill.is-pending { background: var(--warning-bg); color: var(--warning-fg); }
+.reference-chevron { color: var(--fg-3); font-size: 12px; transition: transform var(--duration-fast) var(--curve); }
+.reference-item-header[aria-expanded="true"] .reference-chevron { transform: rotate(90deg); }
 
-/* 文书原文（灰）与权威原文（蓝）的固定视觉身份 */
-.doc-quote {
-  margin: 4px 0 0; padding: 8px 10px; border: 0; border-left: 3px solid var(--stroke-1);
-  border-radius: 0; background: var(--bg-2);
-  color: var(--fg-2); font-size: 14px; line-height: 22px; overflow-wrap: anywhere;
+/* 文书原文块：浅灰底，“文书原文/定位原文”整合进块内，不再依赖分区标签 */
+.doc-quote { margin-top: 10px; padding: 8px 12px 10px; border-radius: 6px; background: var(--bg-2); }
+.doc-quote-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; margin-bottom: 6px; }
+.doc-quote-label { font-size: 14px; line-height: 20px; color: var(--fg-3); }
+.doc-quote-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.doc-quote-header .action-button { min-height: 20px; padding: 0; font-size: 14px; line-height: 20px; }
+.doc-quote-text { font-size: 14px; line-height: 22px; color: var(--fg-2); overflow-wrap: anywhere; }
+
+/* 待核实项的一行原因（单行省略） */
+.pending-reason {
+  margin: 6px 0 0; font-size: 13px; line-height: 20px; color: var(--fg-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.authority-quote {
-  margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--brand-bg);
-  border-radius: 0; background: var(--brand-bg-tint);
-  color: var(--fg-1); font-size: 12px; line-height: 18px;
-  white-space: pre-wrap; word-break: break-word;
-  max-height: 240px; overflow-y: auto;
+
+/* 建议区：自然语言正文 + 红删绿标 diff */
+.reference-item-body { margin-top: 10px; }
+.reference-item-body[hidden] { display: none; }
+.suggestion-block { margin-top: 2px; }
+.card-suggestion { margin: 0; font-size: 14px; line-height: 22px; color: var(--fg-1); overflow-wrap: anywhere; }
+.diff-line { margin: 6px 0 0; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.diff-remove { color: var(--danger-fg); text-decoration: line-through; }
+.diff-add { color: var(--success-fg); text-decoration: underline; text-underline-offset: 3px; }
+
+/* 候选修正引用：success 语义信息块，不承担按钮职责 */
+.candidate-citation {
+  margin-top: 10px; padding: 9px 11px; border: 1px solid var(--success-border); border-left: 3px solid var(--success-fg);
+  border-radius: 4px; background: var(--success-bg); color: var(--success-fg);
 }
-.authority-quote strong { font-weight: 600; }
+.candidate-citation-label { font-size: 12px; line-height: 18px; font-weight: 600; }
+.candidate-citation-text { margin-top: 2px; font-size: 14px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.candidate-citation.is-accepted { border-color: var(--success-fg); }
 
-.reference-source { color: var(--fg-1); font-size: 13px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
-.reference-body-topline { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
-.reference-body-topline .card-type { flex: 1; margin-top: 0; }
+/* 仅存在性核验：保留成功结论和轻量来源入口，不渲染完整证据卡 */
+.existence-result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 10px; font-size: 13px; line-height: 20px; }
+.existence-status { color: var(--success-fg); font-weight: 600; }
+.existence-link, .existence-source-link { color: var(--brand-fg); text-decoration: none; cursor: pointer; }
+.existence-link:hover, .existence-source-link:hover { text-decoration: underline; }
+.existence-sources { width: 100%; }
+.existence-sources summary { width: fit-content; list-style: none; }
+.existence-sources summary::-webkit-details-marker { display: none; }
+.existence-source-link { display: block; margin-top: 4px; }
 
-/* 多引卡：引文一次 + 紧凑子行（收起白底，展开恢复状态着色） */
-.multi-counts { display: flex; gap: 8px; font-size: 12px; line-height: 18px; }
-.multi-counts .count-issue { color: var(--danger-fg); }
-.multi-counts .count-review, .multi-counts .count-bug { color: var(--warning-fg); }
-.multi-counts .count-pass { color: var(--success-fg); }
-.multi-counts .count-nested { color: var(--fg-3); }
-.citation-references { display: grid; gap: 8px; margin-top: 12px; }
-.reference-row { border: 1px solid var(--stroke-2); border-radius: 4px; padding: 8px 10px; background: var(--bg-1); }
-.reference-row.is-nested-reference { margin-left: 18px; border-left: 3px solid var(--stroke-2); }
-.reference-row-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
-.reference-row-summary::-webkit-details-marker { display: none; }
-.reference-row-summary::after { content: "▸"; color: var(--fg-3); font-size: 12px; }
-.reference-row[open] .reference-row-summary::after { content: "▾"; }
-.reference-row-summary .reference-source { flex: 1; }
-.reference-role { flex: 0 0 auto; font-size: 12px; line-height: 18px; color: var(--fg-3); }
-/* 展开态：白底 + 品牌蓝描边"浮起"，状态语义由徽章承担，不整块着色 */
-.reference-row[open] { border-color: var(--brand-bg); }
-.reference-row-body .action-row { border-top: 0; padding-top: 0; }
-
-.card-conf { margin-top: 12px; font-size: 12px; line-height: 18px; color: var(--fg-3); }
-.card-suggestion { margin: 4px 0 0; font-size: 14px; line-height: 22px; color: var(--fg-1); }
-
-/* ⑤区：权威原文折叠 */
-.result-details { margin-top: 12px; border-top: 1px solid var(--stroke-2); padding-top: 12px; }
-.result-details summary { cursor: pointer; font-size: 12px; line-height: 18px; color: var(--brand-fg); }
-.statute-line { margin-top: 8px; font-size: 12px; line-height: 18px; color: var(--fg-2); word-break: break-all; }
-.statute-link { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--brand-fg); text-decoration: none; }
-.statute-link:hover { text-decoration: underline; }
-.statute-line .statute-link { margin: 0; }
-
-/* ⑥区：单个决策按钮（接受修订 ⇄ 取消修订），右对齐 */
-.action-row {
-  display: flex; justify-content: flex-end; align-items: center; gap: 8px;
-  margin-top: 12px; border-top: 1px solid var(--stroke-2); padding-top: 8px;
+/* 权威来源块：浅蓝底 + 3px 品牌蓝竖条，直接可见，不再 details 折叠 */
+.authority-block { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--brand-bg); border-radius: 4px; background: var(--brand-bg-tint); }
+.authority-heading { font-size: 14px; line-height: 22px; font-weight: 600; color: var(--fg-1); overflow-wrap: anywhere; }
+.authority-text {
+  margin-top: 4px; font-size: 14px; line-height: 22px; color: var(--fg-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.action-button {
-  min-height: 32px; border: 0; border-radius: 4px; padding: 5px 10px;
-  background: transparent; color: var(--fg-2); font-size: 12px; cursor: pointer;
+.authority-text strong { font-weight: 600; }
+.authority-meta { margin-top: 6px; font-size: 12px; line-height: 18px; color: var(--fg-3); overflow-wrap: anywhere; }
+.authority-link-row { margin-top: 8px; text-align: right; }
+.authority-link { font-size: 13px; line-height: 20px; color: var(--brand-fg); text-decoration: none; }
+.authority-link:hover { text-decoration: underline; }
+
+/* 案例候选 */
+.case-candidates { margin-top: 10px; }
+.candidate-line { margin-top: 6px; font-size: 13px; line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; }
+.candidate-meta { margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--fg-3); }
+
+/* 多引卡引用项列表：细分割线分隔，无编号、无嵌套边框；内部转引左缩进 */
+.reference-list { margin-top: 10px; }
+.reference-item { padding: 10px 0; }
+.reference-item + .reference-item { border-top: 1px solid var(--stroke-2); }
+.reference-item.is-nested { margin-left: 16px; }
+
+/* 决策按钮：接受修订 ⇄ 取消修订，蓝色描边、右下对齐 */
+.decision-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+.decision-button {
+  min-height: 44px; padding: 0 14px; border: 1px solid var(--brand-bg); border-radius: 4px;
+  background: var(--bg-1); color: var(--brand-fg); font-size: 14px; font-weight: 600; cursor: pointer;
   transition: background var(--duration-fast) var(--curve), color var(--duration-fast) var(--curve);
 }
-.action-button:hover { background: var(--bg-subtle-hover); color: var(--fg-1); }
-.jump-button { font-weight: 500; }
-.jump-button.has-warning { color: var(--warning-fg); }
-.decision-button[data-decision="accepted"] {
-  border: 1px solid var(--brand-bg); color: var(--brand-fg); font-weight: 500;
+.decision-button:hover { background: var(--brand-bg-tint); }
+.decision-button.is-active { background: var(--brand-bg); color: #fff; }
+.decision-button.is-active:hover { background: var(--brand-bg-hover); }
+.decision-button:disabled { opacity: .6; cursor: not-allowed; }
+
+/* 定位按钮（文书原文块内，蓝色文字按钮） */
+.action-button {
+  min-height: 44px; padding: 0 8px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--brand-fg);
+  font-size: 13px; line-height: 18px; font-weight: 500; cursor: pointer;
 }
-.decision-button[data-decision="accepted"]:hover { background: var(--brand-bg-tint); color: var(--brand-fg); }
-.decision-button[data-decision="accepted"].is-active { background: var(--brand-bg); border-color: var(--brand-bg); color: #fff; }
-.decision-button[data-decision="accepted"].is-active:hover { background: var(--brand-bg-hover); color: #fff; }
+.action-button:hover { text-decoration: underline; }
+.jump-button.has-warning { color: var(--warning-fg); }
 
 .empty-results {
   background: var(--bg-1); border: 1px solid var(--stroke-2); border-radius: 8px;
-  padding: 24px 16px; text-align: center; color: var(--fg-3); font-size: 12px; line-height: 18px;
+  padding: 24px 16px; text-align: center; color: var(--fg-3); font-size: 13px; line-height: 20px;
 }
-
-.results-action {
-  position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 0 16px;
-  background: linear-gradient(180deg, rgba(250,250,250,0), var(--bg-2) 40%);
-}
-.results-action > .text-button { flex: 0 0 auto; }
 
 /* ==========================================================================
    Toast（MessageBar 形态：白底 + 描边 + shadow-16）

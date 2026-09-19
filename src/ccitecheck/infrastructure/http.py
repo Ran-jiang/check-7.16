@@ -18,6 +18,14 @@ _SSL_CONTEXT: ssl.SSLContext | None = None
 _HTTP_CLIENT: httpx.Client | None = None
 _HTTP_CLIENT_LOCK = threading.Lock()
 
+# Ansvar（auth.ansvar.eu / gateway.ansvar.eu）位于 Cloudflare 之后，按 UA 签名
+# 拦截 Python-urllib 默认头（HTTP 403, error code 1010）；DCR/token/MCP 端点都需要
+# 标准浏览器 UA 才放行。
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
+
 
 def default_ssl_context() -> ssl.SSLContext:
     """返回进程内复用的默认 TLS context。"""
@@ -180,6 +188,7 @@ def _attempt_summary(attempts: list[str]) -> str:
 
 
 __all__ = [
+    "BROWSER_USER_AGENT",
     "HttpRequestError",
     "HttpResponseJSONError",
     "RetryPolicy",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 
 class JurisdictionCandidate(BaseModel):
@@ -139,6 +139,35 @@ class RerankBatch(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class FidelityChecks(BaseModel):
+    subject: bool
+    condition: bool
+    numbers: bool
+    negation: bool
+    consequence: bool
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class FidelityTriage(BaseModel):
+    verdict: str = Field(min_length=1)
+    checks: FidelityChecks
+    differences: list[str] = Field(default_factory=list, max_length=5)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_result(self, info: ValidationInfo):
+        allowed = (info.context or {}).get("allowed_verdicts")
+        if allowed is not None and self.verdict not in allowed:
+            raise ValueError("verdict must reference an input source id")
+        faithful = all(self.checks.model_dump().values())
+        if self.verdict == "none":
+            if not self.differences or any(not item.strip() for item in self.differences):
+                raise ValueError("none verdict requires a concrete difference")
+        elif not faithful or self.differences:
+            raise ValueError("selected source requires all checks and no differences")
+        return self
+
+
 class QueryExtractionFill(BaseModel):
     raw_title: str | None = None
     raw_title_candidate: str | None = None
@@ -192,6 +221,8 @@ __all__ = [
     "HypothesisAssumption",
     "HypothesisFeedback",
     "IdentityCandidate",
+    "FidelityChecks",
+    "FidelityTriage",
     "JurisdictionCandidate",
     "NormalizedLocator",
     "ProviderStrategy",

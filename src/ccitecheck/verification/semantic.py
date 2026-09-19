@@ -20,6 +20,7 @@ from ..infrastructure.http import (
 )
 
 from ..domain.queries import (
+    FidelityTriage,
     QueryExtractionFill,
     QueryInference,
     RepairPlan,
@@ -48,6 +49,7 @@ DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 REASONING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_reasoning_check.md"
 APPLICATION_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_application_check.md"
+FIDELITY_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "fidelity_triage.md"
 RELATED_PLANNER_PROMPT_PATH = (
     Path(__file__).resolve().parents[1]
     / "query_construction" / "prompts" / "related_planner.md"
@@ -70,14 +72,18 @@ RELATED_RERANKER_PROMPT_PATH = (
 )
 _APPLICATION_ERROR_TYPES = {
     "rule_fact_mismatch",
-    "meaning_distorted",
-    "legal_alias_inconsistent",
-    "format_error",
 }
 _StructuredModel = TypeVar("_StructuredModel", bound=BaseModel)
 
 
 class SemanticChecker(Protocol):
+    def triage_fidelity(
+        self,
+        quote: str,
+        cited: dict[str, Any] | None,
+        candidates: list[dict[str, Any]],
+    ) -> FidelityTriage: ...
+
     def compare_application(
         self,
         original_text: str,
@@ -229,25 +235,38 @@ class QwenSemanticChecker:
             "thinking": {"type": "disabled"},
             "response_format": {"type": "json_object"},
         }
+        # DeepSeek 要求 JSON 模式下提示词必须出现 "json" 字样，否则直接 400；
+        # 个别提示词（如修复类系统提示）不满足，缺字时自动补齐。
+        if "json" not in (system_prompt + user_content).lower():
+            payload["messages"] = [
+                *messages[:1],
+                {"role": "user", "content": f"{user_content}\n（请以 JSON 格式输出）"},
+            ]
         if temperature is not None:
             payload["temperature"] = temperature
         return _extract_chat_text(
             self._post("/chat/completions", payload)
         )
 
-    def verify_location(self, quote: str, current_text: str, candidate_text: str) -> dict:
-        prompt = (
-            "只比较给定引文、当前所引原文和候选原文，禁止凭记忆补写条号。"
-            "判断候选是否完整支持引文，逐项核对主体、条件、数字、否定和法律后果。"
-            "节选及同款拼接可以支持；遗漏必要条件、否定、法律后果不可以。"
-            "返回 JSON：supported 布尔值；differences 为未解释实质差异数组；"
-            "checks 对象含 subject/condition/numbers/negation/consequence 五个布尔值；"
-            "evidence 数组每项含 quote_start/quote_end/source_start/source_end（原字符串字符半开偏移）"
-            "以及逐字对应的 quote/source。证据须覆盖引文所有实质内容。无法确定时 supported=false。"
+    def triage_fidelity(
+        self,
+        quote: str,
+        cited: dict[str, Any] | None,
+        candidates: list[dict[str, Any]],
+    ) -> FidelityTriage:
+        allowed = {
+            *(candidate["id"] for candidate in candidates),
+            *({"cited"} if cited is not None else set()),
+            "none",
+        }
+        return self._structured(
+            FIDELITY_PROMPT_PATH,
+            {"quote": quote, "cited": cited, "candidates": candidates},
+            FidelityTriage,
+            "fidelity triage",
+            temperature=0.0,
+            validation_context={"allowed_verdicts": sorted(allowed)},
         )
-        return _load_json_object(self._chat(prompt, json.dumps({
-            "quote": quote, "current_text": current_text, "candidate_text": candidate_text,
-        }, ensure_ascii=False)))
 
     def compare_application(
         self,
@@ -373,6 +392,8 @@ class QwenSemanticChecker:
         self, *, raw_text: str, raw_title: str, raw_time: str | None,
         article_no: str | None, retrieval_status: str,
         candidate_titles: list[str], fuzzy_candidates: list[str],
+        allow_unlisted: bool = False,
+        authoritative_text: str | None = None,
     ) -> RepairPlan:
         plan = self._structured(
             REPAIR_PLANNER_PROMPT_PATH,
@@ -384,6 +405,8 @@ class QwenSemanticChecker:
                 "retrieval_status": retrieval_status,
                 "candidate_titles": candidate_titles,
                 "fuzzy_candidates": fuzzy_candidates,
+                "allow_unlisted": allow_unlisted,
+                "authoritative_text": authoritative_text,
             },
             RepairPlan,
             "repair planner",
@@ -427,6 +450,7 @@ class QwenSemanticChecker:
         label: str,
         *,
         temperature: float = 0.1,
+        validation_context: dict[str, Any] | None = None,
     ) -> _StructuredModel:
         output = self._chat(
             prompt_path.read_text(encoding="utf-8"),
@@ -435,7 +459,9 @@ class QwenSemanticChecker:
         )
         for attempt in range(2):
             try:
-                return model_type.model_validate(_load_json_object(output))
+                return model_type.model_validate(
+                    _load_json_object(output), context=validation_context
+                )
             except (json.JSONDecodeError, ValidationError, ValueError) as exc:
                 if attempt:
                     raise SemanticResponseError(
@@ -446,6 +472,7 @@ class QwenSemanticChecker:
                     "不得输出 Markdown 或解释。",
                     json.dumps({
                         "schema": model_type.model_json_schema(),
+                        "constraints": validation_context,
                         "invalid_output": output,
                     }, ensure_ascii=False),
                     temperature=0.0,
@@ -486,6 +513,7 @@ def _application_check_from_raw(raw: dict[str, Any]) -> LegalApplicationCheck:
     if not isinstance(raw_reviews, list):
         raise ValueError("reviews must be a list")
     reviews: list[LegalApplicationReview] = []
+    seen: set[tuple[str, str]] = set()
     for item in raw_reviews:
         if not isinstance(item, dict):
             raise ValueError("review item must be an object")
@@ -495,10 +523,15 @@ def _application_check_from_raw(raw: dict[str, Any]) -> LegalApplicationCheck:
         sources = item.get("related_sources") or []
         if not isinstance(sources, list):
             raise ValueError("related_sources must be a list")
+        summary = _user_text(str(item["summary"]), limit=300)
+        key = (error_type, re.sub(r"\s+", "", summary))
+        if key in seen:
+            continue
+        seen.add(key)
         reviews.append(LegalApplicationReview(
             error_type=error_type,
             review_level="待核查",
-            summary=_user_text(str(item["summary"]), limit=300),
+            summary=summary,
             suggestion=strip_internal_markers(str(item["suggestion"])),
             related_sources=[
                 strip_internal_markers(str(source)) for source in sources

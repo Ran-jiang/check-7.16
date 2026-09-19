@@ -117,11 +117,20 @@ class PkulawMcpClient:
         number = normalize_article_key(article_no).replace("-", ".")
         if not re.fullmatch(r"\d+(?:\.\d+)?", number):
             raise PkulawMcpError(f"invalid article number: {article_no}")
+        if "." in number:
+            base, suffix = number.split(".", 1)
+            if len(suffix) != 1:
+                raise PkulawMcpError(
+                    f"law_item cannot safely encode article suffix: {article_no}"
+                )
+            tool_number: int | float = float(f"{base}.{suffix}")
+        else:
+            tool_number = int(number)
         payload = self._timed_call_tool(
             "retrieval.pkulaw_law_item",
             endpoint=MCP_ENDPOINTS["law_item"],
             tool_name="get_law_item_content",
-            arguments={"title": title, "tiao_num": number},
+            arguments={"title": title, "tiao_num": tool_number},
         )
         return _parse_get_article_response(_extract_payload_data(payload), article_no)
 

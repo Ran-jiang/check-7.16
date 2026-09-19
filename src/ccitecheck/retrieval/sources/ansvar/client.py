@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ....infrastructure.config import load_project_env
-from ....infrastructure.http import default_ssl_context
+from ....infrastructure.http import BROWSER_USER_AGENT, default_ssl_context
 from .auth import AnsvarAuthError, AnsvarAuthExpired, AnsvarOAuth
 
 
@@ -57,6 +57,7 @@ class AnsvarRecord:
     snippet: str = ""
     publisher: str = ""
     license: str = ""
+    citation: dict[str, Any] = field(default_factory=dict)
     lookup_arguments: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,11 +153,50 @@ class AnsvarMcpClient:
             for key, value in _map_args_to_schema(schema, values).items()
             if key not in arguments
         })
-        payload = self._call_tool(tool, arguments)
-        data = _tool_data(payload)
+        try:
+            payload = self._call_tool(tool, arguments)
+            data = _tool_data(payload)
+        except AnsvarMcpError as exc:
+            if type(exc) is AnsvarMcpError and _is_not_found_error(str(exc)):
+                return None
+            raise
         if not isinstance(data, dict):
             return None
+        # get_provision 实际返回 {"results": [{text, citation, ...}]} 信封，
+        # citation 块带来源 URL/发布者/许可等溯源字段。
+        results = data.get("results")
+        if isinstance(results, list) and results and isinstance(results[0], dict):
+            first = results[0]
+            raw_citation = first.get("_citation") or first.get("citation") or {}
+            citation = raw_citation if isinstance(raw_citation, dict) else {}
+            content = str(first.get("text") or "").strip()
+            if not content:
+                return None
+            in_force = first.get("in_force", first.get("inForce"))
+            return {
+                "text": content,
+                "title": str(
+                    citation.get("source_full_name") or citation.get("source") or ""
+                ),
+                "in_force": in_force if isinstance(in_force, bool) else None,
+                "version_label": str(first.get("version_label") or first.get("version") or ""),
+                "url": str(citation.get("source_url") or ""),
+                "publisher": str(citation.get("publisher") or ""),
+                "license": str(citation.get("license") or ""),
+                "citation": dict(citation),
+                "last_verified": str(citation.get("last_verified") or ""),
+                "resolved_canonical_ref": str(citation.get("resolved_canonical_ref") or ""),
+                "resolution_method": str(citation.get("resolution_method") or ""),
+                # 辅助译文：仅用于跨语言语义比对，不替代原文作为直接引用依据
+                "translation": str(first.get("translation") or first.get("translated_text") or ""),
+                "version_date": str(
+                    first.get("version_date") or first.get("effective_date")
+                    or citation.get("version_date") or ""
+                ),
+            }
         provision = data.get("provision") if isinstance(data.get("provision"), dict) else {}
+        raw_citation = data.get("_citation") or data.get("citation") or {}
+        citation = raw_citation if isinstance(raw_citation, dict) else {}
         content = str(
             data.get("content")
             or data.get("text")
@@ -172,12 +212,19 @@ class AnsvarMcpClient:
             "title": str(data.get("title") or ""),
             "in_force": in_force if isinstance(in_force, bool) else None,
             "version_label": str(data.get("version_label") or data.get("version") or ""),
-            "url": str(data.get("url") or data.get("source_url") or ""),
-            "publisher": str(data.get("publisher") or data.get("source") or ""),
-            "license": str(data.get("license") or data.get("licence") or ""),
+            "url": str(data.get("url") or data.get("source_url") or citation.get("source_url") or ""),
+            "publisher": str(data.get("publisher") or data.get("source") or citation.get("publisher") or ""),
+            "license": str(data.get("license") or data.get("licence") or citation.get("license") or ""),
+            "citation": dict(citation),
+            "last_verified": str(citation.get("last_verified") or ""),
+            "resolved_canonical_ref": str(citation.get("resolved_canonical_ref") or ""),
+            "resolution_method": str(citation.get("resolution_method") or ""),
             # 辅助译文：仅用于跨语言语义比对，不替代原文作为直接引用依据
             "translation": str(data.get("translation") or data.get("translated_text") or ""),
-            "version_date": str(data.get("version_date") or data.get("effective_date") or ""),
+            "version_date": str(
+                data.get("version_date") or data.get("effective_date")
+                or citation.get("version_date") or ""
+            ),
         }
 
     # ---- 工具发现（tools/list）----
@@ -290,6 +337,7 @@ class AnsvarMcpClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "MCP-Protocol-Version": _PROTOCOL_VERSION,
+            "User-Agent": BROWSER_USER_AGENT,
         }
         if session:
             headers["Mcp-Session-Id"] = session
@@ -426,6 +474,15 @@ def _classify_jsonrpc_error(error: dict[str, Any]) -> AnsvarMcpError:
     return AnsvarMcpError(f"Ansvar MCP error: {error}")
 
 
+def _loads_json_prefix(text: str):
+    """解析工具文本内容开头的 JSON 值（容忍尾随的 markdown 来源附注）。"""
+    try:
+        data, _ = json.JSONDecoder().raw_decode(text.lstrip())
+        return data
+    except ValueError:
+        return None
+
+
 def _tool_data(payload: Any) -> Any:
     """展开 JSON-RPC → tool result → structuredContent/文本 JSON。"""
     if isinstance(payload, dict) and "error" in payload:
@@ -449,10 +506,8 @@ def _tool_data(payload: Any) -> Any:
         if isinstance(data.get("content"), list):
             for item in data["content"]:
                 if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
-                    try:
-                        return json.loads(item["text"])
-                    except (json.JSONDecodeError, TypeError):
-                        return {}
+                    parsed = _loads_json_prefix(item["text"])
+                    return parsed if parsed is not None else {}
     return data
 
 
@@ -521,6 +576,7 @@ def _parse_search_response(payload: Any) -> list[AnsvarRecord]:
                 )[:500],
                 publisher=str(citation.get("publisher") or entry.get("publisher") or ""),
                 license=str(citation.get("license") or entry.get("licence") or ""),
+                citation=dict(citation),
                 lookup_arguments=lookup_arguments,
             )
         )

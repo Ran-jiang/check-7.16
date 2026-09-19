@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安装 CCiteheck · Word 法律引用核查</title>
+  <link rel="stylesheet" href="/install/install.css">
+</head>
+<body>
+  <main class="install-shell">
+    <header class="install-hero">
+      <h1>CCiteheck 法律引用核查</h1>
+      <p class="install-lead">在 Word 里一键核查法规与司法案例引用:定位条文、比对权威原文、给出修订建议。按你的系统选择安装方式,约 3 分钟完成。</p>
+    </header>
+
+    <div class="platform-switch" role="tablist" aria-label="选择操作系统">
+      <button id="tab-mac" class="platform-tab" type="button" role="tab">macOS</button>
+      <button id="tab-windows" class="platform-tab" type="button" role="tab">Windows</button>
+    </div>
+
+    <section id="panel-mac" class="platform-panel" role="tabpanel" aria-labelledby="tab-mac">
+      <a class="primary-button" href="/install/install-ccitecheck.command" download>下载 macOS 安装器</a>
+      <ol class="steps">
+        <li><strong>完全退出 Word</strong>(按 Cmd+Q,不只是关闭窗口)。</li>
+        <li>双击下载的 <code>install-ccitecheck.command</code>。若 macOS 提示无法打开,右键它并选择“打开”。</li>
+        <li>重新打开 Word,在 <strong>主页 → 加载项</strong> 中找到 CCiteheck 并点击启动。</li>
+      </ol>
+      <details class="alt-method">
+        <summary>安装器打不开?手动安装(同样 3 步)</summary>
+        <ol class="steps">
+          <li>退出 Word,下载 <a href="/manifest.xml" download>manifest.xml</a>。</li>
+          <li>在 Finder 按 Cmd+Shift+G,粘贴 <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code>,把 manifest.xml 复制进去。</li>
+          <li>打开 Word → 主页 → 加载项 → CCiteheck。</li>
+        </ol>
+      </details>
+    </section>
+
+    <section id="panel-windows" class="platform-panel" role="tabpanel" aria-labelledby="tab-windows" hidden>
+      <a class="primary-button" href="/manifest.xml" download>下载 manifest.xml</a>
+      <ol class="steps">
+        <li>打开 Word,进入 <strong>插入 → 获取加载项</strong>。</li>
+        <li>选择 <strong>我的加载项</strong> 标签页 → 点击 <strong>上传我的加载项</strong>。</li>
+        <li>选择刚下载的 <code>manifest.xml</code> 并确认,CCiteheck 即出现在主页选项卡。也可以直接粘贴地址 <code>https://cciteheck-api.onrender.com/manifest.xml</code>。</li>
+      </ol>
+      <details class="alt-method">
+        <summary>共享文件夹方式(需要管理员权限,适合批量部署)</summary>
+        <p>参考源码仓库 <code>tools/word-installers/windows/</code> 下的 PowerShell 脚本与说明。</p>
+      </details>
+    </section>
+
+    <footer class="install-footer">
+      <p>安装后在 Word 中打开任意文档,点击“核查全文”即可。核查时文档内容会上传至部署方服务器处理,请勿核查含敏感个人信息的文书。</p>
+      <p><a href="/help.html">功能介绍与结果解读</a> · 首次连接如超时请稍候重试。</p>
+    </footer>
+  </main>
+  <script src="/install/install.js"></script>
+</body>
+</html>

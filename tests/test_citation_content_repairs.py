@@ -8,7 +8,7 @@ from ccitecheck.recognition.statutes import extract_legal_sources, _extract_arti
 from ccitecheck.recognition.spans import locate_claim_article_spans
 from ccitecheck.retrieval.sources.local_laws import LocalSQLiteSource
 from ccitecheck.retrieval.sources.base import LocationCandidateResult, LookupRequest, LookupResult
-from ccitecheck.verification.statutes.locator import resolve_location_candidates, validate_semantic_support
+from ccitecheck.verification.statutes.locator import resolve_location_candidates
 from ccitecheck.verification.statutes.deterministic import assess_statute
 from ccitecheck.orchestration.scheduler import verify_claim_document
 
@@ -295,6 +295,58 @@ def test_authoritative_absence_bypasses_version_gate_for_verified_repair(tmp_pat
     assert result.findings[0].resolved_locator.article_no == "第二条"
 
 
+def test_version_backtrack_reports_source_amended(tmp_path):
+    path = tmp_path / "version-backtrack.sqlite"
+    init_db(path)
+    old_version = ArticleEvidence(
+        law_title="示例法",
+        article_no="第九条",
+        article_text=A,
+        version_label="2019修正",
+        version_status="已被修改",
+        source_metadata={"version_key": "2019-01-01", "version_confirmed": True},
+        data_source=SourceTrace(
+            tier=SourceTier.PKULAW_FALLBACK,
+            source_name="北大法宝 MCP",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+    result = verify_claim_document(
+        ClaimDocument(claim_meta=ClaimMeta(), claims=[claim(f"《示例法》第九条规定{A}。")]),
+        path,
+        sources=[PkulawMissingSource(old_version)],
+        include_cases=False,
+    ).statute_results[0]
+
+    assert [finding.code.value for finding in result.findings] == ["source_amended"]
+    assert "2019修正" in result.findings[0].suggestion
+
+
+def test_cross_law_backtrack_reports_law_name_error(tmp_path):
+    path = tmp_path / "cross-law-backtrack.sqlite"
+    init_db(path)
+    other_law = ArticleEvidence(
+        law_title="示例规则",
+        article_no="第九条",
+        article_text=A,
+        source_metadata={"version_key": "2020-01-01", "version_confirmed": True},
+        data_source=SourceTrace(
+            tier=SourceTier.PKULAW_FALLBACK,
+            source_name="北大法宝 MCP",
+            status=LookupStatus.ARTICLE_FOUND,
+        ),
+    )
+    result = verify_claim_document(
+        ClaimDocument(claim_meta=ClaimMeta(), claims=[claim(f"《示例法》第九条规定{A}。")]),
+        path,
+        sources=[PkulawMissingSource(other_law, status=LookupStatus.LAW_NOT_FOUND)],
+        include_cases=False,
+    ).statute_results[0]
+
+    assert [finding.code.value for finding in result.findings] == ["law_name_error"]
+    assert "示例规则" in result.findings[0].suggestion
+
+
 def test_law_not_found_is_not_hijacked_by_absence_branch(tmp_path):
     path = tmp_path / "law-not-found.sqlite"
     init_db(path)
@@ -374,14 +426,6 @@ def test_numeric_normalization_and_adjacent_fragments():
     assert r.status == "resolved"
 
 
-def test_semantic_evidence_spans_are_not_sufficient():
-    q, t = "处三年以下有期徒刑", "处五年以下有期徒刑"
-    verdict = {"supported": True, "differences": [], "checks": dict.fromkeys(["subject","condition","numbers","negation","consequence"], True), "evidence": [{"quote_start":0,"quote_end":len(q),"source_start":0,"source_end":len(t),"quote":q,"source":t}]}
-    assert not validate_semantic_support(q,t,verdict)
-    verdict["evidence"][0]["source"] = "编造的文本"
-    assert not validate_semantic_support(q,t,verdict)
-
-
 def test_counts_do_not_prove_complete_corpus():
     trace = evidence(A).data_source
     trace.status = LookupStatus.LAW_FOUND_ARTICLE_MISSING
@@ -416,20 +460,229 @@ def test_no_number_substantive_request_recalls_text(tmp_path):
     assert result.lookup_status == LookupStatus.RELEVANT_ARTICLES_FOUND
 
 
-def test_semantic_paraphrase_can_resolve_with_checked_spans():
-    from ccitecheck.infrastructure.debug_timing import DebugTimer
-    q = "个人信息处理者取得个人的同意后可以处理个人信息"
-    t = "个人信息处理者经个人同意可以处理个人信息"
+def test_fidelity_triage_accepts_paraphrased_cited_once(tmp_path):
+    from ccitecheck.domain.queries import FidelityTriage
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
     class Checker:
-        def verify_location(self, quote, current, source):
-            return {"supported": True, "differences": [],
-                    "checks": dict.fromkeys(["subject","condition","numbers","negation","consequence"], True),
-                    "evidence": [{"quote_start":0,"quote_end":len(quote),"source_start":0,"source_end":len(source),"quote":quote,"source":source}]}
-    timer = DebugTimer()
-    with timer.activate():
-        r = resolve_location_candidates(q, [evidence(t)], semantic_checker=Checker(), current_text=A)
-    assert r.status == "resolved" and r.candidates[0].supported
-    assert timer.snapshot()["location.verify_llm"].calls == 1
+        calls = 0
+
+        def triage_fidelity(self, quote, cited, candidates):
+            self.calls += 1
+            assert cited["id"] == "cited"
+            return FidelityTriage(
+                verdict="cited",
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"], True
+                ),
+            )
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    checker = Checker()
+    result = run(
+        tmp_path,
+        "《示例法》第一条规定当事人必须依照约定完整履行义务。",
+        [("第一条", A)],
+        checker=checker,
+    )[0]
+
+    assert checker.calls == 1
+    assert result.findings == []
+    assert result.outcome == "pass"
+
+
+def test_deterministic_fidelity_fast_path_skips_triage(tmp_path):
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            raise AssertionError("逐字支持应走零模型快通")
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = run(
+        tmp_path, f"《示例法》第一条规定{A}。", [("第一条", A)], checker=Checker()
+    )[0]
+
+    assert result.outcome == "pass"
+
+
+def test_fidelity_triage_routes_difference_to_review(tmp_path):
+    from ccitecheck.domain.queries import FidelityTriage
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            return FidelityTriage(
+                verdict="none",
+                checks={
+                    "subject": True, "condition": False, "numbers": True,
+                    "negation": True, "consequence": True,
+                },
+                differences=["引文遗漏了权威原文的必要条件"],
+            )
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = run(
+        tmp_path,
+        "《示例法》第一条规定当事人可以不按约定履行义务。",
+        [("第一条", A)],
+        checker=Checker(),
+    )[0]
+
+    assert result.outcome == "review"
+    assert result.application_check.reviews[0].error_type == "meaning_distorted"
+    assert "必要条件" in result.application_check.reviews[0].summary
+
+
+def test_fidelity_triage_selects_one_deterministically_supported_candidate(tmp_path):
+    from ccitecheck.domain.queries import FidelityTriage
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            target = next(
+                candidate["id"] for candidate in candidates
+                if candidate["sources"][0]["article_no"] == "第二条"
+            )
+            return FidelityTriage(
+                verdict=target,
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"], True
+                ),
+            )
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = run(
+        tmp_path,
+        f"《示例法》第一条规定{B}。",
+        [("第一条", A), ("第二条", B), ("第三条", B + "。其他一般说明")],
+        checker=Checker(),
+    )[0]
+
+    assert result.findings[0].code.value == "article_number_error"
+    assert result.findings[0].resolved_locator.article_no == "第二条"
+
+
+def test_obsolete_cross_law_candidate_remains_unconfirmed(tmp_path):
+    from ccitecheck.domain.queries import FidelityTriage
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    obsolete_trace = SourceTrace(
+        tier=SourceTier.PKULAW_FALLBACK,
+        source_name="北大法宝 MCP",
+        status=LookupStatus.RELEVANT_ARTICLES_FOUND,
+        metadata={"timeliness": ["废止或失效"]},
+    )
+    obsolete = ArticleEvidence(
+        law_title="中华人民共和国合同法",
+        article_no="第六十条",
+        article_text=A,
+        version_status="废止或失效",
+        source_metadata=obsolete_trace.metadata,
+        data_source=obsolete_trace,
+    )
+
+    class Source:
+        def lookup(self, request):
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK,
+                source_name="北大法宝 MCP",
+                status=LookupStatus.LAW_NOT_FOUND,
+                metadata={"version_key": "current", "version_confirmed": True},
+            )
+            return LookupResult(LookupStatus.LAW_NOT_FOUND, None, trace)
+
+        def locate_candidates(self, request):
+            return LocationCandidateResult([obsolete], obsolete_trace)
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            assert candidates[0]["sources"][0]["temporal_status"] == "obsolete"
+            assert "废止" in candidates[0]["sources"][0]["timeliness"][0]
+            return FidelityTriage(
+                verdict=candidates[0]["id"],
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"],
+                    True,
+                ),
+            )
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = verify_claim_document(
+        ClaimDocument(
+            claim_meta=ClaimMeta(),
+            claims=[claim(f"《刑法》第五百零九条规定{A}。")],
+        ),
+        tmp_path / "missing.sqlite",
+        sources=[Source()],
+        semantic_checker=Checker(),
+        include_cases=False,
+    ).statute_results[0]
+
+    assert result.correction_evidence is None
+    assert all(finding.code.value != "law_name_error" for finding in result.findings)
+
+
+def test_fidelity_triage_does_not_correct_ambiguous_identical_text(tmp_path):
+    from ccitecheck.domain.queries import FidelityTriage
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            target = next(
+                candidate for candidate in candidates if len(candidate["sources"]) == 2
+            )
+            return FidelityTriage(
+                verdict=target["id"],
+                checks=dict.fromkeys(
+                    ["subject", "condition", "numbers", "negation", "consequence"], True
+                ),
+            )
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = run(
+        tmp_path,
+        f"《示例法》第一条规定{B}。",
+        [("第一条", A), ("第二条", B), ("第三条", B)],
+        checker=Checker(),
+    )[0]
+
+    assert result.findings == []
+    assert result.outcome == "review"
+    assert "唯一性" in result.application_check.reviews[0].summary
+
+
+def test_fidelity_triage_failure_is_explicitly_pending(tmp_path):
+    from ccitecheck.domain.statute_results import LegalApplicationCheck
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            raise RuntimeError("offline")
+
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="pass")
+
+    result = run(
+        tmp_path,
+        "《示例法》第一条规定当事人必须依照约定完整履行义务。",
+        [("第一条", A)],
+        checker=Checker(),
+    )[0]
+
+    assert result.outcome == "review"
+    assert "模型暂时不可用" in result.message
 
 
 def test_indented_authority_offsets_remain_exact():
@@ -511,16 +764,66 @@ def test_cross_version_related_evidence_is_not_relabelled(tmp_path):
     assert not any(f.risk_level == "HIGH" for f in r.findings)
 
 
-def test_corrected_content_still_checks_independent_application_issue(tmp_path):
+def test_corrected_content_drops_superseded_fidelity_review(tmp_path):
     from ccitecheck.domain.statute_results import LegalApplicationCheck, LegalApplicationReview
     class Checker:
         def compare_application(self, original_text, authorities):
             assert authorities[0].article_text == B
-            return LegalApplicationCheck(verdict="review",reviews=[LegalApplicationReview(
-                error_type="format_error",summary="独立的错别字",suggestion="修改错别字")])
+            return LegalApplicationCheck(verdict="review",reviews=[
+                LegalApplicationReview(
+                    error_type="meaning_distorted",summary="修正已覆盖的引文差异",
+                    suggestion="修改引文"),
+                LegalApplicationReview(
+                    error_type="rule_fact_mismatch",summary="独立的适用问题",
+                    suggestion="核对事实关联"),
+            ])
     result = run(tmp_path, f"《示例法》第一条规定{B}。", [("第一条",A),("第二条",B)],checker=Checker())[0]
     assert result.findings[0].code.value == "article_number_error"
-    assert result.application_check.reviews[0].error_type == "format_error"
+    assert [r.error_type for r in result.application_check.reviews] == ["rule_fact_mismatch"]
+
+
+def test_fidelity_review_without_correction_survives(tmp_path):
+    from ccitecheck.domain.statute_results import LegalApplicationCheck, LegalApplicationReview
+    class Checker:
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="review",reviews=[LegalApplicationReview(
+                error_type="meaning_distorted",summary="引文不忠实",suggestion="修改引文")])
+    result = run(tmp_path, f"《示例法》第一条规定{A}。", [("第一条",A)],checker=Checker())[0]
+    assert result.findings == []
+    assert [r.error_type for r in result.application_check.reviews] == ["meaning_distorted"]
+
+
+def test_application_review_is_routed_to_matching_citation(tmp_path):
+    from ccitecheck.domain.statute_results import LegalApplicationCheck, LegalApplicationReview
+    path = tmp_path / "two-laws.sqlite"
+    init_db(path)
+    with connect(path) as conn:
+        law_a = upsert_law(conn, {"title": "甲法", "source_url": "https://example.test/a"})
+        upsert_article(conn, law_a, {"article_no": "第一条", "text": A, "version_key": "2024-01-01"})
+        law_b = upsert_law(conn, {"title": "乙法", "source_url": "https://example.test/b"})
+        upsert_article(conn, law_b, {"article_no": "第三条", "text": B, "version_key": "2024-01-01"})
+
+    class Checker:
+        def compare_application(self, original_text, authorities):
+            return LegalApplicationCheck(verdict="review", reviews=[LegalApplicationReview(
+                error_type="rule_fact_mismatch",
+                summary="针对乙法的适用意见",
+                suggestion="请核对乙法适用。",
+                related_sources=["《乙法》第三条"],
+            )])
+
+    text = "依《甲法》第一条及《乙法》第三条，当事人应当依约履行。"
+    doc = ClaimDocument(claim_meta=ClaimMeta(), claims=[claim(text)])
+    results = verify_claim_document(
+        doc, path, sources=[LocalSQLiteSource(path)],
+        semantic_checker=Checker(), include_cases=False,
+    ).statute_results
+
+    assert len(results) == 2
+    by_law = {result.law_title: result for result in results}
+    assert by_law["甲法"].application_check.reviews == []
+    assert by_law["甲法"].application_check.verdict == "pass"
+    assert [r.error_type for r in by_law["乙法"].application_check.reviews] == ["rule_fact_mismatch"]
 
 
 def test_item_number_uses_actual_marker_not_list_offset():
@@ -569,3 +872,49 @@ def test_local_verified_location_skips_planner_retry(tmp_path):
     r = run(tmp_path, f"《示例法》第九条规定{A}。", [("第一条", A)], checker=planner)[0]
     assert r.findings[0].code.value == "article_number_error"
     assert planner.calls == 0
+
+
+def test_same_code_findings_merge_into_one():
+    from ccitecheck.domain.statute_results import StatuteErrorCode, StatuteFinding
+    from ccitecheck.orchestration.scheduler import _merge_same_code_findings
+
+    first = StatuteFinding(
+        code=StatuteErrorCode.FORMAT_ERROR, risk_level="HIGH",
+        summary="引用编号写法不规范：第100款",
+        suggestion="请按规范数字形式书写条、款、项编号。",
+    )
+    second = StatuteFinding(
+        code=StatuteErrorCode.FORMAT_ERROR, risk_level="HIGH",
+        summary="第100款缺少所属条号",
+        suggestion="款号不能脱离条号单独引用。",
+    )
+    other = StatuteFinding(
+        code=StatuteErrorCode.ARTICLE_NUMBER_ERROR, risk_level="HIGH",
+        summary="条号错误", suggestion="应为第二条。",
+    )
+
+    merged = _merge_same_code_findings([first, second, other])
+
+    assert [finding.code for finding in merged] == [
+        StatuteErrorCode.FORMAT_ERROR, StatuteErrorCode.ARTICLE_NUMBER_ERROR,
+    ]
+    assert "；" in merged[0].summary
+    assert "；" in merged[0].suggestion
+    assert merged[1].summary == "条号错误"
+
+
+def test_application_reviews_dedupe_same_type_and_summary():
+    from ccitecheck.verification.semantic import _application_check_from_raw
+
+    result = _application_check_from_raw({
+        "verdict": "review",
+        "comparison": "",
+        "reviews": [
+            {"error_type": "rule_fact_mismatch", "summary": "法条适用不当",
+             "suggestion": "核对事实。", "related_sources": []},
+            {"error_type": "rule_fact_mismatch", "summary": "法条 适用不当",
+             "suggestion": "核对事实。", "related_sources": []},
+        ],
+    })
+
+    assert len(result.reviews) == 1

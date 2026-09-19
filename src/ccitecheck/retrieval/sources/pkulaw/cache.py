@@ -24,6 +24,7 @@ from threading import Lock
 from typing import Optional
 
 from ....infrastructure.paths import PROJECT_ROOT
+from ....infrastructure.database import normalize_article_key
 from ....query_construction.strategies.common import build_article_semantic_fallback_query
 from .client import (
     PkulawArticle,
@@ -33,7 +34,10 @@ from .client import (
     PkulawMcpError,
     PkulawRecognizedLaw,
 )
-from ....query_construction.matching import match_law_record
+from ....query_construction.matching import (
+    match_law_record,
+    matches_requested_law_title,
+)
 from .urls import usable_mcp_url
 
 DEFAULT_CACHE_DB = PROJECT_ROOT / "data" / "pkulaw_cache.sqlite"
@@ -50,10 +54,17 @@ def _now() -> int:
 
 def _is_repealed(timeliness: list[str]) -> bool:
     return any(
-        value in {"废止", "失效", "废止或失效"}
-        or "已废止" in value
-        or "已失效" in value
+        any(token in value for token in (
+            "废止", "失效", "已被修改", "已修改", "部分失效"
+        ))
         for value in timeliness
+    )
+
+
+def _article_matches(title: str, article_no: str, article: PkulawArticle) -> bool:
+    return bool(
+        matches_requested_law_title(title, article.title)
+        and normalize_article_key(article_no) == normalize_article_key(article.article_no)
     )
 
 
@@ -103,12 +114,21 @@ class CachedPkulawClient:
             if entry is not None:
                 if entry["status"] == "not_found":
                     raise PkulawNotFoundError("未找到数据（缓存）")
-                return _article_from_payload(json.loads(entry["payload"]))
+                cached = _article_from_payload(json.loads(entry["payload"]))
+                if _article_matches(title, article_no, cached):
+                    return cached
+                conn.execute(
+                    "DELETE FROM cache_entries WHERE kind = 'article' AND key = ?",
+                    (key,),
+                )
+                conn.commit()
             try:
                 article = self.client.get_article(title, article_no)
             except PkulawNotFoundError:
                 _upsert(conn, "article", key, "not_found", {"title": title})
                 raise
+            if not _article_matches(title, article_no, article):
+                raise PkulawMcpError("北大法宝精确条文返回的法名或条号不匹配")
             _upsert(
                 conn,
                 "article",
@@ -242,12 +262,21 @@ class CachedPkulawClient:
                 if entry is not None:
                     if entry["status"] == "not_found":
                         raise PkulawNotFoundError("未找到数据（缓存）")
-                    return _article_from_payload(json.loads(entry["payload"]))
+                    cached = _article_from_payload(json.loads(entry["payload"]))
+                    if _article_matches(title, article_no, cached):
+                        return cached
+                    conn.execute(
+                        "DELETE FROM cache_entries WHERE kind = 'law_item' AND key = ?",
+                        (key,),
+                    )
+                    conn.commit()
                 try:
                     article = self.client.get_law_item_content(title, article_no)
                 except PkulawNotFoundError:
                     _upsert(conn, "law_item", key, "not_found", {"title": title})
                     raise
+                if not _article_matches(title, article_no, article):
+                    raise PkulawMcpError("北大法宝精确条文返回的法名或条号不匹配")
                 _upsert(
                     conn,
                     "law_item",

@@ -33,10 +33,6 @@ ui.setHandlers({
       ui.showMessage(error.message)
     }
   },
-  onDecide: (checkId, decision) => {
-    if (!lastResult) return {}
-    return saveDecision(lastResult.document_key, checkId, decision)
-  },
   onApplyFix: async check => {
     if (!lastResult) return
     try {

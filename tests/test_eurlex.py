@@ -101,6 +101,15 @@ def test_eurlex_source_not_found_and_error_paths():
     assert error.status == LookupStatus.SOURCE_ERROR
 
 
+def test_ai_act_uses_live_source_instead_of_embedded_excerpt():
+    client = FakeEurLexClient(records=[])
+    result = EurLexSource(client=client).lookup(
+        _request(title="人工智能法", article_no="第五十条")
+    )
+    assert result.status == LookupStatus.LAW_NOT_FOUND
+    assert client.queries == [("Artificial Intelligence Act 2024/1689", "32024R1689")]
+
+
 def test_eurlex_source_not_configured_without_gateway(monkeypatch):
     # 置空而非删除：本机 .env 配置了真实网关，空串可挡住 load_project_env 的 setdefault
     monkeypatch.setenv("EURLEX_MCP_GATEWAY", "")

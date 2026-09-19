@@ -8,7 +8,6 @@ from ...domain.evidence import ArticleEvidence, SourceTier
 from ...domain.legal_numbers import chinese_number_to_int
 from ...domain.statute_results import StatuteLocationCandidate, StatuteLocationResolution, StatuteLocator
 from ...infrastructure.database import normalize_article_key
-from ...infrastructure.debug_timing import measure
 from .structure import parse_article_structure
 
 _NON_TEXT = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff]")
@@ -96,8 +95,6 @@ def resolve_location_candidates(
     claim_text: str,
     evidence: list[ArticleEvidence],
     *,
-    semantic_checker=None,
-    current_text: str = "",
     cited_article_no: str | None = None,
 ) -> StatuteLocationResolution:
     candidates: list[StatuteLocationCandidate] = []
@@ -137,9 +134,14 @@ def resolve_location_candidates(
                         claim_text, unit_text + paragraph.introduction,
                     )[1])
                 rank_confirmed = article.source_metadata.get("article_rank_confirmed") is True
-                if not supported and coverage < .7 and not rank_confirmed and not (semantic_checker and coverage >= .2):
+                if not supported and coverage < .7 and not rank_confirmed:
                     continue
-                level = "item" if item_no else "paragraph" if structure.paragraph_boundaries_reliable else "article"
+                level = (
+                    "item" if item_no
+                    else "paragraph" if structure.paragraph_boundaries_reliable
+                    and len(structure.paragraphs) > 1
+                    else "article"
+                )
                 candidate = StatuteLocationCandidate(
                     locator=StatuteLocator(article_no=article.article_no,
                         paragraph_no=paragraph.paragraph_no if level != "article" else None, item_no=item_no),
@@ -147,15 +149,6 @@ def resolve_location_candidates(
                     confirmed_level=level if supported else "article" if rank_confirmed else None,
                     evidence_spans=spans, coverage=coverage, supported=supported,
                 )
-                if not supported and callable(getattr(semantic_checker, "verify_location", None)):
-                    try:
-                        with measure("location.verify_llm"):
-                            verdict = semantic_checker.verify_location(claim_text, current_text, text)
-                        candidate.supported = validate_semantic_support(claim_text, text, verdict)
-                        if candidate.supported:
-                            candidate.confirmed_level = level
-                    except Exception:
-                        pass  # 语义服务失败保留候选，不升级结论。
                 item_supported |= candidate.supported and item_no is not None
                 if candidate.supported or candidate.coverage >= .7 or rank_confirmed:
                     candidates.append(candidate)
@@ -164,6 +157,13 @@ def resolve_location_candidates(
         loc = candidate.locator
         unique.setdefault((normalize_article_key(loc.article_no or ""), loc.paragraph_no, loc.item_no), candidate)
     candidates = list(unique.values())
+    # 候选顺序与池子构造顺序解耦，保证结果稳定（最优在前）。
+    candidates.sort(key=lambda c: (
+        -c.coverage,
+        normalize_article_key(c.locator.article_no or ""),
+        c.locator.paragraph_no or "",
+        c.locator.item_no or "",
+    ))
     supported = [c for c in candidates if c.supported]
     supported_articles = {
         normalize_article_key(c.locator.article_no or "") for c in supported
@@ -209,37 +209,4 @@ def resolve_location_candidates(
                     })
                 ])
     return StatuteLocationResolution(status="candidates_pending" if candidates else "not_found", candidates=candidates)
-
-
-def validate_semantic_support(quote: str, text: str, verdict: dict) -> bool:
-    """跨度可验证是必要条件；实质差异检查是另一道必要条件。"""
-    if not isinstance(verdict, dict) or verdict.get("supported") is not True or verdict.get("differences") != []:
-        return False
-    checks = verdict.get("checks", {})
-    if any(checks.get(key) is not True for key in ("subject", "condition", "numbers", "negation", "consequence")):
-        return False
-    spans = verdict.get("evidence", [])
-    if not spans:
-        return False
-    covered = set()
-    sources = []
-    for span in spans:
-        if not isinstance(span, dict):
-            return False
-        a, b, c, d = (span.get(k) for k in ("quote_start", "quote_end", "source_start", "source_end"))
-        if any(type(v) is not int for v in (a, b, c, d)) or not (0 <= a < b <= len(quote) and 0 <= c < d <= len(text)):
-            return False
-        if span.get("quote") != quote[a:b] or span.get("source") != text[c:d]:
-            return False
-        sources.append(text[c:d])
-        covered.update(range(a, b))
-    source = "".join(sources)
-    number_pattern = r"[0-9零〇一二两三四五六七八九十百千]+(?=年|月|日|元|倍|人|周|小时|%)"
-    if {_normalize(m.group()) for m in re.finditer(number_pattern, quote)} != {_normalize(m.group()) for m in re.finditer(number_pattern, source)}:
-        return False
-    if bool(re.search(r"不|未|无|非|禁止|不得", quote)) != bool(re.search(r"不|未|无|非|禁止|不得", source)):
-        return False
-    return all(i in covered for i, ch in enumerate(quote) if _NON_TEXT.fullmatch(ch) is None)
-
-
 __all__ = ["resolve_location_candidates", "supports_assertion"]
