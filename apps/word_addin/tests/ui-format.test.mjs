@@ -80,6 +80,16 @@ test("keeps exact-article chl links", () => {
   assert.equal(sourceUrlOf({ evidence: { data_source: { source_url: url } } }), url)
 })
 
+test("keeps Korean statute links from the Ansvar gateway", () => {
+  const url = "https://www.law.go.kr/법령/저작권법"
+  assert.equal(sourceUrlOf({ evidence: { data_source: { source_url: url } } }), url)
+})
+
+test("blocks source links from untrusted domains", () => {
+  const check = { evidence: { data_source: { source_url: "https://evil.example.com/law" } } }
+  assert.equal(sourceUrlOf(check), "")
+})
+
 test("formats one article with multiple paragraphs as one reference", () => {
   assert.equal(formatReference({
     law_title: "中华人民共和国商标法",

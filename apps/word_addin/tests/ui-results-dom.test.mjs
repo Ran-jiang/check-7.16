@@ -316,6 +316,51 @@ test("仅有权威来源链接时不渲染空证据卡", () => {
   assert.equal(link.getAttribute("href"), "https://www.miit.gov.cn/official.html")
 })
 
+test("Ansvar 返回的 law.go.kr 链接渲染为查看权威原文", () => {
+  const document = setup()
+  const ui = new CheckUi()
+  ui.renderResults(resultOf(
+    [statuteResult({
+      outcome: "issue",
+      findings: [issueFinding()],
+      evidence: {
+        law_title: "저작권법",
+        article_no: "제46조",
+        article_text: "저작권법 제46조 본문……",
+        data_source: { source_url: "https://www.law.go.kr/법령/저작권법" },
+      },
+    })],
+    [],
+    { total: 1, card_total: 1, reference_total: 1, issues: 1 },
+  ))
+  const card = byClass(document.getElementById("results-list"), "result-card")[0]
+  assert.ok(byClass(card, "authority-block").length, "权威来源应直接可见")
+  const link = byClass(card, "authority-link")[0]
+  assert.match(textOf(link), /查看权威原文/)
+  assert.equal(link.getAttribute("href"), "https://www.law.go.kr/법령/저작권법")
+})
+
+test("非白名单域名的来源链接仍被拦截", () => {
+  const document = setup()
+  const ui = new CheckUi()
+  ui.renderResults(resultOf(
+    [statuteResult({
+      outcome: "issue",
+      findings: [issueFinding()],
+      evidence: {
+        law_title: "某法规",
+        article_no: "第一条",
+        article_text: "第一条　条文内容……",
+        data_source: { source_url: "https://evil.example.com/law" },
+      },
+    })],
+    [],
+    { total: 1, card_total: 1, reference_total: 1, issues: 1 },
+  ))
+  const card = byClass(document.getElementById("results-list"), "result-card")[0]
+  assert.equal(byClass(card, "authority-link").length, 0, "非白名单域名不应渲染来源链接")
+})
+
 test("已通过默认收起为一行,点击卡头展开证据", () => {
   const document = setup()
   const ui = new CheckUi()

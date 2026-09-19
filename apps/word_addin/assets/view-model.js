@@ -26,7 +26,7 @@ function trustedSourceUrl(raw) {
   try {
     const parsed = new URL(url)
     const legacy = parsed.pathname.startsWith("/lar/") && parsed.searchParams.get("way") === "mcp"
-    const trusted = /(^|\.)pkulaw\.com$/i.test(parsed.hostname) || /(^|\.)europa\.eu$/i.test(parsed.hostname) || /(^|\.)lawinfochina\.com$/i.test(parsed.hostname) || /\.gov\.cn$/i.test(parsed.hostname)
+    const trusted = /(^|\.)pkulaw\.com$/i.test(parsed.hostname) || /(^|\.)europa\.eu$/i.test(parsed.hostname) || /(^|\.)lawinfochina\.com$/i.test(parsed.hostname) || /(^|\.)law\.go\.kr$/i.test(parsed.hostname) || /\.gov\.cn$/i.test(parsed.hostname)
     return trusted && !legacy ? url : ""
   } catch {
     return ""

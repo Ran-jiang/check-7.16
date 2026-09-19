@@ -346,8 +346,8 @@ div.reference-item-header { cursor: default; }
 /* 决策按钮：接受修订 ⇄ 取消修订，蓝色描边、右下对齐 */
 .decision-row { display: flex; justify-content: flex-end; margin-top: 10px; }
 .decision-button {
-  min-height: 44px; padding: 0 14px; border: 1px solid var(--brand-bg); border-radius: 4px;
-  background: var(--bg-1); color: var(--brand-fg); font-size: 14px; font-weight: 600; cursor: pointer;
+  min-height: 20px; padding: 0 8px; border: 1px solid var(--brand-bg); border-radius: 4px;
+  background: var(--bg-1); color: var(--brand-fg); font-size: 13px; line-height: 18px; font-weight: 600; cursor: pointer;
   transition: background var(--duration-fast) var(--curve), color var(--duration-fast) var(--curve);
 }
 .decision-button:hover { background: var(--brand-bg-tint); }
