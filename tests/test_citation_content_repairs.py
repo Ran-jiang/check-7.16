@@ -10,7 +10,11 @@ from ccitecheck.retrieval.sources.local_laws import LocalSQLiteSource
 from ccitecheck.retrieval.sources.base import LocationCandidateResult, LookupRequest, LookupResult
 from ccitecheck.verification.statutes.locator import resolve_location_candidates
 from ccitecheck.verification.statutes.deterministic import assess_statute
-from ccitecheck.orchestration.scheduler import verify_claim_document
+from ccitecheck.orchestration.scheduler import (
+    _CheckItem,
+    resolve_location_for_item,
+    verify_claim_document,
+)
 
 A = "当事人应当按照约定全面履行自己的义务"
 B = "处理个人信息应当遵循合法正当必要和诚信原则"
@@ -191,6 +195,46 @@ def test_existing_item_wrong_content(tmp_path):
     result = run(tmp_path, f"《示例法》第一条第一项规定{B}。", [("第一条", body)])[0]
     assert [f.code.value for f in result.findings] == ["citation_hierarchy_error"]
     assert result.findings[0].resolved_locator.item_no == "第二项"
+
+
+def test_foreign_source_does_not_create_paragraph_correction_evidence():
+    cited = claim(f"《示例法》第一条第一款规定{B}。")
+    article = cited.entities.legal_sources[0].articles[0]
+    trace = SourceTrace(
+        tier=SourceTier.EURLEX,
+        source_name="foreign",
+        status=LookupStatus.ARTICLE_FOUND,
+    )
+    authority = ArticleEvidence(
+        law_title="示例法",
+        article_no="第一条",
+        article_text=f"{A}。\n{B}。",
+        version_status="现行有效",
+        source_metadata={"version_confirmed": True},
+        data_source=trace,
+    )
+    item = _CheckItem(
+        claim=cited,
+        law_title="示例法",
+        display_title="示例法",
+        article=article,
+        article_no=article.article,
+        not_verifiable=None,
+        jurisdiction="EU",
+        citation_span=cited.entities.citations[0].citation_span,
+    )
+
+    resolution = resolve_location_for_item(
+        item,
+        LookupResult(LookupStatus.ARTICLE_FOUND, authority, trace),
+        [trace],
+        locator_source=None,
+        local=None,
+        retry_only=False,
+    )
+
+    assert resolution is None
+    assert item.correction_evidence is None
 
 
 def test_extension_numbers_are_distinct(tmp_path):

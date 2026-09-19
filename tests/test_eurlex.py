@@ -73,6 +73,15 @@ def test_parse_search_response_accepts_mcp_text_content():
     assert records[0].url == "https://eur-lex.europa.eu/x"
 
 
+def test_parse_search_response_builds_official_link_from_celex():
+    records = _parse_search_response({"results": [
+        {"title": "Artificial Intelligence Act", "celex": "32024R1689"},
+    ]})
+    assert records[0].url == (
+        "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689"
+    )
+
+
 # ---------- 源适配器 ----------
 
 def test_eurlex_source_confirms_existence_with_alias_query():
@@ -241,13 +250,13 @@ def test_eu_article_citation_goes_through_application_check(tmp_path: Path, monk
         claims=[Claim(
             claim_id="cl_00001",
             claim_type=ClaimType.LEGAL_SOURCE_CLAIM,
-            text="根据欧盟《通用数据保护条例》第十七条，数据主体享有被遗忘权。",
+            text="根据欧盟《通用数据保护条例》第十七条第九款，数据主体享有被遗忘权。",
             anchor_ids=["line00001"],
             entities=LegalSourceClaimEntities(legal_sources=[LegalSource(
                 title="通用数据保护条例",
 
                 jurisdiction="EU",
-                articles=[ArticleRef(article="第十七条")],
+                articles=[ArticleRef(article="第十七条", paragraphs=["第九款"])],
             )]),
         )],
     )
@@ -258,6 +267,7 @@ def test_eu_article_citation_goes_through_application_check(tmp_path: Path, monk
     )
     check = frontend_doc.statute_results[0]
     assert check.lookup_status == LookupStatus.ARTICLE_FOUND
+    assert not check.findings
     assert check.application_check.verdict == "pass"
     assert not hasattr(check, "meaning_check")
     assert checker.calls and "Right to erasure" in checker.calls[0]["statute_text"]

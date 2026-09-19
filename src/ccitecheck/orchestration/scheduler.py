@@ -503,13 +503,19 @@ class VerificationScheduler:
                         or item.relation_status in {"parent_unavailable", "insufficient", "locator_mismatch"}
                     ):
                         raise KeyError(item.lookup_key)
-                    judgments[index] = judge_item(
-                        item,
-                        lookup,
-                        known_titles,
-                        historical_versions.get(item.lookup_key),
-                        location_repairs.get(index),
-                    )
+                    judgments[index] = [
+                        finding
+                        for finding in judge_item(
+                            item,
+                            lookup,
+                            known_titles,
+                            historical_versions.get(item.lookup_key),
+                            location_repairs.get(index),
+                        )
+                        if item.jurisdiction == "CN"
+                        or finding.code
+                        != StatuteErrorCode.CITATION_HIERARCHY_ERROR
+                    ]
             with timer.measure("retrieval.total"):
                 _resolve_repealed_successors(
                     source_chain, items, judgments, lookup_results, semantic_checker
@@ -1588,6 +1594,13 @@ def resolve_location_for_item(
             and matched_version != item.lookup_version_key
             and same_article and not title_changed
         )
+        if (
+            item.jurisdiction != "CN"
+            and same_article
+            and not title_changed
+            and not version_shifted
+        ):
+            return None
         if same_article and not title_changed and not version_shifted and not cited.paragraph_no and not cited.item_no:
             return None
         paragraph_matches = (

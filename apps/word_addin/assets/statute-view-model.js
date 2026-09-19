@@ -133,10 +133,12 @@ function statuteEvidence(check) {
     ? { ...check, evidence: check.correction_evidence, correction_evidence: null }
     : check)
   const related = (evidence?.related_articles || []).map(item => ({ heading: item.locator || item.article_no || "", text: item.article_text || "" }))
+  let comparison = false
   if (check.correction_evidence?.article_text && check.evidence?.article_text && !related.length) {
+    comparison = true
     related.push(
-      { heading: `原引用 · ${check.evidence.article_no || ""}`, text: check.evidence.article_text },
-      { heading: `候选修正引用 · ${check.correction_evidence.article_no || ""}`, text: check.correction_evidence.article_text },
+      { tone: "original", heading: `原引用 · ${check.evidence.article_no || ""}`, text: stripRepeatedArticleHeading(check.evidence.article_text, check.evidence.article_no) },
+      { tone: "candidate", heading: `候选修正引用 · ${check.correction_evidence.article_no || ""}`, text: stripRepeatedArticleHeading(check.correction_evidence.article_text, check.correction_evidence.article_no) },
     )
   }
   // related_articles 是 article_text 聚合内容的逐条结构化版本；两者只能展示
@@ -147,7 +149,7 @@ function statuteEvidence(check) {
   const lawTitle = evidence?.law_title || check.law_title
   const articleNo = evidence?.article_no || check.article_no || ""
   const heading = !articleNo ? lawTitle : /^第/.test(articleNo) ? `${lawTitle}${articleNo}` : `${lawTitle} · ${articleNo}`
-  return { articleHeading: articleText ? heading : "", articleText, related, url, structurePath }
+  return { articleHeading: articleText ? heading : "", articleText, related, url, structurePath, comparison }
 }
 
 function findingText(finding) {

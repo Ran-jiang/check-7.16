@@ -280,7 +280,7 @@ def _parse_search_response(payload: Any) -> list[EurLexRecord]:
         in_force = entry.get("in_force", entry.get("inForce"))
         celex = str(entry.get("celex") or entry.get("celex_number") or "")
         url = str(entry.get("url") or entry.get("uri") or entry.get("work_uri") or "")
-        if celex and "cellar" in url:
+        if celex and (not url or "cellar" in url):
             url = f"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:{celex}"
         records.append(
             EurLexRecord(

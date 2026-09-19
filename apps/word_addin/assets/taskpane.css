@@ -296,14 +296,11 @@ div.reference-item-header { cursor: default; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 建议区：自然语言正文 + 红删绿标 diff */
+/* 建议区 */
 .reference-item-body { margin-top: 10px; }
 .reference-item-body[hidden] { display: none; }
 .suggestion-block { margin-top: 2px; }
 .card-suggestion { margin: 0; font-size: 14px; line-height: 22px; color: var(--fg-1); overflow-wrap: anywhere; }
-.diff-line { margin: 6px 0 0; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
-.diff-remove { color: var(--danger-fg); text-decoration: line-through; }
-.diff-add { color: var(--success-fg); text-decoration: underline; text-underline-offset: 3px; }
 
 /* 候选修正引用：success 语义信息块，不承担按钮职责 */
 .candidate-citation {
@@ -332,6 +329,15 @@ div.reference-item-header { cursor: default; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .authority-text strong { font-weight: 600; }
+.authority-block.is-comparison { padding: 0; border-left: 0; background: transparent; }
+.authority-reference {
+  margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--brand-bg); border-radius: 4px;
+  background: var(--brand-bg-tint); color: var(--fg-2); font-size: 14px; line-height: 22px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.authority-reference:first-child { margin-top: 0; }
+.authority-reference.is-candidate { border-color: var(--success-fg); background: var(--success-bg); }
+.authority-reference strong { font-weight: 600; }
 .authority-meta { margin-top: 6px; font-size: 12px; line-height: 18px; color: var(--fg-3); overflow-wrap: anywhere; }
 .authority-link-row { margin-top: 8px; text-align: right; }
 .authority-link { font-size: 13px; line-height: 20px; color: var(--brand-fg); text-decoration: none; }

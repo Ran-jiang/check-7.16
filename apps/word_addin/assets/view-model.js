@@ -36,7 +36,7 @@ function trustedSourceUrl(raw) {
 export function stripRepeatedArticleHeading(text, articleNo) {
   if (!articleNo) return String(text || "")
   return String(text || "").replace(
-    /^\s*第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?[\s　]*/,
+    /^\s*(?:第[〇零一二三四五六七八九十百千万两0-9]+条(?:之[〇零一二三四五六七八九十百千万两0-9]+)?|Article\s+\d+[A-Za-z]?)[\s　]*/i,
     "",
   )
 }

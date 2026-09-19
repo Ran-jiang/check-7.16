@@ -301,7 +301,7 @@ export class CheckUi {
     return header
   }
 
-  // 正文:建议(自然语言,diff 红删绿标)→ 候选修正引用 → 参考案例 → 权威来源 → 决策按钮。
+  // 正文:建议 → 候选修正引用 → 参考案例 → 权威来源 → 决策按钮。
   createItemBody(view, options = {}) {
     const body = element("div", "reference-item-body")
     if (options.includeQuote) {
@@ -315,16 +315,6 @@ export class CheckUi {
     if (view.verdict?.suggestion) {
       const block = element("div", "suggestion-block")
       block.append(element("p", "card-suggestion", view.verdict.suggestion))
-      const revision = revisionFor(view.raw)
-      if (revision) {
-        const diff = element("p", "diff-line")
-        diff.append(
-          element("span", "diff-remove", revision.original),
-          " → ",
-          element("span", "diff-add", revision.revised),
-        )
-        block.append(diff)
-      }
       body.append(block)
     }
     const candidateCard = view.candidateCitation ? this.createCandidateCitation(view.candidateCitation) : null
@@ -365,12 +355,12 @@ export class CheckUi {
   // 权威来源块:浅蓝底 + 3px 品牌蓝竖条,直接可见(不再 details 折叠);
   // 链接固定为"查看权威原文 ↗",URL 不直接外露。
   createAuthorityBlock(evidence) {
-    const block = element("div", "authority-block")
+    const block = element("div", `authority-block${evidence.comparison ? " is-comparison" : ""}`)
     if (evidence.articleHeading) block.append(element("div", "authority-heading", evidence.articleHeading))
     if (evidence.structurePath) block.append(element("div", "authority-meta", `章节位置:${evidence.structurePath}`))
     if (evidence.articleText) block.append(element("div", "authority-text", evidence.articleText))
     for (const item of evidence.related) {
-      const line = element("div", "authority-text")
+      const line = element("div", item.tone ? `authority-reference is-${item.tone}` : "authority-text")
       if (item.heading) line.append(element("strong", "", item.heading), "　")
       line.append(item.text)
       block.append(line)

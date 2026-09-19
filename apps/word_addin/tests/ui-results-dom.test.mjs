@@ -264,7 +264,7 @@ test("review 与 bug 在统计行与筛选页签中合并为待核实", () => {
   assert.match(textOf(tabs[3]), /^已通过0$/)
 })
 
-test("单条未通过默认展开:卡头静态、正文可见、diff 与权威来源直接渲染", () => {
+test("单条未通过默认展开:卡头静态、正文可见、不渲染 diff", () => {
   const document = setup()
   const ui = new CheckUi()
   ui.renderResults(resultOf(
@@ -280,10 +280,8 @@ test("单条未通过默认展开:卡头静态、正文可见、diff 与权威�
   const body = byClass(card, "reference-item-body")[0]
   assert.equal(body.hidden, false)
   assert.match(textOf(card), /建议改为第586条/)
-  const diffRemove = byClass(card, "diff-remove")
-  const diffAdd = byClass(card, "diff-add")
-  assert.equal(textOf(diffRemove[0]), "第585条")
-  assert.equal(textOf(diffAdd[0]), "第586条")
+  assert.equal(byClass(card, "diff-remove").length, 0)
+  assert.equal(byClass(card, "diff-add").length, 0)
   assert.ok(byClass(card, "authority-block").length, "权威来源应直接可见")
   assert.equal(byClass(card, "authority-link")[0].getAttribute("href"), "https://www.pkulaw.com/chl/586.html")
   assert.match(textOf(byClass(card, "authority-link")[0]), /查看权威原文/)
@@ -509,7 +507,10 @@ test("候选修正引用独立使用成功态卡片并与接受修订联动", ()
   assert.match(textOf(byClass(card, "reference-context-label")[0]), /原引用/)
   assert.match(textOf(candidate), /候选修正引用/)
   assert.match(textOf(candidate), /《中华人民共和国民法典》第586条/)
-  assert.ok(byClass(card, "authority-block").length)
+  const comparison = byClass(card, "authority-block")[0]
+  assert.equal(comparison.classList.contains("is-comparison"), true)
+  assert.match(textOf(byClass(card, "is-original")[0]), /原引用/)
+  assert.match(textOf(byClass(card, "is-candidate")[0]), /候选修正引用/)
 
   const button = byClass(card, "decision-button")[0]
   ui.setDecision(button.dataset.checkId, "accepted")

@@ -35,6 +35,10 @@ test("keeps article text untouched when no separate article number is shown", ()
   assert.equal(stripRepeatedArticleHeading(text, ""), text)
 })
 
+test("removes a repeated EUR-Lex Article heading", () => {
+  assert.equal(stripRepeatedArticleHeading("Article 17\nRight to erasure.", "Article 17"), "Right to erasure.")
+})
+
 test("cards follow citation order instead of verification state", () => {
   const checks = [
     { check_id: "vc_3", anchor_ids: ["line00003"], status: "issue" },
@@ -353,10 +357,12 @@ test("missing article copy depends on completeness verdict", () => {
 
 test("correction evidence is shown alongside original evidence", () => {
   const view = statuteViewOf({ law_title: "示例法", outcome: "issue",
-    evidence: { article_no: "第一条", article_text: "原始条文" },
-    correction_evidence: { article_no: "第二条", article_text: "候选条文", data_source: { source_url: "https://pkulaw.com/chl/test.html" } },
+    evidence: { article_no: "第一条", article_text: "第一条　原始条文" },
+    correction_evidence: { article_no: "第二条", article_text: "第二条\n候选条文", data_source: { source_url: "https://pkulaw.com/chl/test.html" } },
   })
   assert.deepEqual(view.evidence.related.map(item => item.text), ["原始条文", "候选条文"])
+  assert.deepEqual(view.evidence.related.map(item => item.tone), ["original", "candidate"])
+  assert.equal(view.evidence.comparison, true)
   assert.equal(view.evidence.url, "https://pkulaw.com/chl/test.html")
 })
 
