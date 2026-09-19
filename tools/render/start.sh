@@ -1,7 +1,7 @@
 #!/bin/bash
 # Render 单实例双进程启动:EUR-Lex MCP(127.0.0.1:3010)+ FastAPI($PORT)。
 # 第二个进程不另收费;MCP 起不来只降级欧盟法核查,不阻断国内法与案例核查。
-set -uo pipefail
+set -u
 
 MCP_PORT="${MCP_HTTP_PORT:-3010}"
 MCP_LOG="${TMPDIR:-/tmp}/eurlex-mcp.log"
