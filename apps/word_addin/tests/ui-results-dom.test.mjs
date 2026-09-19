@@ -558,7 +558,7 @@ test("仅存在性核验通过时显示轻量来源链接而非完整权威卡�
   assert.equal(link.getAttribute("href"), "https://www.pkulaw.com/chl/123.html")
 })
 
-test("候选修正引用独立使用成功态卡片并与接受修订联动", () => {
+test("条号错误不渲染绿色候选卡:对照留在权威来源块内,接受修订仍可用", () => {
   const document = setup()
   const ui = new CheckUi()
   ui.renderResults(resultOf(
@@ -577,16 +577,34 @@ test("候选修正引用独立使用成功态卡片并与接受修订联动", ()
     { total: 1, card_total: 1, reference_total: 1, issues: 1 },
   ))
   const card = byClass(document.getElementById("results-list"), "result-card")[0]
-  const candidate = byClass(card, "candidate-citation")[0]
-  assert.match(textOf(byClass(card, "reference-context-label")[0]), /原引用/)
-  assert.match(textOf(candidate), /候选修正引用/)
-  assert.match(textOf(candidate), /《中华人民共和国民法典》第586条/)
+  assert.equal(byClass(card, "candidate-citation").length, 0, "条号错误不应再渲染绿色候选卡")
+  assert.equal(byClass(card, "reference-context-label").length, 0, "卡头不再标注原引用")
   const comparison = byClass(card, "authority-block")[0]
   assert.equal(comparison.classList.contains("is-comparison"), true)
   assert.match(textOf(byClass(card, "is-original")[0]), /原引用/)
   assert.match(textOf(byClass(card, "is-candidate")[0]), /候选修正引用/)
 
   const button = byClass(card, "decision-button")[0]
+  assert.equal(textOf(button), "接受修订")
   ui.setDecision(button.dataset.checkId, "accepted")
-  assert.equal(candidate.classList.contains("is-accepted"), true)
+  assert.equal(textOf(byClass(card, "decision-button")[0]), "取消修订")
+})
+
+test("非条号错误时绿色候选卡照常渲染", () => {
+  const document = setup()
+  const ui = new CheckUi()
+  ui.renderResults(resultOf(
+    [statuteResult({
+      outcome: "issue",
+      findings: [{ code: "format_error", risk_level: "LOW", summary: "引用编号格式不规范。", suggestion: "建议补齐编号。" }],
+      candidate_citation: "《中华人民共和国民法典》第586条",
+      evidence: issueEvidence(),
+    })],
+    [],
+    { total: 1, card_total: 1, reference_total: 1, issues: 1 },
+  ))
+  const card = byClass(document.getElementById("results-list"), "result-card")[0]
+  const candidate = byClass(card, "candidate-citation")[0]
+  assert.match(textOf(candidate), /《中华人民共和国民法典》第586条/)
+  assert.match(textOf(byClass(card, "reference-context-label")[0]), /原引用/)
 })

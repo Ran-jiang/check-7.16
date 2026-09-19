@@ -54,6 +54,8 @@ export function verificationModeOf(check) {
 }
 
 function candidateCitationOf(check) {
+  // 条号错误时权威来源块内已有"原引用/候选修正引用"对照,不再单独渲染绿色候选卡。
+  if ((check.findings || []).some(finding => finding.code === "article_number_error")) return null
   let candidate = check.candidate_citation || check.candidateCitation
     || check.suggested_citation || check.suggestedCitation
     || check.corrected_citation || check.correctedCitation || null
