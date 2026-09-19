@@ -36,6 +36,10 @@ SOURCE_NAME = "Ansvar Gateway"
 # 常见涉外法规中文名 → (官方外文检索名, 法域代码)。命中别名提高召回。
 FOREIGN_LAW_ALIASES: dict[str, tuple[str, str]] = {
     "知识产权法典": ("Code de la propriété intellectuelle", "FR"),
+    "人工智能发展及建立信任基础基本法": (
+        "인공지능 발전과 신뢰 기반 조성 등에 관한 기본법",
+        "KR",
+    ),
 }
 
 
@@ -134,9 +138,11 @@ class AnsvarSource:
         article_meta: dict = {}
         if article is not None:
             article_text = _strip_heading(article["text"], article_locator)
+            article_title = article.get("title") or ""
             match = replace(
                 match,
-                title=article.get("title") or match.title,
+                title=(match.title if article_title == match.identifier else article_title)
+                or match.title,
                 identifier=article.get("resolved_canonical_ref") or match.identifier,
                 url=article.get("url") or match.url,
                 in_force=(

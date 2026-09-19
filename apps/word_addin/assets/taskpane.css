@@ -256,7 +256,7 @@ label.scope-row { cursor: pointer; }
 .count-pass { color: var(--success-fg); font-weight: 500; }
 .count-nested { color: var(--fg-3); }
 
-/* 引用项卡头：条名 + 角色前缀 + 问题类型标签 + 状态 pill（+展开箭头） */
+/* 引用项卡头：条名 + 角色前缀 + 状态 pill（+展开箭头） */
 .reference-item-header {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 8px;
   width: 100%; margin: 0; padding: 0; border: 0; background: none;
@@ -267,11 +267,6 @@ div.reference-item-header { cursor: default; }
 .reference-context-label { display: block; margin-bottom: 2px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--danger-fg); }
 .reference-title { font-size: 15px; line-height: 22px; font-weight: 600; color: var(--fg-1); overflow-wrap: anywhere; }
 .reference-role-prefix { margin-inline-end: 4px; font-size: 12px; line-height: 18px; color: var(--fg-3); }
-.issue-tag {
-  display: inline-block; margin-inline-start: 8px; padding: 0 6px; border-radius: 4px;
-  font-size: 12px; line-height: 18px; font-weight: 500;
-  background: var(--danger-bg); color: var(--danger-fg);
-}
 .status-pill {
   padding: 1px 8px; border-radius: 999px;
   font-size: 12px; line-height: 18px; font-weight: 600;
@@ -289,12 +284,6 @@ div.reference-item-header { cursor: default; }
 .doc-quote-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .doc-quote-header .action-button { min-height: 20px; padding: 0; font-size: 14px; line-height: 20px; }
 .doc-quote-text { font-size: 14px; line-height: 22px; color: var(--fg-2); overflow-wrap: anywhere; }
-
-/* 待核实项的一行原因（单行省略） */
-.pending-reason {
-  margin: 6px 0 0; font-size: 13px; line-height: 20px; color: var(--fg-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 
 /* 建议区 */
 .reference-item-body { margin-top: 10px; }

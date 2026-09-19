@@ -170,6 +170,22 @@ def resolve_location_candidates(
     }
     if len(supported) == 1 and len(supported_articles) == 1:
         return StatuteLocationResolution(status="resolved", candidates=supported)
+    if cited_article_no and not supported:
+        cited_key = normalize_article_key(cited_article_no)
+        strong_paragraphs = [
+            candidate for candidate in candidates
+            if candidate.locator.paragraph_no
+            and normalize_article_key(candidate.locator.article_no or "") == cited_key
+            and candidate.coverage >= .85
+            and _matches_distinctive_fragment(claim_text, candidate.text)
+        ]
+        if len(strong_paragraphs) == 1:
+            return StatuteLocationResolution(status="resolved", candidates=[
+                strong_paragraphs[0].model_copy(update={
+                    "confirmed_level": "paragraph",
+                    "supported": True,
+                })
+            ])
     if cited_article_no and len(supported_articles) == 1:
         article_no = supported[0].locator.article_no
         if normalize_article_key(article_no or "") != normalize_article_key(cited_article_no):

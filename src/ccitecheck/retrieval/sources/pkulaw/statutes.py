@@ -109,7 +109,7 @@ class PkulawFallbackSource:
         ]
         attempt.update(status="completed", candidate_count=len(filtered))
         cited = normalize_article_no(request.article_no or "")
-        if request.article_no and (
+        if request.article_no and not request.skip_nearby_scan and (
             not filtered
             or all(
                 not article.article_no

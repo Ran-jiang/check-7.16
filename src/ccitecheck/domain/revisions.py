@@ -32,4 +32,28 @@ class RevisionProposal(BaseModel):
         return self
 
 
-__all__ = ["RevisionProposal"]
+def replacement_revision(
+    text: str,
+    original: str,
+    revised: str,
+    rationale: str,
+    *,
+    preconditions: list[str] | None = None,
+) -> RevisionProposal | None:
+    if not original or not revised or original == revised or text.count(original) != 1:
+        return None
+    return RevisionProposal(
+        strategy="replace_exact_text",
+        original_text=text,
+        revised_text=text.replace(original, revised, 1),
+        rationale=rationale,
+        machine_applicable=True,
+        preconditions=[
+            "original_text_unique",
+            "document_unchanged",
+            *(preconditions or []),
+        ],
+    )
+
+
+__all__ = ["RevisionProposal", "replacement_revision"]

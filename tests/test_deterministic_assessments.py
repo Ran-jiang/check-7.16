@@ -58,6 +58,27 @@ def test_confirmed_correct_title_is_law_name_error():
     assert findings[0].suggestion == "法律名称引用错误，应为《正确法名》。"
 
 
+def test_pkulaw_title_candidate_can_replace_only_the_wrong_law_name():
+    wrong = "中华人民共和国著作产权实施条例"
+    correct = "中华人民共和国著作权法实施条例"
+    text = f"根据《{wrong}》，复制、改编、信息网络传播等权利具有各自的控制范围。"
+    trace = SourceTrace(
+        tier=SourceTier.PKULAW_FALLBACK,
+        source_name="北大法宝",
+        status=LookupStatus.LAW_NOT_FOUND,
+        metadata={"search_completed": True, "candidate_titles": [correct]},
+    )
+    finding = assess_statute(
+        wrong, None, LookupResult(LookupStatus.LAW_NOT_FOUND, None, trace),
+        [trace], [], claim_text=text,
+    )[0]
+
+    assert finding.code == StatuteErrorCode.SOURCE_NOT_FOUND
+    assert finding.revision is not None and finding.revision.machine_applicable
+    assert finding.revision.original_text == text
+    assert finding.revision.revised_text == text.replace(f"《{wrong}》", f"《{correct}》")
+
+
 def test_repealed_source_suppresses_location_error():
     trace = SourceTrace(
         tier=SourceTier.PKULAW_FALLBACK,
@@ -157,7 +178,7 @@ def test_implementation_date_and_future_status_are_checked():
     assert "尚未生效" in future_finding.summary
 
 
-def test_unrelated_current_candidates_are_not_called_successors():
+def test_rejected_current_candidate_is_still_exposed_with_revision():
     old_trace = SourceTrace(
         tier=SourceTier.PKULAW_FALLBACK,
         source_name="北大法宝",
@@ -232,9 +253,13 @@ def test_unrelated_current_candidates_are_not_called_successors():
         [NoiseSource()], [item], {0: [finding]}, lookups, Checker()
     )
 
-    assert item.correction_evidence is None
-    assert "未展示为纠正候选" in finding.suggestion
+    assert item.correction_evidence == candidate
+    assert item.repair_verified is False
+    assert finding.revision is not None
+    assert finding.revision.machine_applicable is True
+    assert "已作为候选修正引用展示" in finding.suggestion
     assert lookups[item.lookup_key][1][-1].metadata["temporal_repair"]["status"] == "rejected"
+    assert lookups[item.lookup_key][1][-1].metadata["temporal_repair"]["accepted_count"] == 1
 
 
 @pytest.mark.parametrize("temporal_code", [

@@ -687,6 +687,29 @@ def test_nearby_scan_stops_after_two_articles_each_side():
     assert attempt["requested_count"] == 5
 
 
+def test_complete_cited_article_can_disable_nearby_scan():
+    client = LawItemRoutingClient(
+        PkulawArticle(
+            title=LAW.title,
+            article_no="第十四条",
+            article_text="已经取得的完整条文。",
+            implement_date="2021-01-01",
+            timeliness=["现行有效"],
+        ),
+        semantic=[],
+    )
+
+    result = PkulawFallbackSource(client).locate_candidates(LookupRequest(
+        law_title=LAW.title,
+        article_no="第十四条",
+        context_text="概括表述。",
+        skip_nearby_scan=True,
+    ))
+
+    assert result.candidates == []
+    assert not any(call[0] == "law_item" for call in client.calls)
+
+
 def test_nearby_scan_expands_when_narrow_range_has_no_candidate():
     class NearbyClient(RoutingClient):
         def get_article(self, title, article_no):

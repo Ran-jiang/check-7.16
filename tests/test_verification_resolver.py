@@ -1677,6 +1677,47 @@ def test_locator_revision_replaces_only_wrong_item_number():
     )
 
 
+def test_verified_law_name_repair_has_title_only_revision():
+    from types import SimpleNamespace
+    from ccitecheck.orchestration.scheduler import _CheckItem, _verified_repair_finding
+    from ccitecheck.domain.citation import ArticleRef
+    from ccitecheck.domain.statute_results import (
+        StatuteLocationCandidate, StatuteLocationResolution, StatuteLocator,
+    )
+
+    wrong = "中华人民共和国著作产权实施条例"
+    correct = "中华人民共和国著作权法实施条例"
+    text = f"根据《{wrong}》，复制、改编等权利具有各自的控制范围。"
+    trace = SourceTrace(
+        tier=SourceTier.PKULAW_FALLBACK,
+        source_name="北大法宝",
+        status=LookupStatus.ARTICLE_FOUND,
+    )
+    item = _CheckItem(
+        claim=SimpleNamespace(text=text, context_text=text),
+        law_title=wrong, display_title=wrong,
+        article=ArticleRef(article="第一条"), article_no="第一条",
+        not_verifiable=None,
+        correction_evidence=ArticleEvidence(
+            law_title=correct, article_no="第一条", article_text="条文。",
+            data_source=trace,
+        ),
+        repair_verified=True,
+        location_resolution=StatuteLocationResolution(
+            status="resolved",
+            candidates=[StatuteLocationCandidate(
+                locator=StatuteLocator(article_no="第一条"),
+                text="条文。", supported=True,
+            )],
+        ),
+    )
+
+    finding = _verified_repair_finding(item)
+    assert finding is not None and finding.code == StatuteErrorCode.LAW_NAME_ERROR
+    assert finding.revision is not None and finding.revision.machine_applicable
+    assert finding.revision.revised_text == text.replace(f"《{wrong}》", f"《{correct}》")
+
+
 def test_de_particle_difference_requires_semantic_evidence():
     from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
     from ccitecheck.verification.statutes.locator import resolve_location_candidates

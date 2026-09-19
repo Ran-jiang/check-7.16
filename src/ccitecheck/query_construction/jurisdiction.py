@@ -43,6 +43,7 @@ _TITLE_ALIASES: dict[str, str] = {
     "数字市场法": JURISDICTION_EU,
     "数字服务法": JURISDICTION_EU,
     "数据法案": JURISDICTION_EU,
+    "人工智能发展及建立信任基础基本法": "KR",
     # Code de la propriété intellectuelle —— 法国知识产权法典
     "知识产权法典": "FR",
 }

@@ -201,23 +201,19 @@ export class CheckUi {
     return this.createMultiReferenceCard(card)
   }
 
-  // 单条引用卡:卡头(条名/标签/徽章) → 文书原文 → [一行原因] → 建议/diff →
-  // 权威来源 → 接受修订。未通过默认全部展开;待核实展开卡头与原因;
+  // 单条引用卡:卡头(条名/徽章) → 文书原文 → 建议/diff →
+  // 权威来源 → 接受修订。未通过/待核实默认全部展开;
   // 已通过收起为一行,点击卡头展开引文与权威来源。
   createResultCard(check) {
     const view = viewOf(check)
     const state = displayState(view.state)
     const card = element("article", `result-card is-${state}${check.note_context ? " is-footnote" : ""}`)
     const body = this.createItemBody(view, { includeQuote: state === "pass" })
-    card.append(this.createItemHeader(view, state !== "issue", body))
+    card.append(this.createItemHeader(view, state === "pass", body))
     if (state !== "pass") {
       card.append(this.createQuoteZone(check.claim_text, check, check.card_id || check.check_id, check.note_context))
-      if (state === "pending") {
-        const reason = this.createPendingReason(view)
-        if (reason) card.append(reason)
-      }
     }
-    body.hidden = state !== "issue"
+    body.hidden = state === "pass"
     card.append(body)
     return card
   }
@@ -257,24 +253,14 @@ export class CheckUi {
     const nestedClass = ["nested", "carry_forward"].includes(view.raw.reference_role) ? " is-nested" : ""
     const item = element("section", `reference-item is-${state}${nestedClass}`)
     const body = this.createItemBody(view)
-    item.append(this.createItemHeader(view, state !== "issue", body))
-    if (state === "pending") {
-      const reason = this.createPendingReason(view)
-      if (reason) item.append(reason)
-    }
-    body.hidden = state !== "issue"
+    item.append(this.createItemHeader(view, state === "pass", body))
+    body.hidden = state === "pass"
     item.append(body)
     return item
   }
 
-  createPendingReason(view) {
-    const reason = view.verdict?.suggestion
-      || (view.typeTags.length ? view.typeTags.join(" · ") : "")
-    return reason ? element("p", "pending-reason", reason) : null
-  }
-
-  // 卡头:条名(15/600) + 角色前缀 + 问题类型标签 + 状态 pill(+展开箭头)。
-  // 未通过是静态行;待核实/已通过的卡头可点击展开正文。
+  // 卡头:条名(15/600) + 角色前缀 + 状态 pill(+展开箭头)。
+  // 未通过/待核实是静态展开行;已通过的卡头可点击展开正文。
   createItemHeader(view, interactive, body) {
     const state = displayState(view.state)
     const header = element(interactive ? "button" : "div", "reference-item-header")
@@ -292,9 +278,6 @@ export class CheckUi {
     if (role) label.append(element("span", "reference-role-prefix", `${role} · `))
     if (view.candidateCitation) label.append(element("span", "reference-context-label", "原引用"))
     label.append(element("span", "reference-title", view.reference))
-    if (state === "issue" && view.typeTags.length) {
-      label.append(element("span", "issue-tag", view.typeTags.join(" · ")))
-    }
     header.append(label)
     header.append(element("span", `status-pill is-${state}`, STATUS_PILL_TEXT[view.state] || "未核查"))
     if (interactive) header.append(element("span", "reference-chevron", "▸"))
@@ -355,6 +338,17 @@ export class CheckUi {
   // 权威来源块:浅蓝底 + 3px 品牌蓝竖条,直接可见(不再 details 折叠);
   // 链接固定为"查看权威原文 ↗",URL 不直接外露。
   createAuthorityBlock(evidence) {
+    const hasText = evidence.articleHeading || evidence.structurePath
+      || evidence.articleText || evidence.related.length
+    if (!hasText && evidence.url) {
+      const row = element("div", "authority-link-row")
+      const link = element("a", "authority-link", "查看权威来源 ↗")
+      link.href = evidence.url
+      link.target = "_blank"
+      link.rel = "noopener noreferrer"
+      row.append(link)
+      return row
+    }
     const block = element("div", `authority-block${evidence.comparison ? " is-comparison" : ""}`)
     if (evidence.articleHeading) block.append(element("div", "authority-heading", evidence.articleHeading))
     if (evidence.structurePath) block.append(element("div", "authority-meta", `章节位置:${evidence.structurePath}`))

@@ -131,6 +131,16 @@ def test_location_semantic_and_law_item_results_are_cached_once(cache_db):
     assert all(item.article_text == "条文全文" for item in items)
 
 
+def test_equivalent_article_numbers_share_one_cache_entry(cache_db):
+    fake = FakeClient()
+    cached = CachedPkulawClient(fake, cache_db)
+
+    cached.get_law_item_content("中华人民共和国民法典", "第十四条")
+    cached.get_law_item_content("中华人民共和国民法典", "第14条")
+
+    assert fake.law_item_calls == 1
+
+
 def test_mismatched_exact_article_is_not_cached(cache_db):
     fake = FakeClient()
     fake.get_law_item_content = lambda title, article_no: PkulawArticle(

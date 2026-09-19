@@ -4,7 +4,7 @@ import pytest
 from ccitecheck.domain.citation import Claim, ClaimType, LegalSourceClaimEntities, ClaimDocument, ClaimMeta
 from ccitecheck.domain.evidence import ArticleEvidence, LookupStatus, SourceTier, SourceTrace
 from ccitecheck.infrastructure.database import connect, init_db, upsert_law, upsert_article
-from ccitecheck.recognition.statutes import extract_legal_sources, _extract_articles_from_text, invalid_number_tokens
+from ccitecheck.recognition.statutes import extract_alias_declarations, extract_legal_sources, _extract_articles_from_text, invalid_number_tokens
 from ccitecheck.recognition.spans import locate_claim_article_spans
 from ccitecheck.retrieval.sources.local_laws import LocalSQLiteSource
 from ccitecheck.retrieval.sources.base import LocationCandidateResult, LookupRequest, LookupResult
@@ -188,6 +188,51 @@ def test_existing_paragraph_wrong_content(tmp_path):
     result = run(tmp_path, f"《示例法》第一条第一款规定{B}。", [("第一条", A + "。\n" + B + "。")])[0]
     assert [f.code.value for f in result.findings] == ["citation_hierarchy_error"]
     assert result.findings[0].resolved_locator.paragraph_no == "第二款"
+
+
+def test_alias_declaration_paragraph_typo_is_repaired_without_remote_scan(tmp_path):
+    article_text = (
+        "深度合成服务提供者和技术支持者应当加强训练数据管理，采取必要措施保障训练数据安全；"
+        "训练数据包含个人信息的，应当遵守个人信息保护的有关规定。\n"
+        "深度合成服务提供者和技术支持者提供人脸、人声等生物识别信息编辑功能的，"
+        "应当提示深度合成服务使用者依法告知被编辑的个人，并取得其单独同意。"
+    )
+
+    class Source:
+        def lookup(self, request):
+            trace = SourceTrace(
+                tier=SourceTier.PKULAW_FALLBACK,
+                source_name="北大法宝",
+                status=LookupStatus.ARTICLE_FOUND,
+            )
+            authority = ArticleEvidence(
+                law_title="互联网信息服务深度合成管理规定",
+                article_no="第十四条",
+                article_text=article_text,
+                version_status="现行有效",
+                source_metadata={"version_key": "2023.01.10", "version_confirmed": True},
+                data_source=trace,
+            )
+            return LookupResult(LookupStatus.ARTICLE_FOUND, authority, trace)
+
+        def locate_candidates(self, request):
+            raise AssertionError("完整所引条文不应触发邻近条文扫描")
+
+    text = (
+        "《互联网信息服务深度合成管理规定》（以下简称“《深度合成管理规定》”）"
+        "第十四条第二款亦要求，训练数据包含个人信息的，应当遵守个人信息保护相关规则"
+    )
+    cited = claim(text)
+    cited.entities.alias_declarations = extract_alias_declarations(text)
+    result = verify_claim_document(
+        ClaimDocument(claim_meta=ClaimMeta(), claims=[cited]),
+        tmp_path / "missing.sqlite",
+        sources=[Source()],
+        include_cases=False,
+    ).statute_results[0]
+
+    assert result.findings[0].code.value == "citation_hierarchy_error"
+    assert result.findings[0].resolved_locator.paragraph_no == "第一款"
 
 
 def test_existing_item_wrong_content(tmp_path):

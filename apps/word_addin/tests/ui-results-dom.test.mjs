@@ -277,6 +277,10 @@ test("单条未通过默认展开:卡头静态、正文可见、不渲染 diff",
   const headers = byClass(card, "reference-item-header")
   assert.equal(headers.length, 1)
   assert.equal(headers[0].tagName, "DIV", "未通过卡头不应是按钮")
+  assert.equal(byClass(card, "issue-tag").length, 0, "未通过卡头不应重复展示错误类型标签")
+  const pills = byClass(card, "status-pill")
+  assert.equal(pills.length, 1)
+  assert.equal(textOf(pills[0]), "未通过")
   const body = byClass(card, "reference-item-body")[0]
   assert.equal(body.hidden, false)
   assert.match(textOf(card), /建议改为第586条/)
@@ -286,6 +290,30 @@ test("单条未通过默认展开:卡头静态、正文可见、不渲染 diff",
   assert.equal(byClass(card, "authority-link")[0].getAttribute("href"), "https://www.pkulaw.com/chl/586.html")
   assert.match(textOf(byClass(card, "authority-link")[0]), /查看权威原文/)
   assert.ok(byClass(card, "doc-quote").length, "文书原文块应在卡内")
+})
+
+test("仅有权威来源链接时不渲染空证据卡", () => {
+  const document = setup()
+  const ui = new CheckUi()
+  ui.renderResults(resultOf(
+    [statuteResult({
+      outcome: "issue",
+      findings: [issueFinding()],
+      evidence: {
+        law_title: "人工智能生成合成内容标识办法",
+        article_no: "",
+        article_text: "",
+        data_source: { source_url: "https://www.miit.gov.cn/official.html" },
+      },
+    })],
+    [],
+    { total: 1, card_total: 1, reference_total: 1, issues: 1 },
+  ))
+  const card = byClass(document.getElementById("results-list"), "result-card")[0]
+  assert.equal(byClass(card, "authority-block").length, 0)
+  const link = byClass(card, "authority-link")[0]
+  assert.equal(textOf(link), "查看权威来源 ↗")
+  assert.equal(link.getAttribute("href"), "https://www.miit.gov.cn/official.html")
 })
 
 test("已通过默认收起为一行,点击卡头展开证据", () => {
@@ -312,7 +340,7 @@ test("已通过默认收起为一行,点击卡头展开证据", () => {
   assert.equal(header.getAttribute("aria-expanded"), "true")
 })
 
-test("待核实默认紧凑:卡头可点、一行原因可见、正文折叠", () => {
+test("待核实默认展开且不重复显示灰色摘要", () => {
   const document = setup()
   const ui = new CheckUi()
   ui.renderResults(resultOf(
@@ -323,13 +351,12 @@ test("待核实默认紧凑:卡头可点、一行原因可见、正文折叠", (
   const card = byClass(document.getElementById("results-list"), "result-card")[0]
   assert.ok(card.classList.contains("is-pending"))
   const header = byClass(card, "reference-item-header")[0]
-  assert.equal(header.tagName, "BUTTON")
+  assert.equal(header.tagName, "DIV")
   const body = byClass(card, "reference-item-body")[0]
-  assert.equal(body.hidden, true)
-  assert.match(textOf(byClass(card, "pending-reason")[0]), /所引条文不能直接推出该结论/)
-  assert.match(textOf(byClass(card, "status-pill")[0]), /待核实/)
-  header.click()
   assert.equal(body.hidden, false)
+  assert.equal(byClass(card, "pending-reason").length, 0)
+  assert.match(textOf(body), /所引条文不能直接推出该结论/)
+  assert.match(textOf(byClass(card, "status-pill")[0]), /待核实/)
 })
 
 test("一句多引聚合卡:共享一份文书原文,引用项无编号、细分割线、状态计数正确", () => {
@@ -402,7 +429,7 @@ test("缺少可执行替换内容的修订不显示接受入口", () => {
   })), false)
 })
 
-test("案例结果字段不全时不报错,按待核实紧凑渲染", () => {
+test("案例结果字段不全时不报错,按待核实展开渲染", () => {
   const document = setup()
   const ui = new CheckUi()
   assert.doesNotThrow(() => {
@@ -410,9 +437,11 @@ test("案例结果字段不全时不报错,按待核实紧凑渲染", () => {
   })
   const card = byClass(document.getElementById("results-list"), "result-card")[0]
   assert.ok(card.classList.contains("is-pending"))
-  assert.equal(byClass(card, "reference-item-body")[0].hidden, true)
+  const body = byClass(card, "reference-item-body")[0]
+  assert.equal(body.hidden, false)
   assert.match(textOf(card), /腾讯诉上海盈讯公司著作权侵权案/)
-  assert.match(textOf(byClass(card, "pending-reason")[0]), /请人工确认/)
+  assert.equal(byClass(card, "pending-reason").length, 0)
+  assert.match(textOf(body), /请人工确认/)
   assert.equal(byClass(card, "authority-block").length, 0, "无证据时不渲染权威来源块")
 })
 

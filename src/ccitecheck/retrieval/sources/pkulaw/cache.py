@@ -48,6 +48,11 @@ TTL_SECONDS = {
     "not_found": 7 * 86400,
 }
 
+
+def _article_key(title: str, article_no: str) -> str:
+    return f"{title}|{normalize_article_key(article_no)}"
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -108,7 +113,7 @@ class CachedPkulawClient:
     # ---- 条文全文 ----
 
     def get_article(self, title: str, article_no: str) -> PkulawArticle:
-        key = f"{title}|{article_no}"
+        key = _article_key(title, article_no)
         with connect_cache(self.db_path) as conn:
             entry = self._fresh_entry(conn, "article", key)
             if entry is not None:
@@ -141,7 +146,7 @@ class CachedPkulawClient:
     def search_law_articles_for_article(
         self, title: str, article_no: str
     ) -> list[PkulawArticle]:
-        key = f"{title}|{article_no}"
+        key = _article_key(title, article_no)
         with connect_cache(self.db_path) as conn:
             entry = self._fresh_entry(conn, "article_semantic", key)
             if entry is not None:
@@ -255,7 +260,7 @@ class CachedPkulawClient:
                 return articles
 
     def get_law_item_content(self, title: str, article_no: str):
-        key = f"{title}|{article_no}"
+        key = _article_key(title, article_no)
         with self._miss_lock:
             with connect_cache(self.db_path) as conn:
                 entry = self._fresh_entry(conn, "law_item", key)

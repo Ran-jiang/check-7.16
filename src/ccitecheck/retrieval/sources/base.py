@@ -23,6 +23,7 @@ class LookupRequest:
     existence_only: bool = False
     version_hint: Optional[str] = None
     jurisdiction: Optional[str] = None
+    skip_nearby_scan: bool = False
 
 @dataclass
 class LookupResult:

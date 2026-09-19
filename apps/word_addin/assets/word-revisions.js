@@ -14,6 +14,20 @@ export async function applyTrackedRevision(check) {
   return replaceTrackedText(check, false)
 }
 
+function changedSegment(from, to) {
+  let start = 0
+  while (start < from.length && start < to.length && from[start] === to[start]) start += 1
+  let fromEnd = from.length
+  let toEnd = to.length
+  while (fromEnd > start && toEnd > start && from[fromEnd - 1] === to[toEnd - 1]) {
+    fromEnd -= 1
+    toEnd -= 1
+  }
+  const original = from.slice(start, fromEnd)
+  const revised = to.slice(start, toEnd)
+  return original && revised ? { original, revised } : null
+}
+
 async function replaceTrackedText(check, undo) {
   if (!window.Word?.run || !Office.context.requirements.isSetSupported("WordApi", "1.4")) {
     throw new Error(undo
@@ -43,7 +57,23 @@ async function replaceTrackedText(check, undo) {
     const previousMode = document.changeTrackingMode
     try {
       document.changeTrackingMode = "TrackAll"
-      matches.items[0].insertText(to, "Replace")
+      let target = matches.items[0]
+      let replacement = to
+      const segment = changedSegment(from, to)
+      if (segment && (segment.original !== from || segment.revised !== to)) {
+        const innerMatches = target.search(segment.original, {
+          matchCase: true, matchWholeWord: false, matchWildcards: false,
+          ignoreSpace: false, ignorePunct: false,
+        })
+        innerMatches.load("items")
+        await context.sync()
+        if (innerMatches.items.length !== 1) {
+          throw new Error(undo ? "无法唯一定位待撤销内容" : "无法唯一定位待修订的条号或法名")
+        }
+        target = innerMatches.items[0]
+        replacement = segment.revised
+      }
+      target.insertText(replacement, "Replace")
       await context.sync()
     } finally {
       document.changeTrackingMode = previousMode

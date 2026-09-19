@@ -54,6 +54,16 @@ def test_seeded_alias_and_plain_act_shapes():
     assert source.articles[0].paragraphs == ["第4款"]
 
 
+def test_parenthesized_eu_ai_act_is_recognized_without_alias_declaration():
+    text = (
+        "在欧盟市场，Regulation (EU) 2024/1689（EU AI Act）第52条要求，"
+        "生成合成内容采用机器可读格式进行标记。"
+    )
+    source = extract_legal_sources(text)[0]
+    assert source.title == "EU AI Act"
+    assert source.articles[0].article == "第52条"
+
+
 def test_pkulaw_semantic_case_text_is_evidence_not_source_error():
     records = parse_semantic_case_text(
         "共返回 1 条案例：\n\n"

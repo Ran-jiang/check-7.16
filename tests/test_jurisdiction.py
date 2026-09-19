@@ -22,6 +22,7 @@ from ccitecheck.query_construction.jurisdiction import (
     detect_jurisdiction,
     detect_jurisdiction_with_basis,
 )
+from ccitecheck.query_construction.source_planner import plan_sources
 from ccitecheck.recognition.statutes import extract_legal_sources
 
 
@@ -44,6 +45,12 @@ def test_detect_jurisdiction_by_alias_table():
     assert detect_jurisdiction("通用数据保护条例", "") == "EU"
     assert detect_jurisdiction("知识产权法典", "") == "FR"
     assert detect_jurisdiction("GDPR", "") == "EU"
+
+
+def test_korean_ai_basic_act_routes_to_ansvar():
+    jurisdiction = detect_jurisdiction("人工智能发展及建立信任基础基本法", "")
+    assert jurisdiction == "KR"
+    assert [item.source_id for item in plan_sources(jurisdiction)] == ["ansvar"]
 
 
 def test_detect_jurisdiction_inside_title_and_reject_conflicts():

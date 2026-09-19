@@ -14,6 +14,7 @@ from ...domain.statute_results import (
     StatuteLocator,
     StatuteVersion,
 )
+from ...domain.revisions import replacement_revision
 from ...infrastructure.database import normalize_title, strip_version_annotation
 
 
@@ -94,9 +95,11 @@ def assess_statute(
         )
         if corrected:
             suggestion = f"法律名称引用错误，应为《{strip_version_annotation(corrected)}》。"
+            replacement_title = strip_version_annotation(corrected)
         else:
             candidates = list(pkulaw.metadata.get("candidate_titles", []))
             suggested = suggest_similar_title(law_title, [*known_titles, *candidates])
+            replacement_title = suggested
             suggestion = (
                 f"北大法宝 MCP 未检索到所引法源，疑似应为《{suggested}》，请核实法规名称。"
                 if suggested
@@ -110,6 +113,16 @@ def assess_statute(
             risk_level="HIGH",
             summary=f"北大法宝未检索到《{cited}》",
             suggestion=suggestion,
+            revision=(
+                replacement_revision(
+                    claim_text,
+                    f"《{cited}》",
+                    f"《{replacement_title}》",
+                    f"将错误法名更正为《{replacement_title}》",
+                    preconditions=["candidate_returned_by_authoritative_source"],
+                )
+                if replacement_title else None
+            ),
         )]
 
     # 欧盟法规经 EUR-Lex 检索未命中：同样报法源未检索到，避免编造的欧盟

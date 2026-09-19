@@ -77,6 +77,22 @@ def test_unique_strong_article_can_resolve_without_claiming_full_text_support():
     assert resolution.candidates[0].confirmed_level == "article"
 
 
+def test_unique_strong_paragraph_resolves_minor_paraphrase():
+    resolution = resolve_location_candidates(
+        "训练数据包含个人信息的，应当遵守个人信息保护相关规则",
+        [_evidence(
+            "第十四条",
+            "训练数据包含个人信息的，应当遵守个人信息保护的有关规定。\n"
+            "提供生物识别信息编辑功能的，应当取得个人单独同意。",
+        )],
+        cited_article_no="第十四条",
+    )
+
+    assert resolution.status == "resolved"
+    assert resolution.candidates[0].locator.paragraph_no == "第一款"
+    assert resolution.candidates[0].confirmed_level == "paragraph"
+
+
 def test_distinctive_clause_beats_similar_penalty_candidates():
     resolution = resolve_location_candidates(
         "盗窃公私财物数额较大的，处三年以下有期徒刑、拘役或者管制，并处或者单处罚金。",

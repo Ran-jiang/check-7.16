@@ -34,7 +34,7 @@ from ..domain.statute_results import (
     StatuteVerificationResult,
     StatuteVersion,
 )
-from ..domain.revisions import RevisionProposal
+from ..domain.revisions import RevisionProposal, replacement_revision
 from ..domain.claims import (
     RawClaim,
     RawClaimDocument,
@@ -1527,7 +1527,11 @@ def resolve_location_for_item(
     if (resolution.status != "resolved" and locator_source is not None
             and item.jurisdiction == "CN" and (version != "current" or backtrack) and not retry_only):
         remote = locator_source.locate_candidates(LookupRequest(
-            law_title=target_title, article_no=item.article_no, context_text=quote))
+            law_title=target_title,
+            article_no=item.article_no,
+            context_text=quote,
+            skip_nearby_scan=bool(current and current.article_text),
+        ))
         attempts.append(remote.trace)
         pool.extend(remote.candidates)
         resolution, eligible, version_pending = resolve(pool)
@@ -1630,8 +1634,13 @@ def _location_query_text(item: _CheckItem) -> str:
     start, end = span
     if not 0 <= start < end <= len(item.claim.text):
         return item.claim.text
+    for declaration in getattr(item.claim.entities, "alias_declarations", []):
+        declaration_span = declaration.declaration_span
+        if declaration_span and declaration_span[0] <= start < declaration_span[1]:
+            start = declaration_span[0]
+            end = max(end, declaration_span[1])
     tail = re.sub(
-        r"^\s*(?:之规定|规定|明确|指出|载明|要求|所称)?\s*[：:,，]?\s*",
+        r"^\s*(?:之规定|规定|明确|指出|载明|亦?要求|所称)?\s*[：:,，]?\s*",
         "",
         item.claim.text[end:],
         count=1,
@@ -1942,10 +1951,21 @@ def _verified_repair_finding(item: _CheckItem) -> StatuteFinding | None:
     corrected = f"《{title if code == StatuteErrorCode.LAW_NAME_ERROR else item.display_title}》"
     if code != StatuteErrorCode.LAW_NAME_ERROR:
         corrected += target
+    revision = (
+        replacement_revision(
+            item.claim.text,
+            f"《{item.display_title}》",
+            f"《{title}》",
+            f"将错误法名更正为《{title}》",
+            preconditions=["candidate_deterministically_verified"],
+        )
+        if code == StatuteErrorCode.LAW_NAME_ERROR
+        else _locator_revision(item, resolved)
+    )
     return StatuteFinding(code=code, risk_level="HIGH", summary=f"引文内容对应{target}",
         suggestion=_verified_correction_suggestion(code, corrected),
         cited_locator=_item_locators(item)[0], resolved_locator=resolved,
-        revision=_locator_revision(item, resolved) if code != StatuteErrorCode.LAW_NAME_ERROR else None)
+        revision=revision)
 
 
 def _verified_correction_suggestion(
@@ -2116,7 +2136,7 @@ def _resolve_repealed_successors(
             "status": status,
             "candidate_count": int(planned is not None),
             "verified_count": int(candidate is not None),
-            "accepted_count": int(status in {"confirmed", "pending"}),
+            "accepted_count": int(candidate is not None),
             "planned_candidate": planned,
             "message": message,
         }
@@ -2131,15 +2151,17 @@ def _resolve_repealed_successors(
             }.get(status, "未确认可靠的现行对应条文")
             finding.suggestion = f"{status_note}；{reason}。"
             continue
-        if status == "rejected":
-            finding.suggestion = (
-                f"{status_note}；权威源已核验候选，但其规则内容与原引文不匹配，未展示为纠正候选。"
-            )
-            continue
         item.correction_evidence = candidate
         item.repaired_title = candidate.law_title
         item.repaired_article_no = candidate.article_no
         item.repair_verified = status == "confirmed"
+        if status == "rejected":
+            finding.suggestion = (
+                f"{status_note}；权威源已核验现行候选《{candidate.law_title}》"
+                f"{candidate.article_no}，已作为候选修正引用展示。"
+            )
+            finding.revision = _successor_revision(item, candidate)
+            continue
         if status == "pending":
             finding.suggestion = (
                 f"{status_note}；已精确核验一个现行候选《{candidate.law_title}》"

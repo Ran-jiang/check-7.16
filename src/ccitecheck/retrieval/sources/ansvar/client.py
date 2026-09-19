@@ -525,11 +525,17 @@ def _parse_search_response(payload: Any) -> list[AnsvarRecord]:
     for entry in data:
         if not isinstance(entry, dict):
             continue
+        # 新版 Gateway 的法律元数据行把法名放在 text，其余身份放在 citation。
+        citation = entry.get("_citation") or entry.get("citation") or {}
+        if not isinstance(citation, dict):
+            citation = {}
+        is_law_metadata = str(citation.get("article") or "") == "meta"
         title = str(
             entry.get("title")
             or entry.get("law_title")
             or entry.get("name")
             or entry.get("label")
+            or (str(entry.get("text") or "").split(" (", 1)[0] if is_law_metadata else "")
             or ""
         ).strip()
         if not title:
@@ -541,17 +547,17 @@ def _parse_search_response(payload: Any) -> list[AnsvarRecord]:
             or entry.get("law_id")
             or entry.get("canonical_ref")
             or entry.get("celex")
+            or (citation.get("source") if is_law_metadata else "")
             or ""
         )
-        # _citation 块：source_url / publisher / license —— Ansvar 每条结果必带
-        citation = entry.get("_citation") or entry.get("citation") or {}
-        if not isinstance(citation, dict):
-            citation = {}
         url = str(
             entry.get("url") or entry.get("uri") or entry.get("source_url")
             or citation.get("source_url") or citation.get("url") or ""
         )
-        jurisdiction = str(entry.get("jurisdiction") or entry.get("country") or "")
+        jurisdiction = str(
+            entry.get("jurisdiction") or entry.get("country")
+            or citation.get("jurisdiction") or ""
+        )
         version_label = str(entry.get("version_label") or entry.get("version") or "")
         lookup = citation.get("lookup") or {}
         lookup_arguments = (
@@ -559,6 +565,8 @@ def _parse_search_response(payload: Any) -> list[AnsvarRecord]:
             if isinstance(lookup, dict) else {}
         )
         if not isinstance(lookup_arguments, dict):
+            lookup_arguments = {}
+        if is_law_metadata:
             lookup_arguments = {}
         records.append(
             AnsvarRecord(

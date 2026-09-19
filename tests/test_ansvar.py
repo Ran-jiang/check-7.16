@@ -85,6 +85,26 @@ def test_search_parser_preserves_exact_lookup_hint():
     assert record.citation["resolution_method"] == "exact"
 
 
+def test_search_parser_accepts_gateway_law_metadata_rows():
+    payload = {"result": {"structuredContent": {"results": [{
+        "text": "인공지능 발전과 신뢰 기반 조성 등에 관한 기본법 (인공지능기본법)",
+        "citation": {
+            "jurisdiction": "KR",
+            "source": "act-282791",
+            "article": "meta",
+            "source_url": "https://www.law.go.kr/LSW/lsInfoP.do?lsiSeq=282791",
+            "lookup": {"args": {
+                "canonical_ref": "act-282791:meta", "jurisdiction": "KR"
+            }},
+        },
+    }]}}}
+    record = _parse_search_response(payload)[0]
+    assert record.title == "인공지능 발전과 신뢰 기반 조성 등에 관한 기본법"
+    assert record.identifier == "act-282791"
+    assert record.jurisdiction == "KR"
+    assert record.lookup_arguments == {}
+
+
 def test_article_parser_preserves_citation_contract(monkeypatch):
     client = AnsvarMcpClient(gateway="https://ansvar.test", access_token="token")
     monkeypatch.setattr(
@@ -187,6 +207,24 @@ def test_source_falls_back_to_search_after_exact_miss():
     ]
 
 
+def test_source_does_not_display_gateway_document_id_as_law_title():
+    record = AnsvarRecord(
+        title="인공지능 발전과 신뢰 기반 조성 등에 관한 기본법",
+        identifier="act-282791",
+        jurisdiction="KR",
+    )
+    client = FakeAnsvarClient(records=[record], article=[None, {
+        "text": "제31조 인공지능 투명성 확보 의무",
+        "title": "act-282791",
+    }])
+    result = AnsvarSource(client).lookup(LookupRequest(
+        law_title="人工智能发展及建立信任基础基本法",
+        article_no="第31条",
+        jurisdiction="KR",
+    ))
+    assert result.evidence.law_title == record.title
+
+
 def test_cached_client_caches_found_and_not_found(tmp_path: Path):
     found = FakeAnsvarClient(article={"text": "Article 2"})
     cached = CachedAnsvarClient(found, tmp_path / "ansvar.sqlite")
@@ -218,6 +256,21 @@ def test_take_it_down_uses_live_source_instead_of_embedded_excerpt():
     ))
     assert result.status == LookupStatus.LAW_NOT_FOUND
     assert client.search_calls == [("TAKE IT DOWN Act", "US")]
+
+
+def test_korean_ai_basic_act_uses_official_title_and_jurisdiction():
+    client = FakeAnsvarClient(article={"text": "제31조\n\n인공지능 투명성 확보 의무"})
+    result = AnsvarSource(client).lookup(LookupRequest(
+        law_title="人工智能发展及建立信任基础基本法",
+        article_no="第31条",
+    ))
+    assert result.status == LookupStatus.ARTICLE_FOUND
+    assert client.article_calls == [(
+        "인공지능 발전과 신뢰 기반 조성 등에 관한 기본법",
+        "31",
+        "KR",
+        None,
+    )]
 
 
 def test_article_fetch_error_is_not_reported_as_existence_success():

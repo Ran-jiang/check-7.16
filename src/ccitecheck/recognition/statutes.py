@@ -99,6 +99,7 @@ _CN_NUM_EXTRA = _CN_NUM  # "之"后面的数字通常较小
 
 _FOREIGN_BARE_ACT_PATTERN = re.compile(
     rf"(?<![A-Za-z0-9])(?P<title>[A-Za-z][A-Za-z0-9 .'-]{{1,60}}?\s+Act)"
+    rf"\s*[）)]?\s*"
     rf"(?P<locator>第{_CN_NUM}条(?:第{_CN_NUM}款)?(?:第[（(]?{_CN_NUM}[）)]?项)?)"
 )
 

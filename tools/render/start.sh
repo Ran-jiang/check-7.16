@@ -29,6 +29,24 @@ start_eurlex_mcp() {
   return 0
 }
 
+# Ansvar token 移植(可选):服务器无浏览器,无法完成 OAuth 授权;
+# 把本机授权缓存 base64 后经 ANSVAR_TOKENS_B64 注入,首次调用自动续期。
+# 未配置或解码失败时 Ansvar 源降级为"待核实",不影响其他数据源。
+restore_ansvar_tokens() {
+  [ -n "${ANSVAR_TOKENS_B64:-}" ] || return 0
+  local token_file="$HOME/.ccitecheck/ansvar_tokens.json"
+  mkdir -p "$HOME/.ccitecheck"
+  if printf '%s' "$ANSVAR_TOKENS_B64" | base64 -d >"$token_file" 2>/dev/null \
+    && grep -q '"refresh_token"' "$token_file"; then
+    chmod 600 "$token_file"
+    echo "[start] ansvar tokens restored from ANSVAR_TOKENS_B64"
+  else
+    rm -f "$token_file"
+    echo "[start] WARN: ANSVAR_TOKENS_B64 invalid; ansvar checks will degrade"
+  fi
+}
+
+restore_ansvar_tokens
 start_eurlex_mcp
 
 # exec 让 uvicorn 直接接替本进程,Render 的停止信号可直达主进程;
