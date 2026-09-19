@@ -19,19 +19,16 @@
     </div>
 
     <section id="panel-mac" class="platform-panel" role="tabpanel" aria-labelledby="tab-mac">
-      <a class="primary-button" href="/install/install-ccitecheck.command" download>下载 macOS 安装器</a>
+      <a class="primary-button" href="/manifest.xml" download>下载 manifest.xml</a>
       <ol class="steps">
         <li><strong>完全退出 Word</strong>(按 Cmd+Q,不只是关闭窗口)。</li>
-        <li>双击下载的 <code>install-ccitecheck.command</code>。若 macOS 提示无法打开,右键它并选择“打开”。</li>
+        <li>在 Finder 中按 <strong>Cmd+Shift+G</strong>,粘贴 <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code> 并回车,把刚下载的 manifest.xml 复制进该文件夹。</li>
         <li>重新打开 Word,在 <strong>主页 → 加载项</strong> 中找到 CCiteheck 并点击启动。</li>
       </ol>
       <details class="alt-method">
-        <summary>安装器打不开?手动安装(同样 3 步)</summary>
-        <ol class="steps">
-          <li>退出 Word,下载 <a href="/manifest.xml" download>manifest.xml</a>。</li>
-          <li>在 Finder 按 Cmd+Shift+G,粘贴 <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code>,把 manifest.xml 复制进去。</li>
-          <li>打开 Word → 主页 → 加载项 → CCiteheck。</li>
-        </ol>
+        <summary>熟悉终端?一键安装器更快</summary>
+        <p>下载 <a href="/install/install-ccitecheck.command" download>install-ccitecheck.command</a>,退出 Word 后双击运行。</p>
+        <p>首次运行如提示"无法验证开发者":右键该文件并选择"打开"。如提示"权限不足":打开"终端"App,输入 <code>chmod +x </code>(注意 x 后有一个空格),把该文件拖进终端窗口再按回车,之后双击即可运行。</p>
       </details>
     </section>
 
