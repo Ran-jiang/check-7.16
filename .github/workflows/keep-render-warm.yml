@@ -3,8 +3,9 @@ name: keep-render-warm
 on:
   workflow_dispatch:
   schedule:
-    # Render 免费档约 15 分钟无流量即休眠,每 10 分钟探活一次保持唤醒
-    - cron: "*/10 * * * *"
+    # Render 免费档约 15 分钟无流量即休眠,每 10 分钟探活一次保持唤醒。
+    # 避开整点/整十分(:00/:30 是 GitHub 定时任务高峰,极易被延迟或丢弃),错开 4 分钟。
+    - cron: "4,14,24,34,44,54 * * * *"
 
 jobs:
   ping:
