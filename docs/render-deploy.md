@@ -36,6 +36,7 @@
 
 ## 故障速查
 
+- **免费档冷启动(已缓解)**:`.github/workflows/keep-render-warm.yml` 每 10 分钟探活 `/api/health`,免费实例不再休眠;注意 GitHub 定时任务在高负载时可能延迟触发,仓库 60 天无提交会暂停定时任务(会邮件提醒,Actions 页可一键恢复)。要根治请升 Starter
 - **首次连接慢**:升 Starter 后不应再出现;若仍偶发,多为 Render 平台重启,等 1 分钟自愈
 - **欧盟法提示“数据源未配置”**:查看实例日志中 `[start]` 行,确认 EUR-Lex MCP 是否就绪(`npx` 首次下载包可能超时,重新部署即可)
 - **Word 里加载项消失**:多为 manifest 被清理,重跑安装器或重新上传 `/manifest.xml`

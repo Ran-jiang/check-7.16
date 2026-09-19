@@ -99,7 +99,7 @@ def help_page() -> FileResponse:
 
 @app.get("/manifest.xml", include_in_schema=False)
 def addin_manifest() -> FileResponse:
-    """公网 manifest:Word“上传我的加载项”可直接选文件或粘贴本 URL。"""
+    """公网 manifest:Windows"上传我的加载项"选文件上传,或由管理员集中部署。"""
     return FileResponse(ADDIN_ROOT / "manifest.render.xml", media_type="application/xml")
 
 
@@ -114,6 +114,23 @@ def mac_installer() -> FileResponse:
     return FileResponse(
         PROJECT_ROOT / "tools" / "word-installers" / "mac" / "install-ccitecheck.command",
         media_type="text/x-shellscript",
+    )
+
+
+@app.get("/install/install-ccitecheck.bat", include_in_schema=False)
+def windows_installer_bat() -> FileResponse:
+    """Windows 安装器(.bat 与同目录 .ps1 配对使用)以仓库 tools/ 下的脚本为唯一来源。"""
+    return FileResponse(
+        PROJECT_ROOT / "tools" / "word-installers" / "windows" / "install-ccitecheck.bat",
+        media_type="application/x-bat",
+    )
+
+
+@app.get("/install/install-ccitecheck.ps1", include_in_schema=False)
+def windows_installer_ps1() -> FileResponse:
+    return FileResponse(
+        PROJECT_ROOT / "tools" / "word-installers" / "windows" / "install-ccitecheck.ps1",
+        media_type="text/x-powershellscript",
     )
 
 

@@ -7,7 +7,7 @@
 
 ## Windows
 
-1. 下载整个 `windows` 文件夹，保持 `.bat` 和 `.ps1` 在同一目录。
+1. 下载整个 `windows` 文件夹,保持 `.bat` 和 `.ps1` 在同一目录。(也可以直接从安装页 `https://cciteheck-api.onrender.com/install.html` 的"Windows 一键安装器"处分别下载两个文件,存到同一文件夹。)
 2. 完全退出 Word。
 3. 双击 `install-ccitecheck.bat`，并允许管理员权限。
 4. 安装完成后打开 Word。
