@@ -22,7 +22,13 @@
       <a class="primary-button" href="/manifest.xml" download>下载 manifest.xml</a>
       <ol class="steps">
         <li><strong>完全退出 Word</strong>(按 Cmd+Q,不只是关闭窗口)。</li>
-        <li>在 Finder 中按 <strong>Cmd+Shift+G</strong>,粘贴 <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code> 并回车,把刚下载的 manifest.xml 复制进该文件夹。</li>
+        <li>在 Finder 中按 <strong>Cmd+Shift+G</strong>,粘贴 <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code> 并回车,把刚下载的 manifest.xml 复制进该文件夹。
+          <details class="alt-method">
+            <summary>提示"找不到该文件夹"?</summary>
+            <p>该文件夹通常在 Word 首次打开后才创建:先正常打开一次 Word(再 Cmd+Q 退出),重试上面的路径。若还是没有,在打开的 Finder 窗口里<strong>新建一个名为 wef 的文件夹</strong>,再复制进去。</p>
+            <p>App Store 版 Word 可能不支持旁加载;公司托管的 Mac 若提示"没有权限",请联系管理员或用个人电脑安装。</p>
+          </details>
+        </li>
         <li>重新打开 Word,在 <strong>主页 → 加载项</strong> 中找到 CCiteheck 并点击启动。</li>
       </ol>
       <details class="alt-method">
