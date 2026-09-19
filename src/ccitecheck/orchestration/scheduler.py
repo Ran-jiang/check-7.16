@@ -1380,9 +1380,14 @@ def resolve_location_for_item(
     item.lookup_version_key = version
     version_confirmed = (result.trace.metadata.get("version_confirmed") is True
                          or bool(basis and (basis.source_metadata.get("version_confirmed") is True or basis.data_source.metadata.get("version_confirmed") is True)))
+    historical_reference = bool(item.raw_time and item.raw_time != "现行")
     if local and local.db_path.exists():
-        rows = local.all_articles(target_title) if backtrack else local.current_articles(target_title)
-        metadata = local.corpus_metadata(rows[0]["title"] if rows else target_title, rows)
+        rows = (
+            local.all_articles(target_title)
+            if historical_reference
+            else local.current_articles(target_title)
+        )
+        metadata = local.corpus_metadata(rows)
         version = version or metadata.get("version_key")
         version_confirmed = version_confirmed or metadata.get("version_confirmed") is True
         selected = rows if backtrack else [r for r in rows if r["version_key"] == version]
@@ -1411,12 +1416,11 @@ def resolve_location_for_item(
                                 row["article_no"]
                             ) == normalize_article_key(ranked[0].article_no),
                         }, data_source=trace))
-    if item.raw_time and item.raw_time != "现行":
+    if historical_reference:
         year = re.search(r"\d{4}", item.raw_time)
         version_label = (basis.version_label if basis else "") or ""
         local_metadata = metadata if local and local.db_path.exists() else {}
-        identified = version_confirmed or local_metadata.get("version_identified") is True
-        version_confirmed = bool(identified and year and year.group() in (
+        version_confirmed = bool(version_confirmed and year and year.group() in (
             str(version) + version_label + str(local_metadata.get("version_label", ""))))
     current_authority = _authority_marks_current(basis) and not (
         item.raw_time and item.raw_time != "现行"
@@ -1435,6 +1439,10 @@ def resolve_location_for_item(
                 evidence.source_metadata.get("version_key")
                 or evidence.data_source.metadata.get("version_key")
             )
+            local_current = (
+                evidence.data_source.tier == SourceTier.LOCAL_SQLITE
+                and not historical_reference
+            )
             if backtrack:
                 # 同法反推：权威已确认条号缺席时任意候选可进（缺席旁路）；同版本
                 # 候选任意条（条号错）；其他版本仅限条号一致的候选（版本直通的
@@ -1442,7 +1450,7 @@ def resolve_location_for_item(
                 same_article = normalize_article_key(
                     evidence.article_no or ""
                 ) == normalize_article_key(item.article_no or "")
-                if pkulaw_absence or candidate_version is None or candidate_version == version or same_article:
+                if local_current or pkulaw_absence or candidate_version is None or candidate_version == version or same_article:
                     eligible.append(evidence)
                 continue
             if pkulaw_absence or (
@@ -1500,19 +1508,25 @@ def resolve_location_for_item(
                 for evidence in eligible
             )
         )
-        if not version_confirmed and not resolved_authority and not pkulaw_absence and resolution.status == "resolved":
+        version_pending = bool(
+            not version_confirmed
+            and not resolved_authority
+            and not pkulaw_absence
+            and resolution.status == "resolved"
+        )
+        if version_pending:
             resolution.status = "candidates_pending"
-        return resolution, eligible
-    resolution, eligible = resolve(pool)
+        return resolution, eligible, version_pending
+    resolution, eligible, version_pending = resolve(pool)
     if (resolution.status != "resolved" and locator_source is not None
             and item.jurisdiction == "CN" and (version != "current" or backtrack) and not retry_only):
         remote = locator_source.locate_candidates(LookupRequest(
             law_title=target_title, article_no=item.article_no, context_text=quote))
         attempts.append(remote.trace)
         pool.extend(remote.candidates)
-        resolution, eligible = resolve(pool)
+        resolution, eligible, version_pending = resolve(pool)
         resolution.source_trace = remote.trace
-    if resolution.status != "resolved":
+    if resolution.status != "resolved" and not version_pending:
         cited_evidence = (
             current.model_copy(update={"article_text": current_text})
             if current is not None and current_text else None

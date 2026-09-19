@@ -364,18 +364,6 @@ def upsert_article(conn: sqlite3.Connection, law_id: int, record: dict[str, Any]
     effective_from = record.get("effective_from")
     version_key = normalize_version_key(record.get("version_key") or effective_from or "current")
     text = record.get("text", "").strip()
-    # 已核实来源按版本保存；重建数据库不会丢失，也不沿用到其他版本。
-    if not record.get("source_url"):
-        title_row = conn.execute("SELECT title FROM laws WHERE id = ?", (law_id,)).fetchone()
-        manifest = PROJECT_ROOT / "laws" / "verified_corpora.json"
-        if title_row and manifest.exists():
-            key = normalize_version_key(record.get("version_key") or record.get("effective_from") or "current")
-            source = next((entry for entry in json.loads(manifest.read_text(encoding="utf-8"))
-                           if entry["title"] == title_row["title"] and entry["version_key"] == key), None)
-            if source:
-                record = {**record, "source_url": source.get("source_url")}
-                conn.execute("UPDATE laws SET source_url = ? WHERE id = ? AND (source_url IS NULL OR source_url = '')",
-                             (source.get("source_url"), law_id))
     now = _now()
     conn.execute(
         """

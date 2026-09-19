@@ -12,7 +12,37 @@
     ],
     "claim_id": "cl_snapshot",
     "claim_text": "《示例法》第一条规定处理个人信息应当遵循合法正当必要和诚信原则。",
-    "correction_evidence": null,
+    "correction_evidence": {
+      "article_no": "第二条",
+      "article_text": "处理个人信息应当遵循合法正当必要和诚信原则",
+      "data_source": {
+        "fetched_at": "<timestamp>",
+        "message": "",
+        "metadata": {
+          "full_text_complete": false,
+          "local_article_count": 2,
+          "version_confirmed": true,
+          "version_key": "current"
+        },
+        "source_name": "本地法规库",
+        "source_url": "https://example.test/law",
+        "status": "article_found",
+        "tier": "local_sqlite"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "law_title": "示例法",
+      "related_articles": [],
+      "source_metadata": {
+        "article_rank_confirmed": true,
+        "relevance_score": 6.834212,
+        "version_key": "current"
+      },
+      "source_type": null,
+      "structure_path": null,
+      "version_label": null,
+      "version_status": null
+    },
     "display_group_id": "dg_3ea6cb333875",
     "evidence": {
       "article_no": "第一条",
@@ -23,9 +53,7 @@
         "metadata": {
           "full_text_complete": false,
           "local_article_count": 2,
-          "other_version_source_urls": [],
-          "version_confirmed": false,
-          "version_identified": false,
+          "version_confirmed": true,
           "version_key": "current"
         },
         "source_name": "CCiteheck 本地 SQLite 法规库",
@@ -51,7 +79,37 @@
       "version_label": null,
       "version_status": "has_articles"
     },
-    "findings": [],
+    "findings": [
+      {
+        "cited_locator": {
+          "article_no": "第一条",
+          "item_no": null,
+          "paragraph_no": null
+        },
+        "code": "article_number_error",
+        "historical_version": null,
+        "resolved_locator": {
+          "article_no": "第二条",
+          "item_no": null,
+          "paragraph_no": null
+        },
+        "revision": {
+          "machine_applicable": true,
+          "original_text": "《示例法》第一条规定处理个人信息应当遵循合法正当必要和诚信原则。",
+          "preconditions": [
+            "original_text_unique",
+            "document_unchanged",
+            "candidate_deterministically_verified"
+          ],
+          "rationale": "将错误引用位置更正为第二条",
+          "revised_text": "《示例法》第二条规定处理个人信息应当遵循合法正当必要和诚信原则。",
+          "strategy": "replace_exact_text"
+        },
+        "risk_level": "HIGH",
+        "suggestion": "条号引用错误，应为《示例法》第二条。",
+        "summary": "引文内容对应第二条"
+      }
+    ],
     "jurisdiction": "CN",
     "law_identity_resolved": true,
     "law_identity_resolver": "direct",
@@ -78,12 +136,12 @@
         }
       ],
       "source_trace": null,
-      "status": "candidates_pending"
+      "status": "resolved"
     },
     "lookup_status": "article_found",
-    "message": "引文内容与所引规范的对应关系尚待核查",
+    "message": "",
     "note_context": null,
-    "outcome": "review",
+    "outcome": "issue",
     "parent_check_id": null,
     "recognition_form": "explicit",
     "reference_role": "direct",
@@ -96,9 +154,7 @@
         "metadata": {
           "full_text_complete": false,
           "local_article_count": 2,
-          "other_version_source_urls": [],
-          "version_confirmed": false,
-          "version_identified": false,
+          "version_confirmed": true,
           "version_key": "current"
         },
         "source_name": "CCiteheck 本地 SQLite 法规库",

@@ -137,12 +137,12 @@ def test_snapshot_competing_articles_pending(tmp_path):
     _snapshot("document_competing_articles_pending", results)
 
 
-def test_snapshot_unknown_version_never_confirms(tmp_path):
+def test_snapshot_local_current_version_confirms(tmp_path):
     results = _run_document(tmp_path, f"《示例法》第一条规定{B}。", [
         ("第一条", A),
         ("第二条", B),
     ], version="current")
-    _snapshot("document_unknown_version_review", results)
+    _snapshot("document_local_current_resolution", results)
 
 
 def test_snapshot_location_stage_raw(tmp_path):

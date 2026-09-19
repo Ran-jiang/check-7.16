@@ -390,10 +390,70 @@ def test_conflicting_absence_signals_stay_medium(tmp_path):
     assert result.findings[0].risk_level == "MEDIUM"
 
 
-def test_unknown_version_never_confirms_correction(tmp_path):
-    result = run(tmp_path, f"《示例法》第一条规定{B}。", [("第一条", A), ("第二条", B)], version="current")[0]
-    assert not any(f.risk_level == "HIGH" for f in result.findings)
+def test_local_current_corpus_confirms_correction_without_triage(tmp_path):
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            raise AssertionError("本地库默认现行，不应降级给模型分诊")
+
+    result = run(
+        tmp_path,
+        f"《示例法》第一条规定{B}。",
+        [("第一条", A), ("第二条", B)],
+        version="current",
+        checker=Checker(),
+    )[0]
+
+    assert result.findings[0].code.value == "article_number_error"
+    assert result.findings[0].resolved_locator.article_no == "第二条"
+
+
+def test_unconfirmed_pkulaw_candidate_stays_pending_without_triage(tmp_path):
+    trace = SourceTrace(
+        tier=SourceTier.PKULAW_FALLBACK,
+        source_name="北大法宝 MCP",
+        status=LookupStatus.ARTICLE_FOUND,
+        metadata={"version_key": "2024-01-01", "version_confirmed": False},
+    )
+
+    class Source:
+        def lookup(self, request):
+            cited = ArticleEvidence(
+                law_title="示例法",
+                article_no="第一条",
+                article_text=A,
+                source_metadata=trace.metadata,
+                data_source=trace,
+            )
+            return LookupResult(LookupStatus.ARTICLE_FOUND, cited, trace)
+
+        def locate_candidates(self, request):
+            candidate = ArticleEvidence(
+                law_title="示例法",
+                article_no="第二条",
+                article_text=B,
+                source_metadata=trace.metadata,
+                data_source=trace,
+            )
+            return LocationCandidateResult([candidate], trace)
+
+    class Checker:
+        def triage_fidelity(self, quote, cited, candidates):
+            raise AssertionError("版本待定不应交给模型裁决")
+
+    result = verify_claim_document(
+        ClaimDocument(
+            claim_meta=ClaimMeta(),
+            claims=[claim(f"《示例法》第一条规定{B}。")],
+        ),
+        tmp_path / "missing.sqlite",
+        sources=[Source()],
+        semantic_checker=Checker(),
+        include_cases=False,
+    ).statute_results[0]
+
     assert result.outcome == "review"
+    assert result.findings == []
+    assert result.location_resolution.status == "candidates_pending"
 
 
 def test_competing_articles_remain_pending(tmp_path):
@@ -733,7 +793,7 @@ def test_local_corpus_loaded_once_per_run(tmp_path, monkeypatch):
 def test_verified_url_enrichment_preserves_local_text_and_source():
     from ccitecheck.orchestration.policies.retrieval import lookup_with_chain
     local = evidence(A, "第一条")
-    local.data_source.metadata.update(version_key="2024-01-01",version_identified=True)
+    local.data_source.metadata.update(version_key="2024-01-01")
     remote = local.model_copy(deep=True)
     remote.data_source.tier = SourceTier.PKULAW_FALLBACK
     remote.data_source.source_url = "https://example.test/remote"
@@ -747,11 +807,12 @@ def test_verified_url_enrichment_preserves_local_text_and_source():
     assert len(attempts) == 2
 
 
-def test_cross_version_related_evidence_is_not_relabelled(tmp_path):
+def test_pkulaw_cross_version_related_evidence_is_not_relabelled(tmp_path):
     from ccitecheck.domain.evidence import ArticleExcerpt
     class Source:
         def lookup(self, request):
             e = evidence(A)
+            e.data_source.tier = SourceTier.PKULAW_FALLBACK
             e.article_no = None
             e.article_text = None
             e.related_articles = [ArticleExcerpt(law_title="示例法",version_key="2020-01-01",article_no="第二条",article_text=B,relevance_score=1)]
@@ -841,19 +902,6 @@ def test_range_preserves_explicit_endpoint_hierarchy():
     refs = _extract_articles_from_text("第3条至第5条第二款")
     assert refs[-1].article == "第5条" and refs[-1].paragraphs == ["第二款"]
     assert refs[0].paragraphs == [] and refs[1].paragraphs == []
-
-
-def test_import_restores_verified_criminal_law_link_for_matching_version(tmp_path):
-    path = tmp_path / "import.sqlite"
-    init_db(path)
-    with connect(path) as conn:
-        law = upsert_law(conn, {"title":"中华人民共和国刑法"})
-        upsert_article(conn,law,{"article_no":"第一条","text":A,"version_key":"2021-03-01"})
-        row = conn.execute("SELECT source_url FROM articles WHERE law_id=?",(law,)).fetchone()
-        assert row["source_url"] == "https://www.lawinfochina.com/display.aspx?id=34470&lib=law"
-        assert conn.execute("SELECT source_url FROM laws WHERE id=?",(law,)).fetchone()[0] == row["source_url"]
-        upsert_article(conn,law,{"article_no":"第一条","text":B,"version_key":"2024-03-01"})
-        assert conn.execute("SELECT source_url FROM articles WHERE law_id=? AND version_key='2024-03-01'",(law,)).fetchone()[0] is None
 
 
 def test_omitted_substantive_condition_does_not_confirm_quote():

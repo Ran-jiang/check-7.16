@@ -70,8 +70,7 @@ def lookup_with_chain(
                 else:
                     local_complete_with_legacy_url = result
                 continue
-            if (result.trace.tier == SourceTier.LOCAL_SQLITE and not result.trace.source_url
-                    and result.trace.metadata.get("version_identified") is True):
+            if result.trace.tier == SourceTier.LOCAL_SQLITE and not result.trace.source_url:
                 local_without_link = result
                 continue
             return result, attempts
