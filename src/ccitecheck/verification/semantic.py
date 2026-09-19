@@ -47,6 +47,7 @@ from .reasoning import (
 
 DEFAULT_MODEL = "qwen3.7-plus"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 REASONING_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "case_reasoning_check.md"
 APPLICATION_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "statute_application_check.md"
 FIDELITY_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "fidelity_triage.md"
@@ -189,8 +190,8 @@ class QwenSemanticChecker:
         if option.provider == "deepseek":
             base_url = (
                 os.getenv("DEEPSEEK_BASE_URL")
-                or os.getenv("QWEN_BASE_URL")
-                or os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+                or os.getenv("LLM_BASE_URL")
+                or DEFAULT_DEEPSEEK_BASE_URL
             )
         else:
             base_url = (
